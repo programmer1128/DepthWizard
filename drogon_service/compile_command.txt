@@ -1,0 +1,9 @@
+inside build folder
+
+rm -rf * - for fresh build
+cmake ..
+make -j$(nproc)
+
+ln -s ../config.json config.json
+
+./gis_service
