@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <sstream>
 #include <cpl_conv.h>
+#include <ogr_spatialref.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -62,7 +63,7 @@ GpsBounds SrtmExtractor::extractGpsBounds(GDALDataset *poDS)
         bounds.min_y = bounds.max_y + (bounds.pixels_y * adfGeoTransform[5]);
     }
 
-    // Extracting map projection in CRS
+    // Extracting map projection in CRS : WKT string
     const char *raw_crs = poDS->GetProjectionRef();
     if (raw_crs && strlen(raw_crs) > 0)
     {
@@ -123,7 +124,36 @@ RasterDatasets SrtmExtractor::fetchTile(const std::string &filePath)
     double target_lon = (bounds.min_x + bounds.max_x) / 2.0;
     double target_lat = (bounds.min_y + bounds.max_y) / 2.0;
 
-    // If the input image is not strictly EPSG:4326 (e.g., uploaded in UTM meters), dynamically convert the center point back to GPS degrees for AWS lookups -> to be implemented
+    // Converting the center coordinates of the input image to the EPSG:4326 system
+    if (!bounds.crs.empty()) // if crs is not mentioned then it is considered to be in epsg:4326
+    {
+        // containers for the mathematical definitions of the coordinate systems
+        OGRSpatialReference sourceSRS;
+        OGRSpatialReference targetSRS;
+
+        if (sourceSRS.SetFromUserInput(bounds.crs.c_str()) == OGRERR_NONE) // parsing the WKT string (crs system) extracted from the input image
+        {
+            targetSRS.SetWellKnownGeogCS("WGS84"); // Setting the target container to the WGS84 model (EPSG:4326)
+
+            // To force GDAL 3.0+ to keep using the old (Longitude, Latitude) format
+#if GDAL_VERSION_MAJOR >= 3 // to make it backward compatible
+            targetSRS.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+#endif
+
+            OGRCoordinateTransformation *poTransform = OGRCreateCoordinateTransformation(&sourceSRS, &targetSRS);
+            if (poTransform)
+            {
+                // Overwriting the raw center metrics with EPSG:4326 degrees
+                poTransform->Transform(1, &target_lon, &target_lat); // 1 represents the no. of points to be converted simultaneously
+                OGRCoordinateTransformation::DestroyCT(poTransform); // memory cleanup
+            }
+            else
+            {
+                LOG_ERROR << "Failed to transform coordinates to EPSG:4326.";
+                return {std::move(hInputDS), nullptr};
+            }
+        }
+    }
 
     // Copernicus DEM extraction
     std::string copernicusUrl = buildCopernicusUrl(target_lat, target_lon);
