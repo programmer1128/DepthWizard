@@ -5,6 +5,7 @@
 #include <drogon/drogon.h>
 #include <drogon/utils/coroutine.h>
 #include <gdal_priv.h>
+#include "../utils/GisTypes.h"
 
 // Struct to hold the extracted GeoTIFF spatial metadata
 struct GpsBounds
@@ -19,18 +20,6 @@ struct GpsBounds
     int pixels_y{0};
     std::string crs{"EPSG:4326"}; // Coordinate Reference System EPSG:4326 is the standard global identifier for WGS 84 (the coordinate system used by standard GPS for Latitude and Longitude mapping)
 };
-
-// Custom deleter to automatically close GDAL datasets when they go out of scope
-struct GDALDatasetDeleter
-{
-    void operator()(GDALDataset *ds) const
-    {
-        if (ds)
-            GDALClose(ds);
-    }
-};
-
-using GDALDatasetPtr = std::unique_ptr<GDALDataset, GDALDatasetDeleter>; // wrapper that holds a GDALDataset*
 
 void initGDAL();
 

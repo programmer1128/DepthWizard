@@ -9,3 +9,9 @@ ln -s ../config.json config.json
 ./gis_service
 
 curl http://localhost:8080/api/v1/ping
+
+
+curl to test the srtm extractor and raster processor
+curl -X POST -F "file=@sample.tif" http://localhost:8080/api/v1/processor
+
+replace sample.tif with actual file path
