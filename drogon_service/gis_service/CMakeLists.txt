@@ -25,6 +25,8 @@ file(GLOB EXTRACTOR_SRC CONFIGURE_DEPENDS "SrtmExtractor/*.cc" "SrtmExtractor/*.
 file(GLOB PROCESSOR_SRC CONFIGURE_DEPENDS "RasterProcessor/*.cc" "RasterProcessor/*.cpp")
 file(GLOB RANSAC_SRC CONFIGURE_DEPENDS "RansacCalibrator/*.cc" "RansacCalibrator/*.cpp")
 file(GLOB WRITER_SRC CONFIGURE_DEPENDS "GdalWriter/*.cc" "GdalWriter/*.cpp")
+file(GLOB UTILS_SRC CONFIGURE_DEPENDS "utils/*.cc" "utils/*.cpp")
+file(GLOB PLUGINS_SRC CONFIGURE_DEPENDS "plugins/*.cc" "plugins/*.cpp")
 
 
 #COMPILER OPTIMIZATIONS (Release Mode)
@@ -50,7 +52,9 @@ target_sources(${PROJECT_NAME}
                ${EXTRACTOR_SRC}
                ${PROCESSOR_SRC}
                ${RANSAC_SRC}
-               ${WRITER_SRC})
+               ${WRITER_SRC}
+               ${UTILS_SRC}
+               ${PLUGINS_SRC})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -62,6 +66,8 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/RasterProcessor
                            ${CMAKE_CURRENT_SOURCE_DIR}/RansacCalibrator
                            ${CMAKE_CURRENT_SOURCE_DIR}/GdalWriter
+                           ${CMAKE_CURRENT_SOURCE_DIR}/utils
+                           ${CMAKE_CURRENT_SOURCE_DIR}/plugins
                            ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
 
 

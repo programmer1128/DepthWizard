@@ -5,22 +5,8 @@
 #include <string>
 #include <memory>
 
-// custom deleter to delete GDALDataset object on going out of scope
+#include "../utils/GisTypes.h"
 
-struct GDALDatasetDeleter
-{
-    void operator()(GDALDataset* ds) const // acts as functor: function object
-    {
-        if(ds) // not a nullptr
-        {
-            GDALClose(ds);
-        }
-    }
-};
-
-// alias to avoid writing unique_ptr syntax every time
-
-using GDALDatasetPtr = std::unique_ptr<GDALDataset, GDALDatasetDeleter>;
 
 class RasterProcessor
 {

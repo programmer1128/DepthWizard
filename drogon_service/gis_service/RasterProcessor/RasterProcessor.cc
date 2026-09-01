@@ -94,9 +94,13 @@ std::vector<float> RasterProcessor::extractFloatMatrix(const GDALDatasetPtr& hOu
     std::vector<float> final_matrix(width * height);
 
     // now fill the data from the warped image directly to this matrix
-    demBand->RasterIO(GF_Read, 0, 0, width, height,            // read from x:0, y:0 to width, height
-                      final_matrix.data(), width, height,      // write into our C++ vector
-                      GDT_Float32, 0, 0);                      // specify that we want float32 numbers
+    CPLErr err = demBand->RasterIO(GF_Read, 0, 0, width, height,            // read from x:0, y:0 to width, height
+                                   final_matrix.data(), width, height,      // write into our C++ vector
+                                   GDT_Float32, 0, 0);                      // specify that we want float32 numbers
+    
+    if (err != CE_None) {
+        throw std::runtime_error("RasterProcessor: Failed to read pixel data from warped DEM.");
+    }
     
     // NoData filtering 
 
