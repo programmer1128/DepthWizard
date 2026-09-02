@@ -5,8 +5,9 @@
 #include <iostream>
 
 RansacCalibrator::RansacCalibrator(int iterations_count, double threshold) 
-    : iterations(iterations_count), error_threshold(threshold) {}
-
+     : iterations(iterations_count), error_threshold(threshold) {}
+//srtm height will contain quiet_NaN values for void, so before calling this function we need to do a sweep
+//of the srtmHeight 1d flattened matrix to get validIndices and reduce load on rand num generator
 CalibrationResult RansacCalibrator::calculateScaleAndOffset(
      const std::vector<float>& aiDepth, 
      const std::vector<float>& srtmHeight, 
