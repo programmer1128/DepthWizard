@@ -1,0 +1,6 @@
+# Insert database name in the end here. If your port is different, change 5432 to your port number.
+spring.datasource.url=jdbc:postgresql://localhost:5432/<database-name>
+# By default, the username is postgres. If you are working under a different username, change postgres to your username.
+spring.datasource.username=postgres
+# Insert password here.
+spring.datasource.password=<password>
