@@ -27,6 +27,7 @@ file(GLOB RANSAC_SRC CONFIGURE_DEPENDS "RansacCalibrator/*.cc" "RansacCalibrator
 file(GLOB WRITER_SRC CONFIGURE_DEPENDS "GdalWriter/*.cc" "GdalWriter/*.cpp")
 file(GLOB UTILS_SRC CONFIGURE_DEPENDS "utils/*.cc" "utils/*.cpp")
 file(GLOB PLUGINS_SRC CONFIGURE_DEPENDS "plugins/*.cc" "plugins/*.cpp")
+file(GLOB UVMAPPER_SRC CONFIGURE_DEPENDS "UVMapping/*.cc" "UVMapping/*.cpp")
 
 
 #COMPILER OPTIMIZATIONS (Release Mode)
@@ -54,7 +55,8 @@ target_sources(${PROJECT_NAME}
                ${RANSAC_SRC}
                ${WRITER_SRC}
                ${UTILS_SRC}
-               ${PLUGINS_SRC})
+               ${PLUGINS_SRC}
+               ${UVMAPPER_SRC})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -68,6 +70,7 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/GdalWriter
                            ${CMAKE_CURRENT_SOURCE_DIR}/utils
                            ${CMAKE_CURRENT_SOURCE_DIR}/plugins
+                           ${CMAKE_CURRENT_SOURCE_DIR}/UVMapping
                            ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
 
 
