@@ -1,7 +1,8 @@
 #pragma once
 
 #include <drogon/HttpController.h>
-
+#include <drogon/drogon.h>
+#include <coroutine>
 using namespace drogon;
 
 class CalibrationController : public drogon::HttpController<CalibrationController>
@@ -20,6 +21,5 @@ class CalibrationController : public drogon::HttpController<CalibrationControlle
     // void get(const HttpRequestPtr& req, std::function<void (const HttpResponsePtr &)> &&callback, int p1, std::string p2);
     // void your_method_name(const HttpRequestPtr& req, std::function<void (const HttpResponsePtr &)> &&callback, double p1, int p2) const;
 
-    void processTerrain(const drogon::HttpRequestPtr& req,
-                        std::function<void (const drogon::HttpResponsePtr &)> &&callback);
+    drogon::Task<drogon::HttpResponsePtr>processTerrain(drogon::HttpRequestPtr req);
 };

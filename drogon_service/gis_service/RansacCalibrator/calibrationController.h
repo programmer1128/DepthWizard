@@ -5,12 +5,12 @@
 
 using namespace drogon;
 
-class CalibrationController : public drogon::HttpController<CalibrationController> 
+class SystemCheckController : public drogon::HttpController<SystemCheckController> 
 {
 public:
     METHOD_LIST_BEGIN
     
-    ADD_METHOD_TO(CalibrationController::ping, "/api/v1/ping", Get);
+    ADD_METHOD_TO(SystemCheckController::ping, "/api/v1/ping", Get);
     
     METHOD_LIST_END
 

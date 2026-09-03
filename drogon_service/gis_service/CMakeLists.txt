@@ -27,8 +27,9 @@ file(GLOB RANSAC_SRC CONFIGURE_DEPENDS "RansacCalibrator/*.cc" "RansacCalibrator
 file(GLOB WRITER_SRC CONFIGURE_DEPENDS "GdalWriter/*.cc" "GdalWriter/*.cpp")
 file(GLOB UTILS_SRC CONFIGURE_DEPENDS "utils/*.cc" "utils/*.cpp")
 file(GLOB PLUGINS_SRC CONFIGURE_DEPENDS "plugins/*.cc" "plugins/*.cpp")
-file(GLOB UVMAPPER_SRC CONFIGURE_DEPENDS "UVMapping/*.cc" "UVMapping/*.cpp")
-file(GLOB MESHMAPPER_SRC CONFIGURE_DEPENDS "MeshMapping/*.cc" "MeshMapping/*.cpp")
+file(GLOB MESH_SRC CONFIGURE_DEPENDS "MeshMapping/*.cc" "MeshMapping/*.cpp")
+file(GLOB FILE_GENERATOR_SRC CONFIGURE_DEPENDS "FileGenerators/*.cc" "FileGenerators/*.cpp")
+file(GLOB UV_MAPPING CONFIGURE_DEPENDS "UVMapping/*.cc" "UVMapping/*.cpp")
 
 
 #COMPILER OPTIMIZATIONS (Release Mode)
@@ -57,8 +58,9 @@ target_sources(${PROJECT_NAME}
                ${WRITER_SRC}
                ${UTILS_SRC}
                ${PLUGINS_SRC}
-               ${UVMAPPER_SRC}
-               ${MESHMAPPER_SRC})
+               ${MESH_SRC}
+               ${FILE_GENERATOR_SRC}
+               ${UV_MAPPING})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -70,10 +72,11 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/RasterProcessor
                            ${CMAKE_CURRENT_SOURCE_DIR}/RansacCalibrator
                            ${CMAKE_CURRENT_SOURCE_DIR}/GdalWriter
+                           ${CMAKE_CURRENT_SOURCE_DIR}/MeshMapping
                            ${CMAKE_CURRENT_SOURCE_DIR}/utils
                            ${CMAKE_CURRENT_SOURCE_DIR}/plugins
-                           ${CMAKE_CURRENT_SOURCE_DIR}/UVMapping
-                           ${CMAKE_CURRENT_SOURCE_DIR}/MeshMapping
+                           ${CMAKE_CURRENT_SOURCE_DIR}/FileGenerators
+                           ${CMAKE_CURRENT_SOURCE_DIR}/UV_MAPPING
                            ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
 
 

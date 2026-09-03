@@ -13,29 +13,48 @@
 
 // GDAL initialization configuration
 
+//previous GDAL function from Main branch
+// void initGDAL()
+// {
+//     GDALAllRegister();                                               // Wakes up GDAL and loads all image format drivers
+//     CPLSetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR"); // Stops GDAL from scanning entire AWS buckets (Latency hack)
+//     CPLSetConfigOption("GDAL_HTTP_MULTIMAC", "YES");                 // Enables fast multi-threaded downloads
+//     CPLSetConfigOption("VSI_CACHE", "TRUE");                         // Caches the downloaded chunks in RAM
+// }
+
+//adding optimisation layer GDAL function
 void initGDAL()
 {
-    GDALAllRegister();                                               // Wakes up GDAL and loads all image format drivers
-    CPLSetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR"); // Stops GDAL from scanning entire AWS buckets (Latency hack)
-    CPLSetConfigOption("GDAL_HTTP_MULTIMAC", "YES");                 // Enables fast multi-threaded downloads
-    CPLSetConfigOption("VSI_CACHE", "TRUE");                         // Caches the downloaded chunks in RAM
+     GDALAllRegister();
+    
+     // Stop GDAL from looking for sidecar metadata files over the internet
+     //increases performance by reducing  query overload over the S3 bucket server
+     CPLSetConfigOption("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", "tif"); 
+     CPLSetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR"); 
+    
+     // Enable fast multiplexed downloads and merge consecutive byte requests
+     CPLSetConfigOption("GDAL_HTTP_MULTIPLEX", "YES");                 
+     CPLSetConfigOption("GDAL_HTTP_MERGE_CONSECUTIVE_READS", "YES");                 
+    
+     // Cache the downloaded chunks in RAM
+     CPLSetConfigOption("VSI_CACHE", "TRUE");                         
 }
 
 GpsBounds SrtmExtractor::extractGpsBounds(const std::string &filePath)
 {
-    GpsBounds bounds;
+     GpsBounds bounds;
 
-    // Opening the GeoTIFF in read-only mode to extract metadata headers
-    // GDALDataset *poDS = static_cast<GDALDataset *>(GDALOpen(filePath.c_str(), GA_ReadOnly));
-    GDALDatasetPtr poDS(static_cast<GDALDataset *>(GDALOpen(filePath.c_str(), GA_ReadOnly)));
+     // Opening the GeoTIFF in read-only mode to extract metadata headers
+     // GDALDataset *poDS = static_cast<GDALDataset *>(GDALOpen(filePath.c_str(), GA_ReadOnly));
+     GDALDatasetPtr poDS(static_cast<GDALDataset *>(GDALOpen(filePath.c_str(), GA_ReadOnly)));
 
-    if (!poDS)
-    {
-        LOG_ERROR << "Failed to open GeoTIFF metadata from : " << filePath;
-        return bounds;
-    }
+     if (!poDS)
+     {
+         LOG_ERROR << "Failed to open GeoTIFF metadata from : " << filePath;
+         return bounds;
+     }
 
-    return extractGpsBounds(poDS.get());
+     return extractGpsBounds(poDS.get());
 }
 
 GpsBounds SrtmExtractor::extractGpsBounds(GDALDataset *poDS)
@@ -85,9 +104,9 @@ std::string SrtmExtractor::buildCopernicusUrl(double lat, double lon)
     char lat_hemi = (lat_floor >= 0) ? 'N' : 'S';
     char lon_hemi = (lon_floor >= 0) ? 'E' : 'W';
 
-    std::ostringstream ss;
-    ss << std::setfill('0');
-    ss << "Copernicus_DSM_COG_10_" << lat_hemi << std::setw(2) << std::abs(lat_floor) << "_00_"
+     std::ostringstream ss;
+     ss << std::setfill('0');
+     ss << "Copernicus_DSM_COG_10_" << lat_hemi << std::setw(2) << std::abs(lat_floor) << "_00_"
        << lon_hemi << std::setw(3) << std::abs(lon_floor) << "_00_DEM";
 
     std::string tile_name = ss.str();
@@ -133,25 +152,27 @@ RasterDatasets SrtmExtractor::fetchTile(const std::string &filePath)
 
         if (sourceSRS.SetFromUserInput(bounds.crs.c_str()) == OGRERR_NONE) // parsing the WKT string (crs system) extracted from the input image
         {
-            targetSRS.SetWellKnownGeogCS("WGS84"); // Setting the target container to the WGS84 model (EPSG:4326)
+             targetSRS.SetWellKnownGeogCS("WGS84"); // Setting the target container to the WGS84 model (EPSG:4326)
 
-            // To force GDAL 3.0+ to keep using the old (Longitude, Latitude) format
-#if GDAL_VERSION_MAJOR >= 3 // to make it backward compatible
-            targetSRS.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-#endif
+             // To force GDAL 3.0+ to keep using the old (Longitude, Latitude) format
+             #if GDAL_VERSION_MAJOR >= 3 // to make it backward compatible
+             //added for geotiff order
+             sourceSRS.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+             targetSRS.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+             #endif
 
-            OGRCoordinateTransformation *poTransform = OGRCreateCoordinateTransformation(&sourceSRS, &targetSRS);
-            if (poTransform)
-            {
-                // Overwriting the raw center metrics with EPSG:4326 degrees
-                poTransform->Transform(1, &target_lon, &target_lat); // 1 represents the no. of points to be converted simultaneously
-                OGRCoordinateTransformation::DestroyCT(poTransform); // memory cleanup
-            }
-            else
-            {
-                LOG_ERROR << "Failed to transform coordinates to EPSG:4326.";
-                return {std::move(hInputDS), nullptr};
-            }
+             OGRCoordinateTransformation *poTransform = OGRCreateCoordinateTransformation(&sourceSRS, &targetSRS);
+             if (poTransform)
+             {
+                 // Overwriting the raw center metrics with EPSG:4326 degrees
+                 poTransform->Transform(1, &target_lon, &target_lat); // 1 represents the no. of points to be converted simultaneously
+                 OGRCoordinateTransformation::DestroyCT(poTransform); // memory cleanup
+             }
+             else
+             {
+                 LOG_ERROR << "Failed to transform coordinates to EPSG:4326.";
+                 return {std::move(hInputDS), nullptr};
+             }
         }
     }
 

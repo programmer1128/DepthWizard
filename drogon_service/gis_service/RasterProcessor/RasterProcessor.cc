@@ -1,5 +1,4 @@
 #include "RasterProcessor.h"
-
 #include <gdal_utils.h>
 #include <cpl_vsi.h>
 #include <iostream>
@@ -8,73 +7,81 @@
 #include <cstdlib>
 #include <drogon/utils/Utilities.h>
 
+//updated GDAL warp to use multi threading for calculations for maximum performance
+
 // helper functions
 
 std::vector<std::string> RasterProcessor::buildWarpArgs(const GDALDatasetPtr& hInputDS)
 {
-    // build the string configuration for warping the fetched tile
+     // build the string configuration for warping the fetched tile
 
-    // physical pixel dimensions of the target
-    int target_W = hInputDS->GetRasterXSize(); // width
-    int target_H = hInputDS->GetRasterYSize(); // height
+     // physical pixel dimensions of the target
+     int target_W = hInputDS->GetRasterXSize(); // width
+     int target_H = hInputDS->GetRasterYSize(); // height
 
-    // geoTransform holds 6 numbers: top-left coordinates, pixel width, pixel height
-    double geoTransform[6];
-    hInputDS->GetGeoTransform(geoTransform);
+     // geoTransform holds 6 numbers: top-left coordinates, pixel width, pixel height
+     double geoTransform[6];
+     hInputDS->GetGeoTransform(geoTransform);
 
-    // next we build the list of string arguments
+     // next we build the list of string arguments
 
-    std::vector<std::string> warpArgs = {
-        "-ts", std::to_string(target_W), std::to_string(target_H), // to match pixel width and height exactly
+     std::vector<std::string> warpArgs = {
+         "-ts", std::to_string(target_W), std::to_string(target_H), // to match pixel width and height exactly
 
-        "-te", // target extent (cropping the bounding box): min x, min y, max x, max y
-        std::to_string(geoTransform[0]),        // min x: left edge
-        std::to_string(geoTransform[3] + (target_H * geoTransform[5])),     // min y: bottom edge
-        std::to_string(geoTransform[0] + (target_W * geoTransform[1])),     // max x: right edge
-        std::to_string(geoTransform[3]),        // max y: top edge
+         "-te", // target extent (cropping the bounding box): min x, min y, max x, max y
+         std::to_string(geoTransform[0]),        // min x: left edge
+         std::to_string(geoTransform[3] + (target_H * geoTransform[5])),     // min y: bottom edge
+         std::to_string(geoTransform[0] + (target_W * geoTransform[1])),     // max x: right edge
+         std::to_string(geoTransform[3]),        // max y: top edge
 
-        "-t_srs", hInputDS->GetProjectionRef(),  // force the CRS of warped tile to match user's image
+         "-t_srs", hInputDS->GetProjectionRef(),  // force the CRS of warped tile to match user's image
 
-        "-r", "bilinear"  // smoothes out 30m blocks into a fine, smooth gradient after stretching to match high resolution of user's image
-    };
+         "-r", "bilinear",  // smoothes out 30m blocks into a fine, smooth gradient after stretching 
+                         //to match high resolution of user's image
+         
+         //adding performance flags
+         "-wm", "500",                  // Allow GDAL to use up to 500MB of RAM for processing
+         "-multi",                      // Enable asynchronous I/O
+         "-wo", "NUM_THREADS=ALL_CPUS"  // Force Warp algorithm to use all available logical cores
+     };
 
-    return warpArgs;
+     return warpArgs;
 }
 
 GDALDatasetPtr RasterProcessor::executeWarp(const GDALDatasetPtr& hDemDS, const std::vector<std::string>& warpArgs, const std::string& outPath)
 {
-    // to execute the warping process on fetched tile
+     // to execute the warping process on fetched tile
 
-    // to convert std::vector<std::string> into string list that GDAL needs
-    char** papszWarpArgs = nullptr;
-    for(const auto& arg : warpArgs)
-    {
-        papszWarpArgs = CSLAddString(papszWarpArgs, arg.c_str());
-    }
+     // to convert std::vector<std::string> into string list that GDAL needs
+     char** papszWarpArgs = nullptr;
+     for(const auto& arg : warpArgs)
+     {
+         papszWarpArgs = CSLAddString(papszWarpArgs, arg.c_str());
+     }
 
-    // load these arguments into GDAL options object
-    GDALWarpAppOptions* warpOptions = GDALWarpAppOptionsNew(papszWarpArgs, nullptr);
+     // load these arguments into GDAL options object
+     GDALWarpAppOptions* warpOptions = GDALWarpAppOptionsNew(papszWarpArgs, nullptr);
 
-    // GDAL's core C functions require array of raw pointers
-    // we temporarily extract the raw pointer just for GDALWarp function call
-    GDALDataset* rawDemPtr = hDemDS.get();
+     // GDAL's core C functions require array of raw pointers
+     // we temporarily extract the raw pointer just for GDALWarp function call
+     GDALDataset* rawDemPtr = hDemDS.get();
 
-    // mathematically stretch the hDemDS and save it to outPath (/vsimem/)
-    // immediately wrap the GDALDataset object and make hOutDS point to it
-    GDALDatasetPtr hOutDS(static_cast<GDALDataset*>(
-        GDALWarp(outPath.c_str(), nullptr, 1, (GDALDatasetH*)&rawDemPtr, warpOptions, nullptr)
-    ));
+     // mathematically stretch the hDemDS and save it to outPath (/vsimem/)
+     // immediately wrap the GDALDataset object and make hOutDS point to it
+     GDALDatasetPtr hOutDS(static_cast<GDALDataset*>(
+         GDALWarp(outPath.c_str(), nullptr, 1, (GDALDatasetH*)&rawDemPtr, warpOptions, nullptr)
+     ));
 
-    // cleanup configuration objects: as these are not unique_ptr
-    GDALWarpAppOptionsFree(warpOptions);
-    CSLDestroy(papszWarpArgs);
+     // cleanup configuration objects: as these are not unique_ptr
+     GDALWarpAppOptionsFree(warpOptions);
+     CSLDestroy(papszWarpArgs);
 
-    if (!hOutDS) 
-    {
-        throw std::runtime_error("RasterProcessor: GDALWarp failed to stretch the DEM.");
-    }
+     if (!hOutDS) 
+     {
+         throw std::runtime_error("RasterProcessor: GDALWarp failed to stretch the DEM.");
+     }
 
-    return hOutDS; // no need for std::move as return values are automatically moved
+     return hOutDS; // no need for std::move as return values are automatically moved
 }
 
 std::vector<float> RasterProcessor::extractFloatMatrix(const GDALDatasetPtr& hOutDS, int width, int height)
@@ -98,27 +105,49 @@ std::vector<float> RasterProcessor::extractFloatMatrix(const GDALDatasetPtr& hOu
                                    final_matrix.data(), width, height,      // write into our C++ vector
                                    GDT_Float32, 0, 0);                      // specify that we want float32 numbers
     
-    if (err != CE_None) {
-        throw std::runtime_error("RasterProcessor: Failed to read pixel data from warped DEM.");
-    }
+     if (err != CE_None) 
+     {
+         throw std::runtime_error("RasterProcessor: Failed to read pixel data from warped DEM.");
+     }
     
     // NoData filtering 
 
     // if the data contains invalid "NoData" pixels (-32768)
     // convert them to NaN (Not a Number)
 
-    if(hasNoData)
-    {
-        for (size_t i = 0; i < final_matrix.size(); i++) 
-        {
-            if (final_matrix[i] == static_cast<float>(noDataValue)) 
-            {
-                final_matrix[i] = std::numeric_limits<float>::quiet_NaN();
-            }
-        }
-    }
+    //previous version of no data filtering
+    // if(hasNoData)
+    // {
+    //     for (size_t i = 0; i < final_matrix.size(); i++) 
+    //     {
+    //         if (final_matrix[i] == static_cast<float>(noDataValue)) 
+    //         {
+    //             final_matrix[i] = std::numeric_limits<float>::quiet_NaN();
+    //         }
+    //     }
+    // }
 
-    return final_matrix;
+    // NoData filtering 
+    if (hasNoData)
+    {
+         //single cast to save CPU cycles
+         const float void_val = static_cast<float>(noDataValue);
+         const float nan_val = std::numeric_limits<float>::quiet_NaN();
+        
+         //pointer-based iteration for faster access
+         float* data_ptr = final_matrix.data();
+         size_t total_pixels = final_matrix.size();
+        
+         for (size_t i = 0; i < total_pixels; ++i) 
+         {
+             if (data_ptr[i] == void_val) 
+             {
+                 data_ptr[i] = nan_val;
+             }
+         }
+     }
+
+     return final_matrix;
 }
 
 // main function

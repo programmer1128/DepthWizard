@@ -1,6 +1,6 @@
 #include "calibrationController.h"
 
-Task<HttpResponsePtr> CalibrationController::ping(HttpRequestPtr req) 
+Task<HttpResponsePtr> SystemCheckController::ping(HttpRequestPtr req) 
 {
      // Create a JSON object
      Json::Value ret;
