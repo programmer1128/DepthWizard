@@ -4,17 +4,76 @@
 #include <algorithm>
 #include <iostream>
 
+
+std::vector<int> RansacCalibrator::extractValidIndices(const std::vector<float>& srtmHeight) 
+{
+     size_t total_size = srtmHeight.size();
+     std::vector<int> validIndices;
+    
+     if (total_size == 0) 
+     {
+         return validIndices;
+     }
+
+     // Allocate the absolute maximum possible size upfront
+     validIndices.resize(total_size);
+    
+     // Extract raw C-pointer for direct memory writing (bypasses vector boundary checks)
+     int* write_ptr = validIndices.data();
+     size_t write_count = 0;
+
+     // Set up bidirectional read pointers
+     size_t left = 0;
+     size_t right = total_size - 1;
+
+     // Search from both sides simultaneously to halve loop iterations
+     while (left < right) 
+     {
+         float val_left = srtmHeight[left];
+         float val_right = srtmHeight[right];
+
+         //valid index condition for 0,neg and NaN
+         if (!std::isnan(val_left) && val_left > 0.0f) 
+         {
+             write_ptr[write_count++] = left;
+         }
+        
+         if (!std::isnan(val_right) && val_right > 0.0f) 
+         {
+             write_ptr[write_count++] = right;
+         }
+        
+         left++;
+         right--;
+     }
+
+     // Handle the exact middle element if the array size is an odd number
+     if (left == right) 
+     {
+         float val_mid = srtmHeight[left];
+         if (!std::isnan(val_mid) && val_mid > 0.0f) 
+         {
+             write_ptr[write_count++] = left;
+         }
+     }
+
+     //truncate the vector to discard the unused trailing memory preventing mem leak
+     validIndices.resize(write_count);
+
+     return validIndices;
+}
+
 RansacCalibrator::RansacCalibrator(int iterations_count, double threshold) 
      : iterations(iterations_count), error_threshold(threshold) {}
 //srtm height will contain quiet_NaN values for void, so before calling this function we need to do a sweep
 //of the srtmHeight 1d flattened matrix to get validIndices and reduce load on rand num generator
 CalibrationResult RansacCalibrator::calculateScaleAndOffset(
      const std::vector<float>& aiDepth, 
-     const std::vector<float>& srtmHeight, 
-     const std::vector<int>& validIndices) 
+     const std::vector<float>& srtmHeight) 
 {    
      CalibrationResult best_result = {1.0, 0.0, 0};
     
+     std::vector<int> validIndices = extractValidIndices(srtmHeight);
      int num_valid = validIndices.size();
      if (num_valid < 2) 
      {
@@ -89,17 +148,21 @@ CalibrationResult RansacCalibrator::calculateScaleAndOffset(
 std::vector<float> RansacCalibrator::applyCalibration(
      const std::vector<float>& aiDepth, 
      double scale, 
-     double offset) {
-    
-     // Pre-allocate the exact memory size to prevent dynamic resizing overhead as vector in
-     //c++ reallocates after size 8 based on power of 2 so every reallocation would do memcpy
-     //increasing overhead
+     double offset) 
+{
      std::vector<float> absoluteDsm;
-     absoluteDsm.reserve(aiDepth.size());
+     // Use resize instead of reserve to hand memory allocation to the OS instantly
+     absoluteDsm.resize(aiDepth.size());
 
-     for (float relative_depth : aiDepth) 
+     // Extract raw pointers
+     float* out_ptr = absoluteDsm.data();
+     const float* in_ptr = aiDepth.data();
+     size_t total_size = aiDepth.size();
+
+     // Flat memory contiguous loop (Auto-vectorized by the C++ compiler)
+     for (size_t i = 0; i < total_size; ++i) 
      {
-         absoluteDsm.emplace_back(static_cast<float>(scale * relative_depth + offset));
+         out_ptr[i] = static_cast<float>(scale * in_ptr[i] + offset);
      }
 
      return absoluteDsm;

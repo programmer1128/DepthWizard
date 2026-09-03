@@ -12,5 +12,7 @@ class GlbMesher
          const std::vector<float>& dsm_matrix, 
          int width, 
          int height,
-         float pixel_size = 1.0f );
+         float pixel_size,
+         const char* imgData,
+         size_t imgLength);
 };

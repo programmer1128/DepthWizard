@@ -12,6 +12,7 @@ int main()
      //and handle threading accordingly
      drogon::app().setThreadNum(0);
      std::cout<<"running\n";
+     drogon::app().setLogLevel(trantor::Logger::kTrace);
      drogon::app().run();
 
      return 0;

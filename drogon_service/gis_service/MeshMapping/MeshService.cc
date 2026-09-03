@@ -1,10 +1,9 @@
 #include "MeshService.h"
+#include "../UVMapping/UVMapping.h"
+#include "../FileGenerators/GltfPackager.h"
 #include <iostream>
 #include <cstring>
-
-#define TINYGLTF_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <limits>
 #include "tiny_gltf.h"
 
 bool GlbMesher::generateGlb(
@@ -12,49 +11,116 @@ bool GlbMesher::generateGlb(
      const std::vector<float>& dsm_matrix, 
      int width, 
      int height,
-     float pixel_size) 
+     float pixel_size,const char* imgData,
+     size_t imgLength) 
 {    
      std::vector<float> positions;
      std::vector<uint32_t> indices;
 
-     // Pre-allocate memory for geometry only
-     positions.reserve(width * height * 3);
-     indices.reserve((width - 1) * (height - 1) * 6);
+     //Pre-allocate memory for geometry only
+     positions.resize(width * height * 3);
+     indices.resize((width - 1) * (height - 1) * 6);
+
+     float* pos_ptr = positions.data();
+     uint32_t* ind_ptr = indices.data();
+
+     size_t pos_idx = 0;
+     size_t ind_idx = 0;
+
+     double minX = std::numeric_limits<double>::max();
+     double minY = std::numeric_limits<double>::max();
+     double minZ = std::numeric_limits<double>::max();
+     
+     double maxX = std::numeric_limits<double>::lowest();
+     double maxY = std::numeric_limits<double>::lowest();
+     double maxZ = std::numeric_limits<double>::lowest();
 
      //generating vertices x,y,z
-     for (int y=0;y<height;y++) 
+     for (int y = 0; y < height; ++y) 
      {
-         for (int x=0;x<width;x++) 
+         for (int x = 0; x < width; ++x) 
          {
-             //the entire matrix is in 1d flat form. so we need 1d index acc to x and y
              float elevation = dsm_matrix[y * width + x];
-             positions.push_back(x * pixel_size); // X
-             positions.push_back(elevation); // Y (Up)
-             positions.push_back(y * pixel_size); // Z
+             float px = x * pixel_size;
+             float pz = y * pixel_size;
+
+             pos_ptr[pos_idx++] = px; 
+             pos_ptr[pos_idx++] = elevation;      
+             pos_ptr[pos_idx++] = pz; 
+
+             // Continuously update the bounding box
+             if (px < minX) 
+             {
+                 minX = px;
+             }
+             if (elevation < minY) 
+             {
+                 minY = elevation;
+             }
+             if (pz < minZ) 
+             {
+                 minZ = pz;
+             }
+             
+             if (px > maxX) 
+             {
+                 maxX = px;
+             }
+             if (elevation > maxY) 
+             {
+                 maxY = elevation;
+             }
+             if (pz > maxZ) 
+             {
+                 maxZ = pz;
+             }
          }
      }
 
-     //generating triangle indices
-     for (int y=0;y<height-1;y++) 
+     //Generating triangle indices via pointers
+     for (int y = 0; y < height - 1; ++y) 
      {
-         for(int x=0;x<width-1;x++) 
+         for(int x = 0; x < width - 1; ++x) 
          {   
-             uint32_t v0=y*width+x;
-             uint32_t v1=y*width+(x + 1);
-             uint32_t v2=(y+1)*width + x;
-             uint32_t v3=(y+1)*width+(x + 1);
-             // Triangle 1
-             indices.push_back(v0);
-             indices.push_back(v2);
-             indices.push_back(v1);
-             // Triangle 2
-             indices.push_back(v1);
-             indices.push_back(v2);
-             indices.push_back(v3);
+             uint32_t v0 = y * width + x;
+             uint32_t v1 = y * width + (x + 1);
+             uint32_t v2 = (y + 1) * width + x;
+             uint32_t v3 = (y + 1) * width + (x + 1);
+             
+             ind_ptr[ind_idx++] = v0;
+             ind_ptr[ind_idx++] = v2;
+             ind_ptr[ind_idx++] = v1;
+             
+             ind_ptr[ind_idx++] = v1;
+             ind_ptr[ind_idx++] = v2;
+             ind_ptr[ind_idx++] = v3;
          }
      }
 
-     //formatting to binary buffers of tinygltf to save as .glb
+     // Generate UV Map mathematically
+     std::vector<float> uvs = UVMapping::generateUV(width, height);
+
+     // Package the bounds array for the struct
+     double bounds[6] = { minX, minY, minZ, maxX, maxY, maxZ };
+
+     // Delegate binary generation to the Packager
+     return GltfPackager::buildAndSave(
+         outputPath, 
+         positions, 
+         indices, 
+         uvs, 
+         bounds, 
+         imgData, 
+         imgLength
+     );
+
+}
+
+
+
+/*
+//discarded logic for the GLTF writer
+//formatting to binary buffers of tinygltf to save as .glb
      tinygltf::Model model;
      tinygltf::Buffer mainBuffer;
 
@@ -95,6 +161,10 @@ bool GlbMesher::generateGlb(
      posAccessor.count = positions.size() / 3;
      posAccessor.type = TINYGLTF_TYPE_VEC3;
 
+     //bounding box meta data
+     posAccessor.minValues = { minX, minY, minZ };
+     posAccessor.maxValues = { maxX, maxY, maxZ };
+
      indAccessor.bufferView = 1; indAccessor.byteOffset = 0;
      indAccessor.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
      indAccessor.count = indices.size();
@@ -130,5 +200,4 @@ bool GlbMesher::generateGlb(
      {
          std::cerr << "Failed to write geometry-only GLB file to: " << outputPath << std::endl;
      }
-     return success;
-}
+     return success;*/
