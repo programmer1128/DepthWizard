@@ -7,6 +7,73 @@
 #include <fstream>
 #include <filesystem> // For deleting the temporary file
 #include <cstring>
+
+drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(drogon::HttpRequestPtr req)
+{
+     drogon::MultiPartParser fileUpload;
+    
+     if (fileUpload.parse(req) != 0) 
+     {
+         Json::Value error;
+         error["status"] = "error";
+         error["message"] = "Failed to parse multipart request.";
+         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+         resp->setStatusCode(drogon::k400BadRequest);
+         co_return resp; 
+     }
+
+     auto files = fileUpload.getFilesMap();
+
+     //Ensure both the image and the test depth matrix were uploaded
+     if (files.find("image") == files.end() || files.find("depth") == files.end()) 
+     {
+         Json::Value error;
+         error["status"] = "error";
+         error["message"] = "Missing files. Please provide both 'image' and 'depth' form fields.";
+         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+         resp->setStatusCode(drogon::k400BadRequest);
+         co_return resp; 
+     }
+
+     //Read-only access
+     const auto& imageFile = files.at("image");
+     const auto& depthFile = files.at("depth");
+
+     try 
+     {
+        //  //convert the uploaded depth binary directly into a std::vector<float>
+        //  // We calculate how many floats are in the file by dividing byte length by 4 (sizeof float)
+        //  size_t floatCount = depthFile.fileLength() / sizeof(float);
+        //  std::vector<float> aiDepth(floatCount);
+        
+        //  // Copy the raw bytes directly into the vector's memory
+        //  std::memcpy(aiDepth.data(), depthFile.fileData(), depthFile.fileLength());
+         //Execute the strictly isolated C++ GIS Pipeline
+         std::string saved_file = co_await PipelineService().executeCalibration(
+                 imageFile, 
+                 depthFile
+             );
+
+         //Return Success
+         Json::Value success;
+         success["status"] = "success";
+         success["message"] = "Pipeline completed successfully.";
+         success["saved_file"] = saved_file;
+
+         co_return drogon::HttpResponse::newHttpJsonResponse(success);
+
+     } 
+     catch (const std::exception& e) 
+     {
+         Json::Value error;
+         error["status"] = "error";
+         error["message"] = e.what();
+         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+         resp->setStatusCode(drogon::k500InternalServerError);
+         co_return resp;
+     }
+}
+
 // void CalibrationController::processTerrain(const drogon::HttpRequestPtr& req,
 //                                            std::function<void (const drogon::HttpResponsePtr &)> &&callback)
 // {
@@ -92,70 +159,3 @@
 //         callback(resp);
 //     }
 // }
-
-
-drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(drogon::HttpRequestPtr req)
-{
-     drogon::MultiPartParser fileUpload;
-    
-     if (fileUpload.parse(req) != 0) 
-     {
-         Json::Value error;
-         error["status"] = "error";
-         error["message"] = "Failed to parse multipart request.";
-         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-         resp->setStatusCode(drogon::k400BadRequest);
-         co_return resp; 
-     }
-
-     auto files = fileUpload.getFilesMap();
-
-     //Ensure both the image and the test depth matrix were uploaded
-     if (files.find("image") == files.end() || files.find("depth") == files.end()) 
-     {
-         Json::Value error;
-         error["status"] = "error";
-         error["message"] = "Missing files. Please provide both 'image' and 'depth' form fields.";
-         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-         resp->setStatusCode(drogon::k400BadRequest);
-         co_return resp; 
-     }
-
-     //Read-only access
-     const auto& imageFile = files.at("image");
-     const auto& depthFile = files.at("depth");
-
-     try 
-     {
-         //convert the uploaded depth binary directly into a std::vector<float>
-         // We calculate how many floats are in the file by dividing byte length by 4 (sizeof float)
-         size_t floatCount = depthFile.fileLength() / sizeof(float);
-         std::vector<float> aiDepth(floatCount);
-        
-         // Copy the raw bytes directly into the vector's memory
-         std::memcpy(aiDepth.data(), depthFile.fileData(), depthFile.fileLength());
-
-         //Execute the strictly isolated C++ GIS Pipeline
-         std::string saved_file = PipelineService().executeCalibration(
-             imageFile, 
-             depthFile);
-
-         //Return Success
-         Json::Value success;
-         success["status"] = "success";
-         success["message"] = "Pipeline completed successfully.";
-         success["saved_file"] = saved_file;
-
-         co_return drogon::HttpResponse::newHttpJsonResponse(success);
-
-     } 
-     catch (const std::exception& e) 
-     {
-         Json::Value error;
-         error["status"] = "error";
-         error["message"] = e.what();
-         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-         resp->setStatusCode(drogon::k500InternalServerError);
-         co_return resp;
-     }
-}

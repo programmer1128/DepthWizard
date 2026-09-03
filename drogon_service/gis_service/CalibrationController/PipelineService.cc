@@ -11,7 +11,7 @@
 #include <thread>
 #include "TiffExporter.h"
 
-std::string PipelineService::executeCalibration(
+drogon::Task<std::string> PipelineService::executeCalibration(
     const drogon::HttpFile& imageFile, 
     const drogon::HttpFile& depthFile)
 {
@@ -59,7 +59,7 @@ std::string PipelineService::executeCalibration(
          }).detach(); // Detach allows the thread to execute independently
 
          //return glb to frontend
-         return glb_output_path;
+         co_return glb_output_path;
      } 
      catch (const std::exception& e) 
      {

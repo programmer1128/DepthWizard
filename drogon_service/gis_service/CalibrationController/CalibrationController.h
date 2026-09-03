@@ -1,7 +1,8 @@
 #pragma once
 
 #include <drogon/HttpController.h>
-
+#include <drogon/drogon.h>
+#include <coroutine>
 using namespace drogon;
 
 class CalibrationController : public drogon::HttpController<CalibrationController>

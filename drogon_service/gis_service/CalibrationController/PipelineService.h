@@ -3,6 +3,8 @@
 #include <vector>
 #include <array>
 #include <drogon/MultiPart.h>
+#include <drogon/drogon.h>
+#include <coroutine>
 
 //data transfer object to hold GDAL spatial context
 struct SpatialMetadata 
@@ -16,7 +18,7 @@ struct SpatialMetadata
 class PipelineService 
 {
         public:
-        std::string executeCalibration(const drogon::HttpFile& imageFile, 
+        drogon::Task<std::string> executeCalibration(const drogon::HttpFile& imageFile, 
                  const drogon::HttpFile& depthFile);
 
 
