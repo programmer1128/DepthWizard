@@ -22,16 +22,31 @@ class PipelineService
                  const drogon::HttpFile& depthFile);
 
 
-        private:
-        //service broken down to methods for better modular access control and inlining added
-        //for compiler optimisation to reduce function call overhead
-        inline std::vector<float> parseDepthMatrix(const drogon::HttpFile& depthFile) const;
-        inline std::string mountImageToRAM(const std::string& uuid, 
+         private:
+         //service broken down to methods for better modular access control and inlining added
+         //for compiler optimisation to reduce function call overhead
+        
+         inline std::vector<float> parseDepthMatrix(const drogon::HttpFile& depthFile) const;
+        
+         inline std::string mountImageToRAM(const std::string& uuid, 
                  const drogon::HttpFile& imageFile) const;
-        inline std::vector<float> extractSrtmAndMetadata(const std::string& vsi_path, 
+       
+         inline std::vector<float> extractSrtmAndMetadata(const std::string& vsi_path, 
                  SpatialMetadata& meta) const;
-        inline std::vector<float> calibrateHeights(const std::vector<float>& aiDepth, 
+       
+         inline std::vector<float> calibrateHeights(const std::vector<float>& aiDepth, 
                  const std::vector<float>& srtmHeight) const;
-        inline std::string build3DMesh(const std::string& uuid, const std::vector<float>& absoluteDsm, 
-                 const SpatialMetadata& meta, const drogon::HttpFile& imageFile) const;
+        
+        //  inline std::vector<uint8_t> build3DMesh(const std::string& uuid, const std::vector<float>& absoluteDsm, 
+        //          const SpatialMetadata& meta, const drogon::HttpFile& imageFile) const;
+
+         inline std::vector<uint8_t> build3DMesh(
+                const std::string& uuid, 
+                const std::vector<float>& absoluteDsm, 
+                const SpatialMetadata& meta, 
+                const std::vector<uint8_t>& textureBytes) const;
+
+         inline std::vector<uint8_t> extractJpegTexture(
+            const std::string& vsi_path, 
+            const drogon::HttpFile& imageFile) const;
 };
