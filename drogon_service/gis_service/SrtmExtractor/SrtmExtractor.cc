@@ -34,10 +34,22 @@ void initGDAL()
     
      // Enable fast multiplexed downloads and merge consecutive byte requests
      CPLSetConfigOption("GDAL_HTTP_MULTIPLEX", "YES");                 
-     CPLSetConfigOption("GDAL_HTTP_MERGE_CONSECUTIVE_READS", "YES");                 
-    
+     CPLSetConfigOption("GDAL_HTTP_MERGE_CONSECUTIVE_READS", "YES");        
+     
+     //Skip the preliminary HTTP header request this ensures there is no round trip
+     CPLSetConfigOption("CPL_VSIL_CURL_USE_HEAD", "FALSE");
+
+     //Increase initial byte fetch size to grab the entire COG header in one go 
+     //to decrease network calls and latencies
+     CPLSetConfigOption("GDAL_INGESTED_BYTES_AT_OPEN", "32768");
+
+     //Keep connection sockets alive to avoid SSL/TCP handshake penalties on fallback requests
+     CPLSetConfigOption("GDAL_HTTP_TCP_KEEPALIVE", "YES");
+
      // Cache the downloaded chunks in RAM
-     CPLSetConfigOption("VSI_CACHE", "TRUE");                         
+     CPLSetConfigOption("VSI_CACHE", "TRUE");    
+     CPLSetConfigOption("VSI_CACHE_SIZE", "50000000"); 
+     //cache eviction policy set to 50MB                 
 }
 
 GpsBounds SrtmExtractor::extractGpsBounds(const std::string &filePath)
@@ -61,7 +73,10 @@ GpsBounds SrtmExtractor::extractGpsBounds(GDALDataset *poDS)
 {
     GpsBounds bounds;
     if (!poDS)
-        return bounds;
+    {
+         return bounds;    
+    }
+       
 
     // no of pixel of the image
     bounds.pixels_x = poDS->GetRasterXSize();

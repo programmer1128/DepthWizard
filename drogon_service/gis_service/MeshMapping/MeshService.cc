@@ -6,8 +6,7 @@
 #include <limits>
 #include "tiny_gltf.h"
 
-bool GlbMesher::generateGlb(
-     const std::string& outputPath, 
+std::vector<uint8_t> GlbMesher::generateGlb(
      const std::vector<float>& dsm_matrix, 
      int width, 
      int height,
@@ -103,17 +102,42 @@ bool GlbMesher::generateGlb(
      // Package the bounds array for the struct
      double bounds[6] = { minX, minY, minZ, maxX, maxY, maxZ };
 
-     // Delegate binary generation to the Packager
-     return GltfPackager::buildAndSave(
-         outputPath, 
+    //  // Delegate binary generation to the Packager
+    //  return GltfPackager::buildAndSave(
+    //      outputPath, 
+    //      positions, 
+    //      indices, 
+    //      uvs, 
+    //      bounds, 
+    //      imgData, 
+    //      imgLength
+    //  );
+     //Compress the raw arrays into a Draco bitstream this ensures smaller .glb file generation
+     //and faster download for Unity
+     DracoCompressionResult dracoResult = DracoCompressor::compressGeometry(
          positions, 
          indices, 
-         uvs, 
+         uvs,16, // posQuantization (16-bit for ~2cm accuracy)
+         12, // uvQuantization
+         7   // speed (Level 7 for high compression)
+     );
+
+     if (!dracoResult.success) 
+     {
+         throw std::runtime_error("Draco Compression Failed: " + dracoResult.errorMessage);
+     }
+
+     size_t numVertices = positions.size() / 3;
+     size_t numIndices = indices.size();
+
+     std::vector<uint8_t> glbBytes = GltfPackager::buildToMemory(dracoResult, numVertices, numIndices, 
          bounds, 
          imgData, 
          imgLength
      );
 
+     // Return the bytes upstream to PipelineService
+     return glbBytes;
 }
 
 
