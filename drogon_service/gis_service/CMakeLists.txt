@@ -16,6 +16,15 @@ find_package(ZLIB REQUIRED)
 # Crucial for Geospatial Matrix warping and AWS Tile streaming
 find_package(GDAL REQUIRED) 
 
+#draco compression library for compressing .glb file
+find_package(draco CONFIG REQUIRED)
+
+#MiniIO config SDK
+find_package(AWSSDK REQUIRED COMPONENTS s3)
+
+#Multithreading support added
+find_package(OpenMP REQUIRED)
+
 #SOURCE FILE DISCOVERY (Package-by-Feature Architecture)
 # Explicitly grab sources from each dedicated service folder
 
@@ -30,6 +39,9 @@ file(GLOB PLUGINS_SRC CONFIGURE_DEPENDS "plugins/*.cc" "plugins/*.cpp")
 file(GLOB MESH_SRC CONFIGURE_DEPENDS "MeshMapping/*.cc" "MeshMapping/*.cpp")
 file(GLOB FILE_GENERATOR_SRC CONFIGURE_DEPENDS "FileGenerators/*.cc" "FileGenerators/*.cpp")
 file(GLOB UV_MAPPING CONFIGURE_DEPENDS "UVMapping/*.cc" "UVMapping/*.cpp")
+file(GLOB COMPRESSOR CONFIGURE_DEPENDS "CompressionLib/*.cc" "CompressionLib/*.cpp")
+file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cpp")
+file(GLOB IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp")
 
 
 #COMPILER OPTIMIZATIONS (Release Mode)
@@ -60,7 +72,10 @@ target_sources(${PROJECT_NAME}
                ${PLUGINS_SRC}
                ${MESH_SRC}
                ${FILE_GENERATOR_SRC}
-               ${UV_MAPPING})
+               ${UV_MAPPING}
+               ${COMPRESSOR}
+               ${DATA_HANDLERS}
+               ${IMAGE_TILER})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -78,6 +93,10 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/plugins
                            ${CMAKE_CURRENT_SOURCE_DIR}/FileGenerators
                            ${CMAKE_CURRENT_SOURCE_DIR}/UVMapping
+                           ${CMAKE_CURRENT_SOURCE_DIR}/CompressionLib
+                           ${CMAKE_CURRENT_SOURCE_DIR}/DataHandlers
+                           ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService
+                           ${CMAKE_CURRENT_SOURCE_DIR}/structures
                            ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
 
 
@@ -86,6 +105,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Drogon::Drogon 
     ZLIB::ZLIB
     ${GDAL_LIBRARIES} # Bind the GDAL binary
+    draco
+    ${AWSSDK_LINK_LIBRARIES} #AWS sdk C++ lib for MiniIO client
+    OpenMP::OpenMP_CXX #OpenMp Multi threading 
 )
 
 if (CMAKE_CXX_STANDARD LESS 20)

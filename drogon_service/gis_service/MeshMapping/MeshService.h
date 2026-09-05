@@ -2,13 +2,13 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include "../CompressionLib/DracoCompressor.h"
 
 class GlbMesher 
 {
      public:
      // Generates a geometry-only 3D mesh (Vertices + Indices) and packs it into a .glb
-     bool generateGlb(
-         const std::string& outputPath, 
+     std::vector<uint8_t> generateGlb(
          const std::vector<float>& dsm_matrix, 
          int width, 
          int height,
