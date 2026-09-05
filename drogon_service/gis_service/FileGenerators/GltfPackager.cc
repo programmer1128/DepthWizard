@@ -102,9 +102,18 @@ std::vector<uint8_t> GltfPackager::buildToMemory(
       uvAccessor.count = numVertices;
       uvAccessor.type = TINYGLTF_TYPE_VEC2;
 
+      // NEW: Normal Accessor
+      tinygltf::Accessor normAccessor;
+      normAccessor.bufferView = -1; 
+      normAccessor.byteOffset = 0;
+      normAccessor.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+      normAccessor.count = numVertices;
+      normAccessor.type = TINYGLTF_TYPE_VEC3;
+
       model.accessors.push_back(posAccessor); // Index 0
       model.accessors.push_back(indAccessor); // Index 1
       model.accessors.push_back(uvAccessor);  // Index 2
+      model.accessors.push_back(normAccessor);//index 3 for normals
 
       //Image & Material Construction
       tinygltf::Image image;
@@ -134,6 +143,7 @@ std::vector<uint8_t> GltfPackager::buildToMemory(
       tinygltf::Primitive primitive;
       primitive.attributes["POSITION"] = 0; 
       primitive.attributes["TEXCOORD_0"] = 2; 
+      primitive.attributes["NORMAL"] = 3;
       primitive.indices = 1;
       primitive.material = 0; 
       primitive.mode = TINYGLTF_MODE_TRIANGLES;
@@ -145,6 +155,8 @@ std::vector<uint8_t> GltfPackager::buildToMemory(
       tinygltf::Value::Object dracoAttrs;
       dracoAttrs["POSITION"] = tinygltf::Value(dracoResult.posAttrId);
       dracoAttrs["TEXCOORD_0"] = tinygltf::Value(dracoResult.uvAttrId);
+      dracoAttrs["NORMAL"] = tinygltf::Value(dracoResult.normalAttrId);
+
       dracoExt["attributes"] = tinygltf::Value(dracoAttrs);
 
       primitive.extensions["KHR_draco_mesh_compression"] = tinygltf::Value(dracoExt);

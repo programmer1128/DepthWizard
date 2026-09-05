@@ -35,7 +35,7 @@ drogon::Task<std::string> PipelineService::executeCalibration(
      {
          //auto start_total = std::chrono::steady_clock::now();
 
-         //auto start_fetch = std::chrono::steady_clock::now();
+         auto start_fetch = std::chrono::steady_clock::now();
          //parse Input
          std::vector<float> aiDepth = parseDepthMatrix(depthFile);
         
@@ -49,35 +49,35 @@ drogon::Task<std::string> PipelineService::executeCalibration(
          //user req at the same time offering better concurrency
          VSIUnlink(vsi_path.c_str()); 
 
-         //auto end_fetch = std::chrono::steady_clock::now();
-         //auto fetch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_fetch - start_fetch).count();
-         // std::cout << "[Latency] GDAL Fetch & Extraction: " << fetch_ms << " ms\n";
+         auto end_fetch = std::chrono::steady_clock::now();
+         auto fetch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_fetch - start_fetch).count();
+         std::cout << "[Latency] GDAL Fetch & Extraction: " << fetch_ms << " ms\n";
 
-         //auto start_calib = std::chrono::steady_clock::now();
+         auto start_calib = std::chrono::steady_clock::now();
 
          //RANSAC Calibration
          std::vector<float> absoluteDsm = calibrateHeights(aiDepth, srtmHeight);
          
-         //auto end_calib = std::chrono::steady_clock::now();
+         auto end_calib = std::chrono::steady_clock::now();
 
-         //auto calib_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_calib - start_calib).count();
-         //std::cout << "[Latency] RANSAC Calibration: " << calib_ms << " ms\n";
+         auto calib_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_calib - start_calib).count();
+         std::cout << "[Latency] RANSAC Calibration: " << calib_ms << " ms\n";
 
-         //auto start_mesh = std::chrono::steady_clock::now();
+         auto start_mesh = std::chrono::steady_clock::now();
          //Generate 3D Textured Mesh (.glb) and get raw bytes
          //std::vector<uint8_t> glbBytes = build3DMesh(uuid, absoluteDsm, meta, imageFile);
 
          std::vector<uint8_t> glbBytes = build3DMesh(uuid, absoluteDsm, meta, textureBytes);
-         //auto end_mesh = std::chrono::steady_clock::now();
+         auto end_mesh = std::chrono::steady_clock::now();
 
-         //auto mesh_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_mesh - start_mesh).count();
-         //std::cout << "[Latency] Meshing & Draco Compression: " << mesh_ms << " ms\n";
+         auto mesh_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_mesh - start_mesh).count();
+         std::cout << "[Latency] Meshing & Draco Compression: " << mesh_ms << " ms\n";
 
          //upload the glbBytes to the MiniIO object storage
          std::string bucket = "terrain-assets";
          std::string key = "mesh_" + uuid + ".glb";
  
-         //auto start_upload = std::chrono::steady_clock::now();
+         auto start_upload = std::chrono::steady_clock::now();
          //Upload to MinIO
          bool minio_success = MinioClient::uploadBuffer(bucket, key, glbBytes, "model/gltf-binary");
 
@@ -109,9 +109,9 @@ drogon::Task<std::string> PipelineService::executeCalibration(
          }).detach(); // Detach allows the thread to execute independently
 
          //return glb download URL of minio to frontend.
-         //auto end_upload = std::chrono::steady_clock::now();
-         //auto upload_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_upload - start_upload).count();
-         //std::cout << "[Latency] MinIO Network Upload: " << upload_ms << " ms\n";
+         auto end_upload = std::chrono::steady_clock::now();
+         auto upload_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_upload - start_upload).count();
+         std::cout << "[Latency] MinIO Network Upload: " << upload_ms << " ms\n";
 
          // Total Time
          //auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_upload - start_total).count();
@@ -183,15 +183,15 @@ inline std::vector<float> PipelineService::extractSrtmAndMetadata(const std::str
 
 inline std::vector<float> PipelineService::calibrateHeights(const std::vector<float>& aiDepth, const std::vector<float>& srtmHeight) const
 {
-     RansacCalibrator calibrator(500, 5.0); 
-     CalibrationResult best_result = calibrator.calculateScaleAndOffset(aiDepth, srtmHeight);
+     RansacCalibrator calibrator(500, 15.0); 
+     CalibrationResult result = calibrator.calculateScaleAndOffset(aiDepth, srtmHeight);
 
-     if (best_result.inliers_count == 0) 
+     if (result.inliers_count == 0) 
      {
          throw std::runtime_error("RANSAC failed to find a valid calibration model.");
      }
 
-     return calibrator.applyCalibration(aiDepth, best_result.scale, best_result.offset);
+     return calibrator.applyCalibration(aiDepth, result.a, result.b, result.c);
 }
 
 // inline std::vector<uint8_t> PipelineService::build3DMesh(
