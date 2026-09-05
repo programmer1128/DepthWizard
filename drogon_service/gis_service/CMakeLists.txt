@@ -44,6 +44,8 @@ file(GLOB UV_MAPPING CONFIGURE_DEPENDS "UVMapping/*.cc" "UVMapping/*.cpp")
 file(GLOB COMPRESSOR CONFIGURE_DEPENDS "CompressionLib/*.cc" "CompressionLib/*.cpp")
 file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cpp")
 file(GLOB TILING_HANN_ASSEMBLER CONFIGURE_DEPENDS "ImageTilingService/HannAssembler/*.cc" "ImageTilingService/HannAssembler/*.cpp")
+file(GLOB IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp")
+
 
 #COMPILER OPTIMIZATIONS (Release Mode)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -76,13 +78,15 @@ target_sources(${PROJECT_NAME}
                ${UV_MAPPING}
                ${COMPRESSOR}
                ${DATA_HANDLERS}
-               ${TILING_HANN_ASSEMBLER})
+               ${TILING_HANN_ASSEMBLER}
+               ${IMAGE_TILER})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
 target_include_directories(${PROJECT_NAME}
                            PRIVATE 
                            ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/include
                            ${CMAKE_CURRENT_SOURCE_DIR}/CalibrationController
                            ${CMAKE_CURRENT_SOURCE_DIR}/SrtmExtractor
                            ${CMAKE_CURRENT_SOURCE_DIR}/RasterProcessor
@@ -92,10 +96,12 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/utils
                            ${CMAKE_CURRENT_SOURCE_DIR}/plugins
                            ${CMAKE_CURRENT_SOURCE_DIR}/FileGenerators
-                           ${CMAKE_CURRENT_SOURCE_DIR}/UVMAPPING
+                           ${CMAKE_CURRENT_SOURCE_DIR}/UVMapping
                            ${CMAKE_CURRENT_SOURCE_DIR}/CompressionLib
                            ${CMAKE_CURRENT_SOURCE_DIR}/DataHandlers
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/HannAssembler
+                           ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService
+                           ${CMAKE_CURRENT_SOURCE_DIR}/structures
                            ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
 
 
