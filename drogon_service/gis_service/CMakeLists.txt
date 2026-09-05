@@ -25,6 +25,8 @@ find_package(AWSSDK REQUIRED COMPONENTS s3)
 #Multithreading support added
 find_package(OpenMP REQUIRED)
 
+find_package(Halide REQUIRED)
+
 #SOURCE FILE DISCOVERY (Package-by-Feature Architecture)
 # Explicitly grab sources from each dedicated service folder
 
@@ -41,6 +43,7 @@ file(GLOB FILE_GENERATOR_SRC CONFIGURE_DEPENDS "FileGenerators/*.cc" "FileGenera
 file(GLOB UV_MAPPING CONFIGURE_DEPENDS "UVMapping/*.cc" "UVMapping/*.cpp")
 file(GLOB COMPRESSOR CONFIGURE_DEPENDS "CompressionLib/*.cc" "CompressionLib/*.cpp")
 file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cpp")
+file(GLOB TILING_HANN_ASSEMBLER CONFIGURE_DEPENDS "ImageTilingService/HannAssembler/*.cc" "ImageTilingService/HannAssembler/*.cpp")
 
 #COMPILER OPTIMIZATIONS (Release Mode)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -72,7 +75,8 @@ target_sources(${PROJECT_NAME}
                ${FILE_GENERATOR_SRC}
                ${UV_MAPPING}
                ${COMPRESSOR}
-               ${DATA_HANDLERS})
+               ${DATA_HANDLERS}
+               ${TILING_HANN_ASSEMBLER})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -91,6 +95,7 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/UVMAPPING
                            ${CMAKE_CURRENT_SOURCE_DIR}/CompressionLib
                            ${CMAKE_CURRENT_SOURCE_DIR}/DataHandlers
+                           ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/HannAssembler
                            ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
 
 
@@ -101,7 +106,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${GDAL_LIBRARIES} # Bind the GDAL binary
     draco
     ${AWSSDK_LINK_LIBRARIES} #AWS sdk C++ lib for MiniIO client
-    OpenMP::OpenMP_CXX #OpenMp Multi threading 
+    OpenMP::OpenMP_CXX #OpenMp Multi threading
+    Halide::Halide # for Image Reconstruction (Global Hann Assembler)
 )
 
 if (CMAKE_CXX_STANDARD LESS 20)
