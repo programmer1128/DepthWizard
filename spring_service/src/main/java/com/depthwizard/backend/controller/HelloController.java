@@ -1,6 +1,6 @@
 package com.depthwizard.backend.controller;
 
-import com.depthwizard.backend.dto.HelloDTO;
+import com.depthwizard.backend.dto.MessageDTO;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -8,8 +8,8 @@ import org.springframework.web.bind.annotation.RestController;
 public class HelloController {
 
     @GetMapping("/test")
-    public HelloDTO sendHello() {
-        return new HelloDTO("Hello world!");
+    public MessageDTO sendHello() {
+        return new MessageDTO("Hello world!");
     }
 
 }

@@ -1,6 +1,6 @@
 package com.depthwizard.backend.dto;
 
-public record HelloDTO(
+public record MessageDTO(
         String message
 ) {
 }
