@@ -28,6 +28,9 @@ find_package(OpenMP REQUIRED)
 #Halide
 find_package(Halide REQUIRED)
 
+#Eigen library dependency
+find_package(Eigen3 REQUIRED)
+
 #SOURCE FILE DISCOVERY (Package-by-Feature Architecture)
 # Explicitly grab sources from each dedicated service folder
 
@@ -101,6 +104,7 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/structures
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/GraphOrdering
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/HannAssembler
+                           ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/TilingOLS
                            ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
 
 
@@ -113,6 +117,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${AWSSDK_LINK_LIBRARIES} #AWS sdk C++ lib for MiniIO client
     OpenMP::OpenMP_CXX #OpenMp Multi threading 
     Halide
+    Eigen3::Eigen
 )
 
 if (CMAKE_CXX_STANDARD LESS 20)

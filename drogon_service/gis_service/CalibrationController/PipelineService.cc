@@ -4,6 +4,7 @@
 #include "../RansacCalibrator/ransacCalibrator.h"
 #include "../MeshMapping/MeshService.h"
 #include "../DataHandlers/MiniIOClient.h"
+#include "../ImageTilingService/TilingService.h"
 #include <drogon/utils/Utilities.h>
 #include <gdal_priv.h>
 #include <stdexcept>
@@ -25,8 +26,7 @@ inline void writeJpegCallback(void* context, void* data, int size)
 
 
 drogon::Task<std::string> PipelineService::executeCalibration(
-     const drogon::HttpFile& imageFile, 
-     const drogon::HttpFile& depthFile)
+     const drogon::HttpFile& imageFile)
 {
      std::string uuid = drogon::utils::getUuid();
      std::string vsi_path = mountImageToRAM(uuid, imageFile);
@@ -36,9 +36,6 @@ drogon::Task<std::string> PipelineService::executeCalibration(
          //auto start_total = std::chrono::steady_clock::now();
 
          auto start_fetch = std::chrono::steady_clock::now();
-         //parse Input
-         std::vector<float> aiDepth = parseDepthMatrix(depthFile);
-        
          //Extract Base Topography and Spatial Context for geotiff generation for
          //storage of data for user height req query
          SpatialMetadata meta;
@@ -55,7 +52,13 @@ drogon::Task<std::string> PipelineService::executeCalibration(
 
          auto start_calib = std::chrono::steady_clock::now();
 
+         //integrating the image tiling
+         std::vector<float> aiDepth = 
+             co_await TilingService::generateStitchedDepth(vsi_path, meta.width, meta.height);
+        
          //RANSAC Calibration
+         //upto this part logic will remain same even for tiling of the .glb files
+         //
          std::vector<float> absoluteDsm = calibrateHeights(aiDepth, srtmHeight);
          
          auto end_calib = std::chrono::steady_clock::now();

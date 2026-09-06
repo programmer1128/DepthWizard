@@ -37,7 +37,7 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(drog
 
      //Read-only access
      const auto& imageFile = files.at("image");
-     const auto& depthFile = files.at("depth");
+     //const auto& depthFile = files.at("depth");
 
      try 
      {
@@ -50,8 +50,7 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(drog
         //  std::memcpy(aiDepth.data(), depthFile.fileData(), depthFile.fileLength());
          //Execute the strictly isolated C++ GIS Pipeline
          std::string saved_file = co_await PipelineService().executeCalibration(
-                 imageFile, 
-                 depthFile
+                 imageFile
              );
 
          //Return Success
