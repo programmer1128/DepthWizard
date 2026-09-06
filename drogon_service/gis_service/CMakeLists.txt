@@ -27,6 +27,9 @@ find_package(OpenMP REQUIRED)
 
 find_package(Halide REQUIRED)
 
+#Eigen3 support
+find_package(Eigen3 REQUIRED)
+
 #SOURCE FILE DISCOVERY (Package-by-Feature Architecture)
 # Explicitly grab sources from each dedicated service folder
 
@@ -45,6 +48,7 @@ file(GLOB COMPRESSOR CONFIGURE_DEPENDS "CompressionLib/*.cc" "CompressionLib/*.c
 file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cpp")
 file(GLOB TILING_HANN_ASSEMBLER CONFIGURE_DEPENDS "ImageTilingService/HannAssembler/*.cc" "ImageTilingService/HannAssembler/*.cpp")
 file(GLOB IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp")
+file(GLOB TILER_OLS CONFIGURE_DEPENDS "TilingOLS/*.cc" "TilingOLS/*.cpp")
 
 
 #COMPILER OPTIMIZATIONS (Release Mode)
@@ -79,7 +83,8 @@ target_sources(${PROJECT_NAME}
                ${COMPRESSOR}
                ${DATA_HANDLERS}
                ${TILING_HANN_ASSEMBLER}
-               ${IMAGE_TILER})
+               ${IMAGE_TILER}
+               ${TILER_OLS})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -102,7 +107,9 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/HannAssembler
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService
                            ${CMAKE_CURRENT_SOURCE_DIR}/structures
-                           ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
+                           ${CMAKE_CURRENT_SOURCE_DIR}/TilingOLS
+                           ${GDAL_INCLUDE_DIRS}
+                           ${EIGEN3_INCLUDE_DIRS})
 
 
 #LINK LIBRARIES TO THE TARGET
@@ -114,6 +121,13 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${AWSSDK_LINK_LIBRARIES} #AWS sdk C++ lib for MiniIO client
     OpenMP::OpenMP_CXX #OpenMp Multi threading
     Halide::Halide # for Image Reconstruction (Global Hann Assembler)
+    Eigen3::Eigen
+)
+
+target_compile_options(${PROJECT_NAME} PRIVATE 
+    -O3 
+    -march=native 
+    -flto
 )
 
 if (CMAKE_CXX_STANDARD LESS 20)
