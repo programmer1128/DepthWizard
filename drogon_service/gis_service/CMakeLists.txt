@@ -25,16 +25,10 @@ find_package(AWSSDK REQUIRED COMPONENTS s3)
 #Multithreading support added
 find_package(OpenMP REQUIRED)
 
-<<<<<<< HEAD
-find_package(Halide REQUIRED)
-
-#Eigen3 support
-=======
 #Halide
 find_package(Halide REQUIRED)
 
 #Eigen library dependency
->>>>>>> origin/feature/ImageTilingIntegration_aritra
 find_package(Eigen3 REQUIRED)
 
 #SOURCE FILE DISCOVERY (Package-by-Feature Architecture)
@@ -53,15 +47,12 @@ file(GLOB FILE_GENERATOR_SRC CONFIGURE_DEPENDS "FileGenerators/*.cc" "FileGenera
 file(GLOB UV_MAPPING CONFIGURE_DEPENDS "UVMapping/*.cc" "UVMapping/*.cpp")
 file(GLOB COMPRESSOR CONFIGURE_DEPENDS "CompressionLib/*.cc" "CompressionLib/*.cpp")
 file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cpp")
-<<<<<<< HEAD
 file(GLOB TILING_HANN_ASSEMBLER CONFIGURE_DEPENDS "ImageTilingService/HannAssembler/*.cc" "ImageTilingService/HannAssembler/*.cpp")
 file(GLOB IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp")
 file(GLOB TILER_OLS CONFIGURE_DEPENDS "TilingOLS/*.cc" "TilingOLS/*.cpp")
 
-=======
 file(GLOB STRUCTURES CONFIGURE_DEPENDS "structures/*.cc" "structures/*.cpp" "structures/*.h")
 file(GLOB_RECURSE IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp")
->>>>>>> origin/feature/ImageTilingIntegration_aritra
 
 #COMPILER OPTIMIZATIONS (Release Mode)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
