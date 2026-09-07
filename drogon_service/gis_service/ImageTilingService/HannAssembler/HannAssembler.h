@@ -1,5 +1,7 @@
 #pragma once
 #include <vector>
+#include <Halide.h>
+#include <omp.h>
 // #include <mutex>
 
 // specification of each tile
@@ -33,6 +35,18 @@ private:
     std::vector<float> weightAccum;    // denominator accumulator -> sum(Wi)
 
     // std::mutex accumMutex;
+
+    // Halide Pipeline State
+    Halide::Func tile_processor;
+    Halide::Param<float> s_param;
+    Halide::Param<float> t_param;
+    Halide::ImageParam input_param;
+
+    std::vector<float> threadElevationAccum;
+    std::vector<float> threadWeightAccum;
+
+    int num_threads;
+    size_t total_frame_size;
 
 public:
     HannAssembler(int width, int height);

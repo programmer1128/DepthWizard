@@ -25,9 +25,16 @@ find_package(AWSSDK REQUIRED COMPONENTS s3)
 #Multithreading support added
 find_package(OpenMP REQUIRED)
 
+<<<<<<< HEAD
 find_package(Halide REQUIRED)
 
 #Eigen3 support
+=======
+#Halide
+find_package(Halide REQUIRED)
+
+#Eigen library dependency
+>>>>>>> origin/feature/ImageTilingIntegration_aritra
 find_package(Eigen3 REQUIRED)
 
 #SOURCE FILE DISCOVERY (Package-by-Feature Architecture)
@@ -46,10 +53,15 @@ file(GLOB FILE_GENERATOR_SRC CONFIGURE_DEPENDS "FileGenerators/*.cc" "FileGenera
 file(GLOB UV_MAPPING CONFIGURE_DEPENDS "UVMapping/*.cc" "UVMapping/*.cpp")
 file(GLOB COMPRESSOR CONFIGURE_DEPENDS "CompressionLib/*.cc" "CompressionLib/*.cpp")
 file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cpp")
+<<<<<<< HEAD
 file(GLOB TILING_HANN_ASSEMBLER CONFIGURE_DEPENDS "ImageTilingService/HannAssembler/*.cc" "ImageTilingService/HannAssembler/*.cpp")
 file(GLOB IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp")
 file(GLOB TILER_OLS CONFIGURE_DEPENDS "TilingOLS/*.cc" "TilingOLS/*.cpp")
 
+=======
+file(GLOB STRUCTURES CONFIGURE_DEPENDS "structures/*.cc" "structures/*.cpp" "structures/*.h")
+file(GLOB_RECURSE IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp")
+>>>>>>> origin/feature/ImageTilingIntegration_aritra
 
 #COMPILER OPTIMIZATIONS (Release Mode)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -84,7 +96,8 @@ target_sources(${PROJECT_NAME}
                ${DATA_HANDLERS}
                ${TILING_HANN_ASSEMBLER}
                ${IMAGE_TILER}
-               ${TILER_OLS})
+               ${TILER_OLS}
+               ${STRUCTURES})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -104,12 +117,14 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/UVMapping
                            ${CMAKE_CURRENT_SOURCE_DIR}/CompressionLib
                            ${CMAKE_CURRENT_SOURCE_DIR}/DataHandlers
-                           ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/HannAssembler
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService
-                           ${CMAKE_CURRENT_SOURCE_DIR}/structures
                            ${CMAKE_CURRENT_SOURCE_DIR}/TilingOLS
+                           ${CMAKE_CURRENT_SOURCE_DIR}/structures
+                           ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/GraphOrdering
+                           ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/HannAssembler
+                           ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/TilingOLS
                            ${GDAL_INCLUDE_DIRS}
-                           ${EIGEN3_INCLUDE_DIRS})
+                           ${EIGEN3_INCLUDE_DIRS}) # Bind GDAL headers
 
 
 #LINK LIBRARIES TO THE TARGET
@@ -128,6 +143,9 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     -O3 
     -march=native 
     -flto
+    OpenMP::OpenMP_CXX #OpenMp Multi threading 
+    Halide
+    Eigen3::Eigen
 )
 
 if (CMAKE_CXX_STANDARD LESS 20)
