@@ -1,0 +1,10 @@
+{
+  "name": "com.unity.mathematics",
+  "displayName": "Mathematics",
+  "version": "1.4.0",
+  "description": "Note: The package is now empty and unnecessary, because it has been moved to a module. Formerly, it contained Unity's C# SIMD math library providing vector types and math functions with a shader like syntax.",
+  "keywords": [
+    "unity"
+  ],
+  "_fingerprint": "8306a64d0cd683e2e50ce0d909c1f82e70f75669"
+}
