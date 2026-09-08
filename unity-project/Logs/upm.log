@@ -1,0 +1,15 @@
+[2026-09-08T16:46:31.600Z][INFO] Command-line: D:\\unity\\6000.6.0f1\\Editor\\Data\\Resources\\PackageManager\\Server\\UnityPackageManager.exe server -s 27400 --ipc-path Unity-Upm-27400 -l 2 --log-file d:\\test\\unity-project/Logs/upm.log
+[2026-09-08T16:46:31.685Z][INFO] IPC server started (IPC path=Unity-Upm-27400).
+[2026-09-08T16:46:31.685Z][INFO] Hint: To connect to this UPM instance, launch Unity with the command-line parameter -upmIpcPath Upm-27400.
+[2026-09-08T16:46:34.846Z][INFO] project:list-packages <-- Request received
+params: {}
+[2026-09-08T16:46:35.056Z][INFO] project:list-packages --> 200 (210 ms)
+[2026-09-08T16:46:53.307Z][INFO] project:list-packages <-- Request received
+params: {}
+[2026-09-08T16:46:53.330Z][INFO] project:list-packages <-- Request received
+params: {}
+[2026-09-08T16:46:53.546Z][INFO] project:list-packages --> 200 (239 ms)
+[2026-09-08T16:46:53.548Z][INFO] project:list-packages --> 200 (219 ms)
+[2026-09-08T16:46:53.607Z][INFO] project:list-packages <-- Request received
+params: {}
+[2026-09-08T16:46:56.605Z][INFO] project:list-packages --> 200 (2998 ms)

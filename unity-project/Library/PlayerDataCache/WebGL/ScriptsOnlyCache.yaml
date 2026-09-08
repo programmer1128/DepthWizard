@@ -1,0 +1,124 @@
+ScriptsOnlyBuild:
+  usedScripts:
+    Assembly-CSharp.dll:
+    - UnityNextViewer.ModelManager
+    - UnityNextViewer.OrbitCamera
+    UnityEditor.TestRunner.dll:
+    - UnityEditor.TestTools.TestRunner.Api.CallbacksHolder
+    - UnityEditor.TestTools.TestRunner.CommandLineTest.RunData
+    - UnityEditor.TestTools.TestRunner.TestListCacheData
+    - UnityEditor.TestTools.TestRunner.TestRun.TestJobDataHolder
+  serializedClasses: {}
+  methodsToPreserve: []
+  sceneClasses:
+    Assets/Scenes/MainScene.unity:
+    - Class: 1
+      Script: {instanceID: 0}
+    - Class: 4
+      Script: {instanceID: 0}
+    - Class: 20
+      Script: {instanceID: 0}
+    - Class: 21
+      Script: {instanceID: 0}
+    - Class: 28
+      Script: {instanceID: 0}
+    - Class: 48
+      Script: {instanceID: 0}
+    - Class: 49
+      Script: {instanceID: 0}
+    - Class: 81
+      Script: {instanceID: 0}
+    - Class: 89
+      Script: {instanceID: 0}
+    - Class: 104
+      Script: {instanceID: 0}
+    - Class: 108
+      Script: {instanceID: 0}
+    - Class: 114
+      Script: {fileID: 11500000, guid: 612c52c643c6d124298a96dc0ca3821e, type: 3}
+    - Class: 114
+      Script: {fileID: 11500000, guid: e323bb55094d5d542b730ebacb55fce5, type: 3}
+    - Class: 115
+      Script: {instanceID: 0}
+    - Class: 157
+      Script: {instanceID: 0}
+    - Class: 196
+      Script: {instanceID: 0}
+  scriptHashData:
+  - hash:
+      serializedVersion: 2
+      Hash: 97e077450d70dd1eba744eed0eae2436
+    assemblyName: glTFast
+    namespaceName: GLTFast
+    className: DefaultDeferAgent
+  - hash:
+      serializedVersion: 2
+      Hash: b1ce64e253efe70b32961246964143dc
+    assemblyName: glTFast
+    namespaceName: GLTFast
+    className: DontDestroyOnLoad
+  - hash:
+      serializedVersion: 2
+      Hash: 43c66b21b7309885eeb5acb046df62df
+    assemblyName: glTFast.Documentation.Examples
+    namespaceName: GLTFast.Documentation.Examples
+    className: ExtraData
+  - hash:
+      serializedVersion: 2
+      Hash: ba0faa2897db7bcdb36e04a01cdd6339
+    assemblyName: glTFast
+    namespaceName: GLTFast
+    className: GltfBoundsAsset
+  - hash:
+      serializedVersion: 2
+      Hash: ab0ade711359d5979a62fbad360125cd
+    assemblyName: glTFast
+    namespaceName: GLTFast
+    className: GltfAsset
+  - hash:
+      serializedVersion: 2
+      Hash: 663040435de195824e056ea635f210e6
+    assemblyName: glTFast
+    namespaceName: GLTFast
+    className: MaterialsVariantsComponent
+  - hash:
+      serializedVersion: 2
+      Hash: 2d7690f42906650f35566099cc508781
+    assemblyName: glTFast.Documentation.Examples
+    namespaceName: GLTFast.Documentation.Examples
+    className: ExportSamples
+  - hash:
+      serializedVersion: 2
+      Hash: a240158dad116f5b50910cca10f89639
+    assemblyName: Assembly-CSharp
+    namespaceName: UnityNextViewer
+    className: OrbitCamera
+  - hash:
+      serializedVersion: 2
+      Hash: 08b1de1c401ab8af4148b00893b391a4
+    assemblyName: Assembly-CSharp
+    namespaceName: UnityNextViewer
+    className: ModelManager
+  - hash:
+      serializedVersion: 2
+      Hash: 375f2bc75b873dff69dd5bdfa6497dfc
+    assemblyName: glTFast
+    namespaceName: GLTFast
+    className: UninterruptedDefaultDeferAgent
+  - hash:
+      serializedVersion: 2
+      Hash: 0d4b61d56bb3274b788bf0a34f1e0cce
+    assemblyName: glTFast.Documentation.Examples
+    namespaceName: GLTFast.Documentation.Examples
+    className: SimpleExport
+  - hash:
+      serializedVersion: 2
+      Hash: 6dc6eeffa8c0836a1ee8d9a7e9df1caf
+    assemblyName: glTFast
+    namespaceName: GLTFast
+    className: TimeBudgetPerFrameDeferAgent
+  platform: 20
+  scenePathNames:
+  - Assets/Scenes/MainScene.unity
+  nativeClasses: 000000003000000012000000820000001500000006000000310000007300000009000000810000000d000000c0a219270b000000370000007e0000000f1baa530a05df37130000007bce860a8d0000002f000000740000005e000000930000002c01000005000000620000001e0000004e0000000400000001000000c40000001c000000140000001b0000006c0000000200000072000000590000009d00000003000000080000006800000051000000b4000000i
+  playerPath: D:/test/nextjs-app/public/unity-build
