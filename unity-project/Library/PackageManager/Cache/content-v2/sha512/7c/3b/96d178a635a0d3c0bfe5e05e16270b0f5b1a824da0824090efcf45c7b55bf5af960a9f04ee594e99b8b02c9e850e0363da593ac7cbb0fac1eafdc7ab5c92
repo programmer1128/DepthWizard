@@ -1,1 +1,0 @@
-{"status":"Valid","reason":"Signature is ok","isLegacy":false,"attestation":{"version":1,"format":"archive","integrity":"sha256-dGUTVWunhl48wdQZjl6lOsn0GR3FjHbaYe0/bfoZ2Xw=","packageName":"com.unity.nuget.mono-cecil","packageVersion":"1.11.6","publishingChannel":"unity","entitlementKeys":[]}}
