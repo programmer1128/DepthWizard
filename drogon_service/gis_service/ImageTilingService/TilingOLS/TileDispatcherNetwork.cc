@@ -51,7 +51,7 @@ std::shared_ptr<std::vector<float>> TileDispatcher::streamToLightningAI(
 
      // 15-Second Network Timeout Shield
      struct timeval tv;
-     tv.tv_sec = 15;
+     tv.tv_sec = 120;
      tv.tv_usec = 0;
      setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
      setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof tv);

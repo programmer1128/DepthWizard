@@ -2,6 +2,7 @@
 #include <vector>
 #include <Halide.h>
 #include <omp.h>
+#include "../structures/TileGraph.h"
 // #include <mutex>
 
 // specification of each tile
@@ -14,12 +15,6 @@ struct TileWindow
     int y_size;
 };
 
-// resolved scaling and shifting factors from BFS
-typedef struct GlobalTransformations
-{
-    float scale; // s
-    float shift; // t
-} GlobalTransformations;
 
 class HannAssembler
 {

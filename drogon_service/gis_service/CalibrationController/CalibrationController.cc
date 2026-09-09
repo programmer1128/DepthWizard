@@ -25,11 +25,11 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(drog
      auto files = fileUpload.getFilesMap();
 
      //Ensure both the image and the test depth matrix were uploaded
-     if (files.find("image") == files.end() || files.find("depth") == files.end()) 
+     if (files.find("image") == files.end()) 
      {
          Json::Value error;
          error["status"] = "error";
-         error["message"] = "Missing files. Please provide both 'image' and 'depth' form fields.";
+         error["message"] = "Missing files. Please provide image file";
          auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
          resp->setStatusCode(drogon::k400BadRequest);
          co_return resp; 

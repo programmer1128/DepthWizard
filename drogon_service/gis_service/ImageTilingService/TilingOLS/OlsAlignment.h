@@ -1,7 +1,7 @@
 #pragma once 
 
 #include <span> // imports span
-#include "../utils/TilingTypes.h"
+#include "../structures/TileGraph.h"
 
 // this class has mathematical formulas needed to figure out how to blend 2 overlapping tiles together
 class OlsAlignment 

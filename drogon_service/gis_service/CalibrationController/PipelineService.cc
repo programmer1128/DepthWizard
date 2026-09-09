@@ -16,6 +16,8 @@
 #include "TiffExporter.h"
 #include "stb_image_write.h"
 #include "stb_image.h"
+#include <fstream>
+#include <algorithm>
 
 inline void writeJpegCallback(void* context, void* data, int size) 
 {
@@ -42,10 +44,7 @@ drogon::Task<std::string> PipelineService::executeCalibration(
          std::vector<float> srtmHeight = extractSrtmAndMetadata(vsi_path, meta);
         
          std::vector<uint8_t> textureBytes = extractJpegTexture(vsi_path, imageFile);
-         // Clean RAM immediately after extraction, this prevents RAM bloat for multiple
-         //user req at the same time offering better concurrency
-         VSIUnlink(vsi_path.c_str()); 
-
+         
          auto end_fetch = std::chrono::steady_clock::now();
          auto fetch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_fetch - start_fetch).count();
          std::cout << "[Latency] GDAL Fetch & Extraction: " << fetch_ms << " ms\n";
@@ -55,6 +54,11 @@ drogon::Task<std::string> PipelineService::executeCalibration(
          //integrating the image tiling
          std::vector<float> aiDepth = 
              co_await TilingService::generateStitchedDepth(vsi_path, meta.width, meta.height);
+
+         // Clean RAM immediately after extraction, this prevents RAM bloat for multiple
+         //user req at the same time offering better concurrency
+         std::remove(vsi_path.c_str());
+
         
          //RANSAC Calibration
          //upto this part logic will remain same even for tiling of the .glb files
@@ -124,8 +128,10 @@ drogon::Task<std::string> PipelineService::executeCalibration(
      catch (const std::exception& e) 
      {
          // Failsafe RAM cleanup
-         VSIUnlink(vsi_path.c_str());
-         throw; 
+         std::remove(vsi_path.c_str());
+         std::cerr << "CRASH DETECTED: " << e.what() << "\n";
+         // Explicitly rethrow to bypass the GCC coroutine bug
+         throw std::runtime_error(e.what());
      }
 }
 
@@ -140,19 +146,21 @@ inline std::vector<float> PipelineService::parseDepthMatrix(const drogon::HttpFi
 
 inline std::string PipelineService::mountImageToRAM(const std::string& uuid, const drogon::HttpFile& imageFile) const
 {
-     std::string vsi_path = "/vsimem/upload_" + uuid + ".tif";
-     VSILFILE* mem_handle = VSIFileFromMemBuffer(
-         vsi_path.c_str(), 
-         (GByte*)imageFile.fileData(), 
-         imageFile.fileLength(), 
-         FALSE
-     );
-
-     if (mem_handle != nullptr) 
+     // Use the OS /tmp/ directory (tmpfs RAM disk) instead of GDAL's /vsimem/
+     std::string real_path = "/tmp/upload_" + uuid + ".tif";
+     
+     std::ofstream out(real_path, std::ios::binary);
+     if (out.is_open()) 
      {
-         VSIFCloseL(mem_handle); 
+         out.write(imageFile.fileData(), imageFile.fileLength());
+         out.close();
      }
-     return vsi_path;
+     else 
+     {
+         throw std::runtime_error("Failed to write temporary image to " + real_path);
+     }
+     
+     return real_path;
 }
 
 inline std::vector<float> PipelineService::extractSrtmAndMetadata(const std::string& vsi_path, 
@@ -232,11 +240,38 @@ inline std::vector<uint8_t> PipelineService::build3DMesh(
 {
      GlbMesher mesher;
     
+     float true_pixel_size = static_cast<float>(meta.geoTransform[1]); 
+     if (true_pixel_size <= 0.1f) {
+         true_pixel_size = 30.0f; 
+     }
+
+     // Find lowest point to subtract the massive underground base
+     auto min_it = std::min_element(absoluteDsm.begin(), absoluteDsm.end());
+     float min_z = (min_it != absoluteDsm.end()) ? *min_it : 0.0f;
+
+     // Exaggeration dial (3.0f is a great cinematic standard for the Himalayas)
+     //float visual_exaggeration = 3.0f; 
+     
+     // A small visual base to give the 3D model some ground thickness (in pixel units)
+     float visual_exaggeration = 1.0f; 
+     
+     // A small visual base to give the 3D model some ground thickness
+     float base_thickness = 50.0f; 
+
+     std::vector<float> exaggeratedDsm = absoluteDsm;
+     for (float& z : exaggeratedDsm) 
+     {
+         //Removed the "/ true_pixel_size" division to restore raw heights
+         z = ((z - min_z) * visual_exaggeration) + base_thickness;
+     }
+
+     // RESTORE 1.0f here! This keeps the 3D model's width bounded to 4244 units,
+     // guaranteeing it easily fits inside any 3D viewer's camera limits.
      std::vector<uint8_t> glbBytes = mesher.generateGlb(
-         absoluteDsm, 
+         exaggeratedDsm,  
          meta.width, 
          meta.height, 
-         1.0f, // pixel_size modifier
+         1.0f, // <-- Keep the X/Y plane in normalized pixel space
          reinterpret_cast<const char*>(textureBytes.data()),   
          textureBytes.size()
      );

@@ -58,7 +58,7 @@ std::vector<uint8_t> GlbMesher::generateGlb(
              // Sample the original high-resolution matrix using the stride
              int orig_x = x * stride;
              int orig_y = y * stride;
-             float elevation = dsm_matrix[orig_y * width + orig_x]*y_scale;
+             float elevation = dsm_matrix[orig_y * width + orig_x];
              
              // Physical coordinates maintain their metric real-world scale
              float px = orig_x * pixel_size;
