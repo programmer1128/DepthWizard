@@ -1,6 +1,0 @@
-/home/aritra/Desktop/DepthWizard/build/CMakeFiles/gis_service.dir
-/home/aritra/Desktop/DepthWizard/build/CMakeFiles/edit_cache.dir
-/home/aritra/Desktop/DepthWizard/build/CMakeFiles/rebuild_cache.dir
-/home/aritra/Desktop/DepthWizard/build/test/CMakeFiles/gis_service_test.dir
-/home/aritra/Desktop/DepthWizard/build/test/CMakeFiles/edit_cache.dir
-/home/aritra/Desktop/DepthWizard/build/test/CMakeFiles/rebuild_cache.dir

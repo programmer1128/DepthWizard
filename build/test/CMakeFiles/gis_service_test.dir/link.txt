@@ -1,1 +1,0 @@
-/usr/bin/g++ -g -Wl,--dependency-file=CMakeFiles/gis_service_test.dir/link.d CMakeFiles/gis_service_test.dir/test_main.cc.o -o gis_service_test  /usr/local/lib64/libdrogon.a /usr/local/lib64/libtrantor.a /usr/lib64/libssl.so /usr/lib64/libcrypto.so -lpthread -ldl /usr/lib64/libjsoncpp.so.1.9.6 /lib64/libuuid.so /usr/lib64/libz.so

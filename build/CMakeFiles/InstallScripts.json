@@ -1,8 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/home/aritra/Desktop/DepthWizard/build/cmake_install.cmake",
-		"/home/aritra/Desktop/DepthWizard/build/test/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
