@@ -4,6 +4,7 @@
 #include "../RansacCalibrator/ransacCalibrator.h"
 #include "../MeshMapping/MeshService.h"
 #include "../DataHandlers/MiniIOClient.h"
+#include "../ImageTilingService/TilingService.h"
 #include <drogon/utils/Utilities.h>
 #include <gdal_priv.h>
 #include <stdexcept>
@@ -15,6 +16,8 @@
 #include "TiffExporter.h"
 #include "stb_image_write.h"
 #include "stb_image.h"
+#include <fstream>
+#include <algorithm>
 
 inline void writeJpegCallback(void* context, void* data, int size) 
 {
@@ -25,8 +28,7 @@ inline void writeJpegCallback(void* context, void* data, int size)
 
 
 drogon::Task<std::string> PipelineService::executeCalibration(
-     const drogon::HttpFile& imageFile, 
-     const drogon::HttpFile& depthFile)
+     const drogon::HttpFile& imageFile)
 {
      std::string uuid = drogon::utils::getUuid();
      std::string vsi_path = mountImageToRAM(uuid, imageFile);
@@ -35,49 +37,54 @@ drogon::Task<std::string> PipelineService::executeCalibration(
      {
          //auto start_total = std::chrono::steady_clock::now();
 
-         //auto start_fetch = std::chrono::steady_clock::now();
-         //parse Input
-         std::vector<float> aiDepth = parseDepthMatrix(depthFile);
-        
+         auto start_fetch = std::chrono::steady_clock::now();
          //Extract Base Topography and Spatial Context for geotiff generation for
          //storage of data for user height req query
          SpatialMetadata meta;
          std::vector<float> srtmHeight = extractSrtmAndMetadata(vsi_path, meta);
         
          std::vector<uint8_t> textureBytes = extractJpegTexture(vsi_path, imageFile);
+         
+         auto end_fetch = std::chrono::steady_clock::now();
+         auto fetch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_fetch - start_fetch).count();
+         std::cout << "[Latency] GDAL Fetch & Extraction: " << fetch_ms << " ms\n";
+
+         auto start_calib = std::chrono::steady_clock::now();
+
+         //integrating the image tiling
+         std::vector<float> aiDepth = 
+             co_await TilingService::generateStitchedDepth(vsi_path, meta.width, meta.height);
+
          // Clean RAM immediately after extraction, this prevents RAM bloat for multiple
          //user req at the same time offering better concurrency
-         VSIUnlink(vsi_path.c_str()); 
+         std::remove(vsi_path.c_str());
 
-         //auto end_fetch = std::chrono::steady_clock::now();
-         //auto fetch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_fetch - start_fetch).count();
-         // std::cout << "[Latency] GDAL Fetch & Extraction: " << fetch_ms << " ms\n";
-
-         //auto start_calib = std::chrono::steady_clock::now();
-
+        
          //RANSAC Calibration
+         //upto this part logic will remain same even for tiling of the .glb files
+         //
          std::vector<float> absoluteDsm = calibrateHeights(aiDepth, srtmHeight);
          
-         //auto end_calib = std::chrono::steady_clock::now();
+         auto end_calib = std::chrono::steady_clock::now();
 
-         //auto calib_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_calib - start_calib).count();
-         //std::cout << "[Latency] RANSAC Calibration: " << calib_ms << " ms\n";
+         auto calib_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_calib - start_calib).count();
+         std::cout << "[Latency] RANSAC Calibration: " << calib_ms << " ms\n";
 
-         //auto start_mesh = std::chrono::steady_clock::now();
+         auto start_mesh = std::chrono::steady_clock::now();
          //Generate 3D Textured Mesh (.glb) and get raw bytes
          //std::vector<uint8_t> glbBytes = build3DMesh(uuid, absoluteDsm, meta, imageFile);
 
          std::vector<uint8_t> glbBytes = build3DMesh(uuid, absoluteDsm, meta, textureBytes);
-         //auto end_mesh = std::chrono::steady_clock::now();
+         auto end_mesh = std::chrono::steady_clock::now();
 
-         //auto mesh_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_mesh - start_mesh).count();
-         //std::cout << "[Latency] Meshing & Draco Compression: " << mesh_ms << " ms\n";
+         auto mesh_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_mesh - start_mesh).count();
+         std::cout << "[Latency] Meshing & Draco Compression: " << mesh_ms << " ms\n";
 
          //upload the glbBytes to the MiniIO object storage
          std::string bucket = "terrain-assets";
          std::string key = "mesh_" + uuid + ".glb";
  
-         //auto start_upload = std::chrono::steady_clock::now();
+         auto start_upload = std::chrono::steady_clock::now();
          //Upload to MinIO
          bool minio_success = MinioClient::uploadBuffer(bucket, key, glbBytes, "model/gltf-binary");
 
@@ -109,9 +116,9 @@ drogon::Task<std::string> PipelineService::executeCalibration(
          }).detach(); // Detach allows the thread to execute independently
 
          //return glb download URL of minio to frontend.
-         //auto end_upload = std::chrono::steady_clock::now();
-         //auto upload_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_upload - start_upload).count();
-         //std::cout << "[Latency] MinIO Network Upload: " << upload_ms << " ms\n";
+         auto end_upload = std::chrono::steady_clock::now();
+         auto upload_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_upload - start_upload).count();
+         std::cout << "[Latency] MinIO Network Upload: " << upload_ms << " ms\n";
 
          // Total Time
          //auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_upload - start_total).count();
@@ -121,8 +128,10 @@ drogon::Task<std::string> PipelineService::executeCalibration(
      catch (const std::exception& e) 
      {
          // Failsafe RAM cleanup
-         VSIUnlink(vsi_path.c_str());
-         throw; 
+         std::remove(vsi_path.c_str());
+         std::cerr << "CRASH DETECTED: " << e.what() << "\n";
+         // Explicitly rethrow to bypass the GCC coroutine bug
+         throw std::runtime_error(e.what());
      }
 }
 
@@ -137,19 +146,21 @@ inline std::vector<float> PipelineService::parseDepthMatrix(const drogon::HttpFi
 
 inline std::string PipelineService::mountImageToRAM(const std::string& uuid, const drogon::HttpFile& imageFile) const
 {
-     std::string vsi_path = "/vsimem/upload_" + uuid + ".tif";
-     VSILFILE* mem_handle = VSIFileFromMemBuffer(
-         vsi_path.c_str(), 
-         (GByte*)imageFile.fileData(), 
-         imageFile.fileLength(), 
-         FALSE
-     );
-
-     if (mem_handle != nullptr) 
+     // Use the OS /tmp/ directory (tmpfs RAM disk) instead of GDAL's /vsimem/
+     std::string real_path = "/tmp/upload_" + uuid + ".tif";
+     
+     std::ofstream out(real_path, std::ios::binary);
+     if (out.is_open()) 
      {
-         VSIFCloseL(mem_handle); 
+         out.write(imageFile.fileData(), imageFile.fileLength());
+         out.close();
      }
-     return vsi_path;
+     else 
+     {
+         throw std::runtime_error("Failed to write temporary image to " + real_path);
+     }
+     
+     return real_path;
 }
 
 inline std::vector<float> PipelineService::extractSrtmAndMetadata(const std::string& vsi_path, 
@@ -183,15 +194,15 @@ inline std::vector<float> PipelineService::extractSrtmAndMetadata(const std::str
 
 inline std::vector<float> PipelineService::calibrateHeights(const std::vector<float>& aiDepth, const std::vector<float>& srtmHeight) const
 {
-     RansacCalibrator calibrator(500, 5.0); 
-     CalibrationResult best_result = calibrator.calculateScaleAndOffset(aiDepth, srtmHeight);
+     RansacCalibrator calibrator(500, 15.0); 
+     CalibrationResult result = calibrator.calculateScaleAndOffset(aiDepth, srtmHeight);
 
-     if (best_result.inliers_count == 0) 
+     if (result.inliers_count == 0) 
      {
          throw std::runtime_error("RANSAC failed to find a valid calibration model.");
      }
 
-     return calibrator.applyCalibration(aiDepth, best_result.scale, best_result.offset);
+     return calibrator.applyCalibration(aiDepth, result.a, result.b, result.c);
 }
 
 // inline std::vector<uint8_t> PipelineService::build3DMesh(
@@ -228,12 +239,40 @@ inline std::vector<uint8_t> PipelineService::build3DMesh(
      const std::vector<uint8_t>& textureBytes) const
 {
      GlbMesher mesher;
-    
+
+     //Find the true elevation range of this specific landscape
+     auto min_it = std::min_element(absoluteDsm.begin(), absoluteDsm.end());
+     auto max_it = std::max_element(absoluteDsm.begin(), absoluteDsm.end());
+     float min_z = (min_it != absoluteDsm.end()) ? *min_it : 0.0f;
+     float max_z = (max_it != absoluteDsm.end()) ? *max_it : 1.0f;
+     
+     float z_range = max_z - min_z;
+     if (z_range < 0.1f) z_range = 1.0f; // Failsafe against division by zero
+
+     //Find the longest edge of the pixel grid
+     float max_dimension = std::max(static_cast<float>(meta.width), static_cast<float>(meta.height));
+     
+     //Force the highest peak to be exactly 25% of the map's width.
+     //This guarantees dramatic proportions without ever turning into spikes.
+     float cinematic_ratio = 0.25f; 
+     float desired_max_height = max_dimension * cinematic_ratio; 
+     float dynamic_scale = desired_max_height / z_range;
+     
+     //Add a clean, proportional base thickness (2% of map width)
+     float base_thickness = max_dimension * 0.02f; 
+
+     std::vector<float> exaggeratedDsm = absoluteDsm;
+     for (float& z : exaggeratedDsm) 
+     {
+         // Normalize the height to 0, stretch it to the calculated pixel scale, and add the base
+         z = ((z - min_z) * dynamic_scale) + base_thickness;
+     }
+
      std::vector<uint8_t> glbBytes = mesher.generateGlb(
-         absoluteDsm, 
+         exaggeratedDsm,  
          meta.width, 
          meta.height, 
-         1.0f, // pixel_size modifier
+         1.0f, // Keep X/Y plane in strict pixel units
          reinterpret_cast<const char*>(textureBytes.data()),   
          textureBytes.size()
      );
@@ -245,7 +284,6 @@ inline std::vector<uint8_t> PipelineService::build3DMesh(
 
      return glbBytes;
 }
-
 
 inline std::vector<uint8_t> PipelineService::extractJpegTexture(
     const std::string& vsi_path, 

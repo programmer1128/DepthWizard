@@ -1,0 +1,1219 @@
+{
+	"globsDependent" : 
+	[
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/CalibrationController/*.cc",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/CalibrationController/CalibrationController.cc",
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/CalibrationController/PipelineService.cc",
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/CalibrationController/TestController.cc"
+			]
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/CalibrationController/*.cpp",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/CompressionLib/*.cc",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/CompressionLib/DracoCompressor.cc"
+			]
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/CompressionLib/*.cpp",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/DataHandlers/*.cc",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/DataHandlers/MiniIOClient.cc"
+			]
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/DataHandlers/*.cpp",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/FileGenerators/*.cc",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/FileGenerators/GltfPackager.cc",
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/FileGenerators/TiffExporter.cc"
+			]
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/FileGenerators/*.cpp",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/GdalWriter/*.cc",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/GdalWriter/*.cpp",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/MeshMapping/*.cc",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/MeshMapping/MeshService.cc"
+			]
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/MeshMapping/*.cpp",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/RansacCalibrator/*.cc",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/RansacCalibrator/calibrationController.cc",
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/RansacCalibrator/ransacCalibrator.cc"
+			]
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/RansacCalibrator/*.cpp",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/RasterProcessor/*.cc",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/RasterProcessor/RasterProcessor.cc"
+			]
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/RasterProcessor/*.cpp",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/SrtmExtractor/*.cc",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/SrtmExtractor/SrtmExtractor.cc"
+			]
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/SrtmExtractor/*.cpp",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/UVMapping/*.cc",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/UVMapping/UVMapping.cc"
+			]
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/UVMapping/*.cpp",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/plugins/*.cc",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/plugins/Loader.cc"
+			]
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/plugins/*.cpp",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/structures/*.cc",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/structures/*.cpp",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/structures/*.h",
+			"listDirectories" : true,
+			"paths" : 
+			[
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/structures/TileGraph.h"
+			]
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/utils/*.cc",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/utils/*.cpp",
+			"listDirectories" : true,
+			"paths" : []
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/ImageTilingService/*.cc",
+			"paths" : 
+			[
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/ImageTilingService/GraphOrdering/DisjointSet.cc",
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/ImageTilingService/GraphOrdering/GlobalScaling.cc",
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/ImageTilingService/GraphOrdering/kruskal.cc",
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/ImageTilingService/HannAssembler/HannAssembler.cc",
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/ImageTilingService/TilingOLS/OlsAlignment.cc",
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/ImageTilingService/TilingOLS/TileDispatcher.cc",
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/ImageTilingService/TilingOLS/TileDispatcherNetwork.cc",
+				"/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/ImageTilingService/TilingService.cc"
+			],
+			"recurse" : true
+		},
+		{
+			"expression" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/ImageTilingService/*.cpp",
+			"paths" : [],
+			"recurse" : true
+		}
+	],
+	"inputs" : 
+	[
+		{
+			"path" : "CMakeLists.txt"
+		},
+		{
+			"isGenerated" : true,
+			"path" : "/home/aritra/Desktop/DepthWizard/build/CMakeFiles/4.3.0/CMakeSystem.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeSystemSpecificInitialize.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Platform/Linux-Initialize.cmake"
+		},
+		{
+			"isGenerated" : true,
+			"path" : "/home/aritra/Desktop/DepthWizard/build/CMakeFiles/4.3.0/CMakeCXXCompiler.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeSystemSpecificInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeGenericSystem.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeInitializeConfigs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Platform/Linux.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Platform/UnixPaths.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeCXXInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeLanguageInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Compiler/GNU-CXX.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Compiler/GNU.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Compiler/CMakeCommonCompilerMacros.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Platform/Linux-GNU-CXX.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Platform/Linux-GNU.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeCommonLanguageInclude.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Internal/CMakeCXXLinkerInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Internal/CMakeCommonLinkerInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Linker/GNU-CXX.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Linker/GNU.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Platform/Linker/Linux-GNU-CXX.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Platform/Linker/Linux-GNU.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Platform/Linker/GNU.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckIncludeFileCXX.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Drogon/DrogonConfigVersion.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Drogon/DrogonConfig.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/lib64/cmake/jsoncpp/jsoncppConfigVersion.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/lib64/cmake/jsoncpp/jsoncppConfig.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/lib64/cmake/jsoncpp/jsoncpp-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/lib64/cmake/jsoncpp/jsoncpp-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/lib64/cmake/jsoncpp/jsoncpp-namespaced-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Trantor/TrantorConfigVersion.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Trantor/TrantorConfig.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindOpenSSL.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPkgConfig.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindThreads.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckLibraryExists.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckIncludeFileCXX.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckCXXSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Internal/CheckSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Trantor/TrantorTargets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Trantor/TrantorTargets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Drogon/FindUUID.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindZLIB.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/SelectLibraryConfigurations.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Drogon/FindFilesystem.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakePushCheckState.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckIncludeFileCXX.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckCXXSourceRuns.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Internal/CheckSourceRuns.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Drogon/FindFilesystem.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Drogon/DrogonTargets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Drogon/DrogonTargets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Drogon/DrogonUtilities.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Drogon/ParseAndAddDrogonTests.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindZLIB.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindGDAL.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/draco/draco-config-version.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/draco/draco-config.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/draco/draco-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/draco/draco-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/AWSSDK/AWSSDKConfigVersion.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/AWSSDK/AWSSDKConfig.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/AWSSDK/sdksCommon.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/AWSSDK/platformDeps.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/AWSSDK/compiler_settings.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-cpp-sdk-core/aws-cpp-sdk-core-config-version.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-cpp-sdk-core/aws-cpp-sdk-core-config.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-crt-cpp/aws-crt-cpp-config-version.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-crt-cpp/aws-crt-cpp-config.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-http/aws-c-http-config.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-io/aws-c-io-config.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/s2n/cmake/s2n-config.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindThreads.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckLibraryExists.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckIncludeFileCXX.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckCXXSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/s2n/cmake/modules/Findcrypto.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindThreads.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckLibraryExists.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckIncludeFileCXX.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckCXXSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/s2n/cmake/shared/s2n-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/s2n/cmake/shared/s2n-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-common/aws-c-common-config.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindThreads.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckLibraryExists.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckIncludeFileCXX.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckCXXSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-common/shared/aws-c-common-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-common/shared/aws-c-common-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-cal/aws-c-cal-config.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindOpenSSL.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPkgConfig.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindThreads.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckLibraryExists.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckIncludeFileCXX.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckCXXSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-cal/shared/aws-c-cal-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-cal/shared/aws-c-cal-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-io/shared/aws-c-io-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-io/shared/aws-c-io-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-compression/aws-c-compression-config.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-compression/shared/aws-c-compression-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-compression/shared/aws-c-compression-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-http/shared/aws-c-http-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-http/shared/aws-c-http-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-mqtt/aws-c-mqtt-config.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-mqtt/shared/aws-c-mqtt-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-mqtt/shared/aws-c-mqtt-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-auth/aws-c-auth-config.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-sdkutils/aws-c-sdkutils-config.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-sdkutils/shared/aws-c-sdkutils-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-sdkutils/shared/aws-c-sdkutils-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-auth/shared/aws-c-auth-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-auth/shared/aws-c-auth-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-event-stream/aws-c-event-stream-config.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-checksums/aws-checksums-config.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-checksums/shared/aws-checksums-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-checksums/shared/aws-checksums-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-event-stream/shared/aws-c-event-stream-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-event-stream/shared/aws-c-event-stream-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-s3/aws-c-s3-config.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-s3/shared/aws-c-s3-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-c-s3/shared/aws-c-s3-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-crt-cpp/shared/aws-crt-cpp-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-crt-cpp/shared/aws-crt-cpp-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-cpp-sdk-core/aws-cpp-sdk-core-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-cpp-sdk-core/aws-cpp-sdk-core-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-cpp-sdk-s3/aws-cpp-sdk-s3-config-version.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-cpp-sdk-s3/aws-cpp-sdk-s3-config.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-cpp-sdk-s3/aws-cpp-sdk-s3-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/aws-cpp-sdk-s3/aws-cpp-sdk-s3-targets-release.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindOpenMP.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeParseImplicitLinkInfo.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Halide/HalideConfigVersion.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Halide/HalideConfig.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Halide/Halide-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Halide/Halide-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Halide/HalideTargetHelpers.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Halide/HalideGeneratorHelpers.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Halide/HalideTargetHelpers.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Halide/TargetExportScript.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CheckLinkerFlag.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Internal/CheckLinkerFlag.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Internal/CheckFlagCommonConfig.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/Internal/CheckSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPNG.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindZLIB.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/SelectLibraryConfigurations.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindJPEG.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/SelectLibraryConfigurations.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/HalideCompiler/HalideCompilerConfigVersion.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/HalideCompiler/HalideCompilerConfig.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/HalideCompiler/HalideCompiler-shared-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/HalideCompiler/HalideCompiler-shared-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/HalideCompiler/HalideCompiler-shared-deps.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Halide_Python/Halide_PythonConfigVersion.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Halide_Python/Halide_PythonConfig.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPython.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPython/Support.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Halide_Python/Halide_Python-targets.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/local/lib64/cmake/Halide_Python/Halide_Python-targets-release.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/eigen3/Eigen3ConfigVersion.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/eigen3/Eigen3Config.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/usr/share/cmake/eigen3/Eigen3Targets.cmake"
+		},
+		{
+			"path" : "test/CMakeLists.txt"
+		}
+	],
+	"kind" : "cmakeFiles",
+	"paths" : 
+	{
+		"build" : "/home/aritra/Desktop/DepthWizard/build",
+		"source" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service"
+	},
+	"version" : 
+	{
+		"major" : 1,
+		"minor" : 1
+	}
+}

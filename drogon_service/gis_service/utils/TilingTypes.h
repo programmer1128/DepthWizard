@@ -1,8 +1,8 @@
 #pragma once
-
 #include <vector>
 #include <memory>
 #include <cstdint>
+#include "../structures/TileGraph.h"
 
 // stores the zero copy AI output
 // stores the details of each tile
@@ -31,27 +31,6 @@ struct TileMetadata
     std::shared_ptr<std::vector<float>> depth_matrix; 
 };
 
-// this struct represents the overlapping boundary between 2 adjacent tiles
-
-struct OverlapEdge 
-{
-    // the ID of the reference tile - the one kept still
-    uint32_t source_tile_id;
-
-    // the ID of the neighboring tile - the one we are trying to align to the source tile
-    uint32_t target_tile_id;
-
-    // the s multiplier calculated by Ordinary Least Squares: OLS math 
-    float local_scale;        
-
-    // the t addition calculated by OLS math
-    float local_shift;        
-
-    // 1.0 minus the pearson correlation
-    // score closer to 0.0 means the overlap is a perfect match 
-    // higher score means its a bad match: ignore later
-    float penalty_weight;     
-};
 
 // this struct is the payload for the graph portion of the service
 

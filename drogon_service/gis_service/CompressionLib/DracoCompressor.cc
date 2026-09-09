@@ -6,8 +6,9 @@
 DracoCompressionResult DracoCompressor::compressGeometry(const std::vector<float>& positions,
      const std::vector<uint32_t>& indices,
      const std::vector<float>& uvs,
+     const std::vector<float>& normals,
      int posQuantization,
-     int uvQuantization,
+     int uvQuantization,int normalQuantization ,
      int speed)
 {
      DracoCompressionResult result;
@@ -40,11 +41,26 @@ DracoCompressionResult DracoCompressor::compressGeometry(const std::vector<float
      uvAttr.Init(draco::GeometryAttribute::TEX_COORD, nullptr, 2, draco::DT_FLOAT32, false, sizeof(float) * 2, 0);
      result.uvAttrId = dracoMesh.AddAttribute(uvAttr, true, numPoints); // Simplified using numPoints
 
+     // Register Normal Attribute
+     draco::GeometryAttribute normalAttr;
+     // Normals are 3D vectors (X, Y, Z), hence dimension is 3 and stride is sizeof(float) * 3
+     normalAttr.Init(draco::GeometryAttribute::NORMAL, nullptr, 3, draco::DT_FLOAT32, false, sizeof(float) * 3, 0);
+     result.normalAttrId = dracoMesh.AddAttribute(normalAttr, true, numPoints);
+
      // Fill Attribute Values
      for (size_t i = 0; i < numPoints; ++i) 
      {
-         dracoMesh.attribute(result.posAttrId)->SetAttributeValue(draco::AttributeValueIndex(i), &positions[i * 3]);
-         dracoMesh.attribute(result.uvAttrId)->SetAttributeValue(draco::AttributeValueIndex(i), &uvs[i * 2]);
+         dracoMesh.attribute(result.posAttrId)->SetAttributeValue(draco::AttributeValueIndex(i), 
+             &positions[i * 3]);
+         
+         //mapping UV values
+         dracoMesh.attribute(result.uvAttrId)->SetAttributeValue(draco::AttributeValueIndex(i), 
+             &uvs[i * 2]);
+
+         //mapping normal values
+         dracoMesh.attribute(result.normalAttrId)->SetAttributeValue
+             (draco::AttributeValueIndex(i), &normals[i * 3]);
+
      }
 
      // Configure & Run Encoder
@@ -52,6 +68,9 @@ DracoCompressionResult DracoCompressor::compressGeometry(const std::vector<float
      encoder.SetSpeedOptions(speed, speed);
      encoder.SetAttributeQuantization(draco::GeometryAttribute::POSITION, posQuantization);
      encoder.SetAttributeQuantization(draco::GeometryAttribute::TEX_COORD, uvQuantization);
+
+     //adding quantization for normals
+     encoder.SetAttributeQuantization(draco::GeometryAttribute::NORMAL, normalQuantization);
 
      draco::EncoderBuffer dracoBuffer;
      draco::Status status = encoder.EncodeMeshToBuffer(dracoMesh, &dracoBuffer);
