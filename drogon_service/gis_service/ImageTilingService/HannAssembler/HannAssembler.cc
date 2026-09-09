@@ -134,15 +134,11 @@ void HannAssembler::processAndAccumulateTile(const TileWindow &win, const std::v
     // triggers Halide's Just-In-Time (JIT) compiler -> compiles the algorithm into machine code, executes the SIMD/multithreaded operations, and fills the two local buffers with the results
     tile_processor.realize(realization);
 
-    // PHASE 4: GLOBAL ACCUMULATION
-    // for freezing current thread until the global memory is safe to access to prevent thread collisions
-    // std::lock_guard<std::mutex> lock(accumMutex);
-
-    // PHASE 4: GLOBAL ACCUMULATION
+    //GLOBAL ACCUMULATION
     const float *raw_weighted_depth = local_weighted_depth.data();
     const float *raw_weights = local_weights.data();
 
-    // 1. Get the current OpenMP thread ID
+    //Get the current OpenMP thread ID
     int tid = omp_get_thread_num();
     //Calculate the memory offset so this thread writes to its private canvas
     size_t thread_offset = tid * total_frame_size; 
@@ -153,8 +149,8 @@ void HannAssembler::processAndAccumulateTile(const TileWindow &win, const std::v
          {
              break;
          }
-        int global_base_idx = (y_off + r) * global_width + x_off;
-        int local_base_idx = r * tile_w;
+         int global_base_idx = (y_off + r) * global_width + x_off;
+         int local_base_idx = r * tile_w;
 
          // contiguous memory accumulation
          for (int c = 0; c < tile_w; ++c)

@@ -239,39 +239,40 @@ inline std::vector<uint8_t> PipelineService::build3DMesh(
      const std::vector<uint8_t>& textureBytes) const
 {
      GlbMesher mesher;
-    
-     float true_pixel_size = static_cast<float>(meta.geoTransform[1]); 
-     if (true_pixel_size <= 0.1f) {
-         true_pixel_size = 30.0f; 
-     }
 
-     // Find lowest point to subtract the massive underground base
+     //Find the true elevation range of this specific landscape
      auto min_it = std::min_element(absoluteDsm.begin(), absoluteDsm.end());
+     auto max_it = std::max_element(absoluteDsm.begin(), absoluteDsm.end());
      float min_z = (min_it != absoluteDsm.end()) ? *min_it : 0.0f;
+     float max_z = (max_it != absoluteDsm.end()) ? *max_it : 1.0f;
+     
+     float z_range = max_z - min_z;
+     if (z_range < 0.1f) z_range = 1.0f; // Failsafe against division by zero
 
-     // Exaggeration dial (3.0f is a great cinematic standard for the Himalayas)
-     //float visual_exaggeration = 3.0f; 
+     //Find the longest edge of the pixel grid
+     float max_dimension = std::max(static_cast<float>(meta.width), static_cast<float>(meta.height));
      
-     // A small visual base to give the 3D model some ground thickness (in pixel units)
-     float visual_exaggeration = 1.0f; 
+     //Force the highest peak to be exactly 25% of the map's width.
+     //This guarantees dramatic proportions without ever turning into spikes.
+     float cinematic_ratio = 0.25f; 
+     float desired_max_height = max_dimension * cinematic_ratio; 
+     float dynamic_scale = desired_max_height / z_range;
      
-     // A small visual base to give the 3D model some ground thickness
-     float base_thickness = 50.0f; 
+     //Add a clean, proportional base thickness (2% of map width)
+     float base_thickness = max_dimension * 0.02f; 
 
      std::vector<float> exaggeratedDsm = absoluteDsm;
      for (float& z : exaggeratedDsm) 
      {
-         //Removed the "/ true_pixel_size" division to restore raw heights
-         z = ((z - min_z) * visual_exaggeration) + base_thickness;
+         // Normalize the height to 0, stretch it to the calculated pixel scale, and add the base
+         z = ((z - min_z) * dynamic_scale) + base_thickness;
      }
 
-     // RESTORE 1.0f here! This keeps the 3D model's width bounded to 4244 units,
-     // guaranteeing it easily fits inside any 3D viewer's camera limits.
      std::vector<uint8_t> glbBytes = mesher.generateGlb(
          exaggeratedDsm,  
          meta.width, 
          meta.height, 
-         1.0f, // <-- Keep the X/Y plane in normalized pixel space
+         1.0f, // Keep X/Y plane in strict pixel units
          reinterpret_cast<const char*>(textureBytes.data()),   
          textureBytes.size()
      );
@@ -283,7 +284,6 @@ inline std::vector<uint8_t> PipelineService::build3DMesh(
 
      return glbBytes;
 }
-
 
 inline std::vector<uint8_t> PipelineService::extractJpegTexture(
     const std::string& vsi_path, 

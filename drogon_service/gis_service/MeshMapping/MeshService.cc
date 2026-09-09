@@ -160,10 +160,22 @@ std::vector<uint8_t> GlbMesher::generateGlb(
          indices.push_back(v_base_next);
      };
      
-     for (int x = grid_width - 1; x > 0; --x) addSkirtEdge(x, x - 1);
-     for (int y = 0; y < grid_height - 1; ++y) addSkirtEdge(y * grid_width, (y + 1) * grid_width);
-     for (int x = 0; x < grid_width - 1; ++x) addSkirtEdge((grid_height - 1) * grid_width + x, (grid_height - 1) * grid_width + x + 1);
-     for (int y = grid_height - 1; y > 0; --y) addSkirtEdge(y * grid_width + (grid_width - 1), (y - 1) * grid_width + (grid_width - 1));
+     for (int x = grid_width - 1; x > 0; --x) 
+     {
+         addSkirtEdge(x, x - 1);
+     }
+     for (int y = 0; y < grid_height - 1; ++y) 
+     {
+         addSkirtEdge(y * grid_width, (y + 1) * grid_width);
+     }
+     for (int x = 0; x < grid_width - 1; ++x) 
+     {
+         addSkirtEdge((grid_height - 1) * grid_width + x, (grid_height - 1) * grid_width + x + 1);
+     }
+     for (int y = grid_height - 1; y > 0; --y) 
+     {
+         addSkirtEdge(y * grid_width + (grid_width - 1), (y - 1) * grid_width + (grid_width - 1));
+     }
 
      double bounds[6] = { minX, y_base, minZ, maxX, maxY, maxZ };
 

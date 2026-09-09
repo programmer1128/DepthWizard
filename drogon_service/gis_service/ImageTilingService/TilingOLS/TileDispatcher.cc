@@ -43,7 +43,7 @@ drogon::Task<GraphPayload> TileDispatcher::processGeoTiff(const std::string& fil
     };
     std::vector<PendingTile> network_pipeline;
 
-    // PHASE 1: Tiling Loop
+    //Tiling Loop
     for (int y = 0; y < image_height; y += stride)
     {
         int actual_y = std::max(0, std::min(y, image_height - tile_size));
@@ -59,7 +59,6 @@ drogon::Task<GraphPayload> TileDispatcher::processGeoTiff(const std::string& fil
             size_t tile_byte_size = tile_size * tile_size * 3;
             auto contiguous_tile = std::make_shared<std::vector<uint8_t>>(tile_byte_size, 0);
 
-            // --- NEW: Safe GDAL Pixel Extraction ---
             for (int b = 1; b <= 3; ++b) 
             {
                 int srcB = (b <= raster_bands) ? b : 1; // Fallback for grayscale images
@@ -70,11 +69,10 @@ drogon::Task<GraphPayload> TileDispatcher::processGeoTiff(const std::string& fil
                                contiguous_tile->data() + (b - 1), // Offset: 0 for R, 1 for G, 2 for B
                                valid_w, valid_h,
                                GDT_Byte,
-                               3,             // Pixel stride (skip 3 bytes to the next R, G, or B)
-                               tile_size * 3, // Line stride (jump to the next row of the 518 window)
+                               3,             // Pixel stride skip 3 bytes to the next R, G, or B
+                               tile_size * 3, // Line stride jump to the next row of the 518 window
                                nullptr);
             }
-            // ----------------------------------------
 
             std::string target_gpu = available_gpus[current_tile_id % available_gpus.size()];
 
@@ -84,98 +82,98 @@ drogon::Task<GraphPayload> TileDispatcher::processGeoTiff(const std::string& fil
                     return streamToLightningAI(tile_view, target_gpu, current_tile_id);
                 });
             
-            network_pipeline.push_back({current_tile_id, actual_x, actual_y, std::move(future_matrix)});
+             network_pipeline.push_back({current_tile_id, actual_x, actual_y, std::move(future_matrix)});
 
-            int max_in_flight = available_gpus.size() * 4;
-            if (network_pipeline.size() > max_in_flight) {
-                network_pipeline[network_pipeline.size() - max_in_flight - 1].network_task.wait();
-            }
+             int max_in_flight = available_gpus.size() * 4;
+             if (network_pipeline.size() > max_in_flight) 
+             {
+                 network_pipeline[network_pipeline.size() - max_in_flight - 1].network_task.wait();
+             }
 
-            current_tile_id++;
-            if (actual_x >= image_width - tile_size) break;
-        }
-        if (actual_y >= image_height - tile_size) break;
-    }
+             current_tile_id++;
+             if (actual_x >= image_width - tile_size) break;
+         }
+         if (actual_y >= image_height - tile_size) break;
+     }
             
-     // PHASE 2: OLS Math & Assembly
-     // ... KEEP YOUR EXACT EXISTING PHASE 2 CODE HERE ...
+     //OLS Math & Assembly
      for (auto& pending : network_pipeline) 
      {
          std::shared_ptr<std::vector<float>> depth_matrix = pending.network_task.get();
-         // ... (Keep the rest of Phase 2) ...
          // metadata and maximum variance
             float variance = calculateTileVariance(*depth_matrix);
             TileMetadata meta{pending.id, tile_size, tile_size, pending.x, pending.y, variance, depth_matrix};
 
-            if(variance > absolute_max_variance) 
-            {
-                absolute_max_variance = variance;
-                final_payload.root_anchor_id = pending.id; // id with max variance
-            }
-            final_payload.all_tiles.push_back(meta);
+             if(variance > absolute_max_variance) 
+             {
+                 absolute_max_variance = variance;
+                 final_payload.root_anchor_id = pending.id; // id with max variance
+             }
+             final_payload.all_tiles.push_back(meta);
 
 
-            // async OLS math
-            if (pending.x > 0)
-            {
-                // find the tile just processed - to the left
-                const auto& left_tile = final_payload.all_tiles[final_payload.all_tiles.size() - 2];
+             // async OLS math
+             if (pending.x > 0)
+             {
+                 // find the tile just processed - to the left
+                 const auto& left_tile = final_payload.all_tiles[final_payload.all_tiles.size() - 2];
+ 
+                 // DYNAMIC OVERLAP: overlap can be larger than 104 pixels
+                 // how many pixels they actually share 
+                 int dynamic_overlap_w = tile_size - (pending.x - left_tile.x_offset);
 
-                // DYNAMIC OVERLAP: overlap can be larger than 104 pixels
-                // how many pixels they actually share 
-                int dynamic_overlap_w = tile_size - (pending.x - left_tile.x_offset);
+                 // now slice the shared columns
+                 std::vector<float> source_overlap = extractVerticalOverlap(*left_tile.depth_matrix, tile_size, tile_size, dynamic_overlap_w, false);
+                 std::vector<float> target_overlap = extractVerticalOverlap(*depth_matrix, tile_size, tile_size, dynamic_overlap_w, true);
+ 
+                 // extract primitive IDs so the lambda doesnt try to copy the structs
+                 uint32_t target_id = pending.id;
+                 uint32_t source_id = left_tile.tile_id;
 
-                // now slice the shared columns
-                std::vector<float> source_overlap = extractVerticalOverlap(*left_tile.depth_matrix, tile_size, tile_size, dynamic_overlap_w, false);
-                std::vector<float> target_overlap = extractVerticalOverlap(*depth_matrix, tile_size, tile_size, dynamic_overlap_w, true);
+                 // we throw the heavy SIMD maths onto a background core
+                 async_ols_tasks.push_back(std::async(std::launch::async, [=]() {
+                     return OlsAlignment::computeAlignment(source_id, target_id, source_overlap, target_overlap);
+                 }));
+             }
 
-                // extract primitive IDs so the lambda doesnt try to copy the structs
-                uint32_t target_id = pending.id;
-                uint32_t source_id = left_tile.tile_id;
-
-                // we throw the heavy SIMD maths onto a background core
-                async_ols_tasks.push_back(std::async(std::launch::async, [=]() {
-                    return OlsAlignment::computeAlignment(source_id, target_id, source_overlap, target_overlap);
-                }));
-            }
-
-            if (pending.y > 0)
-            {
-                // jump back by exactly one full row length to find the tile directly above us
-                int top_tile_index = pending.id - tiles_per_row;
-                const auto& top_tile = final_payload.all_tiles[top_tile_index];
-
-                // true vertical overlap distance
-                int dynamic_overlap_h = tile_size - (pending.y - top_tile.y_offset);
-
-                // slice the shared rows
-                std::span<const float> source_overlap = extractHorizontalOverlap(
+             if (pending.y > 0)
+             {
+                 // jump back by exactly one full row length to find the tile directly above us
+                 int top_tile_index = pending.id - tiles_per_row;
+                 const auto& top_tile = final_payload.all_tiles[top_tile_index];
+ 
+                 // true vertical overlap distance
+                 int dynamic_overlap_h = tile_size - (pending.y - top_tile.y_offset);
+ 
+                 // slice the shared rows
+                 std::span<const float> source_overlap = extractHorizontalOverlap(
                     *top_tile.depth_matrix, tile_size, tile_size, dynamic_overlap_h, false);
-                
-                std::span<const float> target_overlap = extractHorizontalOverlap(
-                    *depth_matrix, tile_size, tile_size, dynamic_overlap_h, true);
+                 
+                 std::span<const float> target_overlap = extractHorizontalOverlap(
+                     *depth_matrix, tile_size, tile_size, dynamic_overlap_h, true);
 
-                // extract primitive IDs so the lambda doesnt try to copy the structs
-                uint32_t target_id = pending.id;
-                uint32_t source_id = top_tile.tile_id;
+                 // extract primitive IDs so the lambda doesnt try to copy the structs
+                 uint32_t target_id = pending.id;
+                 uint32_t source_id = top_tile.tile_id;
 
-                // throw SIMD math to another background core
-                async_ols_tasks.push_back(std::async(std::launch::async, [=]() {
-                    return OlsAlignment::computeAlignment(source_id, target_id, source_overlap, target_overlap);
-                }));
-            }
+                 // throw SIMD math to another background core
+                 async_ols_tasks.push_back(std::async(std::launch::async, [=]() {
+                     return OlsAlignment::computeAlignment(source_id, target_id, source_overlap, target_overlap);
+                 }));
+             }
      }
 
-    for (auto& task : async_ols_tasks) {
-        final_payload.graph_edges.push_back(task.get());
-    }
+     for (auto& task : async_ols_tasks)
+     {
+         final_payload.graph_edges.push_back(task.get());
+     }
 
-    final_payload.max_tile_id = current_tile_id - 1;
+     final_payload.max_tile_id = current_tile_id - 1;
 
-    // Close GDAL handle (Replaces munmap and close)
-    GDALClose(poDataset); 
+     // Close GDAL handle (Replaces munmap and close)
+     GDALClose(poDataset); 
 
-    co_return final_payload;
+     co_return final_payload;
 }
 
 
