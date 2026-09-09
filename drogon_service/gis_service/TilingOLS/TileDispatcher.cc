@@ -56,7 +56,7 @@ drogon::Task<GraphPayload> TileDispatcher::processGeoTiff(const std::string& fil
     // modulo operator implements round robin load balancing
 
     std::vector<std::string> available_gpus = {
-        "100.90.172.20" 
+        "100.88.16.86" 
         // "tcp://lightning-ai-worker-2.cloud",
         // "tcp://lightning-ai-worker-3.cloud",
         // "tcp://lightning-ai-worker-4.cloud",
