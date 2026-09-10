@@ -28,6 +28,9 @@ find_package(OpenMP REQUIRED)
 #Eigen3 support
 find_package(Eigen3 REQUIRED)
 
+#OpenCV support
+find_package(OpenCV REQUIRED)
+
 #SOURCE FILE DISCOVERY (Package-by-Feature Architecture)
 # Explicitly grab sources from each dedicated service folder
 
@@ -46,6 +49,7 @@ file(GLOB COMPRESSOR CONFIGURE_DEPENDS "CompressionLib/*.cc" "CompressionLib/*.c
 file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cpp")
 file(GLOB IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp")
 file(GLOB TILER_OLS CONFIGURE_DEPENDS "TilingOLS/*.cc" "TilingOLS/*.cpp")
+file(GLOB STREAMER_GLB CONFIGURE_DEPENDS "StreamingGLB/*.cc" "StreamingGLB/*.cpp")
 
 
 #COMPILER OPTIMIZATIONS (Release Mode)
@@ -80,7 +84,8 @@ target_sources(${PROJECT_NAME}
                ${COMPRESSOR}
                ${DATA_HANDLERS}
                ${IMAGE_TILER}
-               ${TILER_OLS})
+               ${TILER_OLS}
+               ${STREAMER_GLB})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -103,8 +108,10 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService
                            ${CMAKE_CURRENT_SOURCE_DIR}/structures
                            ${CMAKE_CURRENT_SOURCE_DIR}/TilingOLS
+                           ${CMAKE_CURRENT_SOURCE_DIR}/StreamingGLB
                            ${GDAL_INCLUDE_DIRS}
-                           ${EIGEN3_INCLUDE_DIRS})
+                           ${EIGEN3_INCLUDE_DIRS}
+                           ${OpenCV_INCLUDE_DIRS})
 
 
 #LINK LIBRARIES TO THE TARGET
@@ -116,6 +123,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${AWSSDK_LINK_LIBRARIES} #AWS sdk C++ lib for MiniIO client
     OpenMP::OpenMP_CXX #OpenMp Multi threading 
     Eigen3::Eigen
+    ${OpenCV_LIBS}
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE 
