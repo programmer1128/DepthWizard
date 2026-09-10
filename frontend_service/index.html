@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DepthWizard 3D - ISRO</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: sans-serif; }
+    body { display: flex; height: 100vh; background: #121212; color: #fff; overflow: hidden; }
+    
+    /* Left Sidebar */
+    #sidebar {
+      width: 300px; background: #1e1e1e; border-right: 1px solid #333;
+      padding: 20px; display: flex; flex-direction: column; gap: 15px; z-index: 10;
+    }
+    .btn {
+      background: #007acc; color: white; border: none; padding: 10px;
+      border-radius: 4px; cursor: pointer; font-weight: bold;
+    }
+    .btn:hover { background: #005999; }
+    
+    /* 3D Viewport */
+    #canvas-container { flex: 1; position: relative; width: 100%; height: 100%; }
+    
+    /* Inspector Card */
+    #inspector-overlay {
+      position: absolute; bottom: 20px; right: 20px;
+      background: rgba(0,0,0,0.85); padding: 12px 18px;
+      border-radius: 6px; border: 1px solid #444; font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <h2>DepthWizard 3D</h2>
+    <p style="font-size: 11px; color: #aaa;">ISRO SIH 2026 - Problem 26175</p>
+    <hr style="border-color: #333;" />
+    
+    <label>Upload Remote Sensing Image:</label>
+    <input type="file" id="imageInput" accept=".png,.jpg,.jpeg,.tif,.tiff" />
+    <button class="btn" id="uploadBtn">Generate 3D Map</button>
+  </div>
+
+  <div id="canvas-container">
+    <div id="inspector-overlay">
+      <div id="coordinates">
+        <div>Click a point on the terrain</div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
