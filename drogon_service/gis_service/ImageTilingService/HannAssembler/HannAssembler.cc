@@ -3,6 +3,7 @@
 #include <cmath>
 #include <limits>
 #include <atomic>
+#include <drogon/drogon.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
@@ -55,7 +56,7 @@ HannAssembler::HannAssembler(int width, int height) : global_width(width), globa
     Halide::Expr hann_x = 0.5f * (1.0f - Halide::cos((2.0f * pi * x) / (w - 1.0f)));
     Halide::Expr hann_y = 0.5f * (1.0f - Halide::cos((2.0f * pi * y) / (h - 1.0f)));
 
-    Halide::Expr weight = hann_x * hann_y;
+    Halide::Expr weight = Halide::max(hann_x * hann_y, 1e-6f);
     Halide::Expr d_aligned = (s_param * input_param(x, y)) + t_param;
 
     tile_processor(x, y) = Halide::Tuple(weight * d_aligned, weight);
@@ -133,27 +134,31 @@ void HannAssembler::processAndAccumulateTile(const TileWindow &win, const std::v
     // triggers Halide's Just-In-Time (JIT) compiler -> compiles the algorithm into machine code, executes the SIMD/multithreaded operations, and fills the two local buffers with the results
     tile_processor.realize(realization);
 
-    // PHASE 4: GLOBAL ACCUMULATION
-    // for freezing current thread until the global memory is safe to access to prevent thread collisions
-    // std::lock_guard<std::mutex> lock(accumMutex);
-
-    // PHASE 4: GLOBAL ACCUMULATION
+    // GLOBAL ACCUMULATION
     const float *raw_weighted_depth = local_weighted_depth.data();
     const float *raw_weights = local_weights.data();
 
-    // 1. Get the current OpenMP thread ID
+    // Get the current OpenMP thread ID
     int tid = omp_get_thread_num();
     // Calculate the memory offset so this thread writes to its private canvas
     size_t thread_offset = tid * total_frame_size;
 
     for (int r = 0; r < tile_h; ++r)
     {
+        if (y_off + r >= global_height)
+        {
+            break;
+        }
         int global_base_idx = (y_off + r) * global_width + x_off;
         int local_base_idx = r * tile_w;
 
         // contiguous memory accumulation
         for (int c = 0; c < tile_w; ++c)
         {
+            if (x_off + c >= global_width)
+            {
+                break;
+            }
             // Writing to the private thread memory (Zero race conditions, zero locks)
             threadElevationAccum[thread_offset + global_base_idx + c] += raw_weighted_depth[local_base_idx + c];
             threadWeightAccum[thread_offset + global_base_idx + c] += raw_weights[local_base_idx + c];
@@ -163,38 +168,46 @@ void HannAssembler::processAndAccumulateTile(const TileWindow &win, const std::v
 
 std::vector<float> HannAssembler::finalizeMatrix()
 {
-    // Collapse all thread-local buffers into Thread 0's buffer
+    LOG_INFO << "starting finalising matrix with simd parallel";
+// Collapse all thread-local buffers into Thread 0's buffer
 #pragma omp parallel for simd
     for (size_t i = 0; i < total_frame_size; ++i)
     {
         for (int t = 1; t < num_threads; ++t)
-        { // Loop starts at Thread 1
+        {
             threadElevationAccum[i] += threadElevationAccum[t * total_frame_size + i];
             threadWeightAccum[i] += threadWeightAccum[t * total_frame_size + i];
         }
     }
 
-    std::vector<float> final_matrix(global_width * global_height); // 1D contiguous block
+    std::vector<float> final_matrix(global_width * global_height);
 
-    // Wraps Halide interfaces around your existing C++ raw memory pointers (.data())
-    Halide::Buffer<float> accum_buf(threadElevationAccum.data(), global_width, global_height);
-    Halide::Buffer<float> weight_buf(threadWeightAccum.data(), global_width, global_height);
-    Halide::Buffer<float> output_buf(final_matrix.data(), global_width, global_height);
+    LOG_INFO << "halide buffers";
+
+    // FIX: Define the buffers as 1D arrays matching the total frame size!
+    Halide::Buffer<float> accum_buf(threadElevationAccum.data(), total_frame_size);
+    Halide::Buffer<float> weight_buf(threadWeightAccum.data(), total_frame_size);
+    Halide::Buffer<float> output_buf(final_matrix.data(), total_frame_size);
 
     Halide::Var i("i");
     Halide::Func finalizer("finalizer");
 
-    // D_final(x,y) = Numerator / Denominator
+    LOG_INFO << "d final part";
     Halide::Expr nan_val = Halide::cast<float>(std::numeric_limits<float>::quiet_NaN());
-    finalizer(i) = Halide::select(weight_buf(i) > 0.0f, accum_buf(i) / weight_buf(i), nan_val);
 
+    // Now 'i' perfectly matches the 1D dimension of the buffers
+    finalizer(i) = accum_buf(i) / weight_buf(i);
+
+    LOG_INFO << "finaliser scheduling";
     Halide::Var i_outer, i_inner;
     finalizer.compute_root()
-        .split(i, i_outer, i_inner, 10000) // spliting into chunks of 10000
-        .parallel(i_outer)                 // parallelization across the chunks
-        .vectorize(i_inner, 16);           // vectorizing the inner chunk execution
+        .split(i, i_outer, i_inner, 10000)
+        .parallel(i_outer)
+        .vectorize(i_inner, 16);
 
+    LOG_INFO << "finaliser realize";
     finalizer.realize(output_buf);
 
+    LOG_INFO << "returning final matrix";
     return final_matrix;
 }
