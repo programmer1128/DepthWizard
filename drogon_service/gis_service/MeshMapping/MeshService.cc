@@ -20,9 +20,13 @@ std::vector<uint8_t> GlbMesher::generateGlb(
      int stride = 1;
      
      if (width > max_grid_size || height > max_grid_size) 
-     {
-         stride = std::max(width / max_grid_size, height / max_grid_size);
-     }
+    {
+        // Adding (denominator - 1) forces integer division to act like std::ceil()
+        int stride_x = (width + max_grid_size - 1) / max_grid_size;
+        int stride_y = (height + max_grid_size - 1) / max_grid_size;
+        
+        stride = std::max(stride_x, stride_y);
+    }
 
      // Calculate new downsampled geometry dimensions
      int grid_width = width / stride;
