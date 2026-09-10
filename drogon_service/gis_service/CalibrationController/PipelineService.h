@@ -18,8 +18,7 @@ struct SpatialMetadata
 class PipelineService 
 {
         public:
-        drogon::Task<std::string> executeCalibration(const drogon::HttpFile& imageFile, 
-                 const drogon::HttpFile& depthFile);
+        drogon::Task<std::string> executeCalibration(const drogon::HttpFile& imageFile);
 
 
          private:

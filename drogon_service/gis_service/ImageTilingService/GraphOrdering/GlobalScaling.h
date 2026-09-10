@@ -1,5 +1,5 @@
 #pragma once
-#include "drogon_service/gis_service/structures/TileGraph.h"
+#include "../structures/TileGraph.h"
 #include<vector>
 
 using MST_TileGraph=std::vector<std::vector<MSTEdge>>;

@@ -28,7 +28,7 @@ typedef struct MSTEdge
         : targetNode(tgt), localScale(s), localShift(t) {}
 }MSTEdge;
 
-typedef struct GlobalTransformations
+struct GlobalTransformations
 {
       float scale;
       float shift;

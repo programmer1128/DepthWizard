@@ -15,3 +15,7 @@ curl to test the srtm extractor and raster processor
 curl -X POST -F "file=@sample.tif" http://localhost:8080/api/v1/processor
 
 replace sample.tif with actual file path
+
+time curl -v -X POST http://localhost:8080/api/v1/processor   -F "image=@/home/aritra/Desktop/Manali_Geotiff.tif"   -F "depth=@/home/aritra/Desktop/OptimisingDepthAnythingV2/Depth-Anything-V2/DepthAnythingCPP/build/depth_matrix_518x518.bin"
+
+time curl -v -X POST http://localhost:8080/api/v1/processor   -F "image=@/home/aritra/Documents/Test4.tif"

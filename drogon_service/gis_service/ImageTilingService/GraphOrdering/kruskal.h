@@ -1,6 +1,6 @@
 #include<vector>
 #include<algorithm>
-#include "drogon_service/gis_service/structures/TileGraph.h"
+#include "../structures/TileGraph.h"
 
 using MST_TileGraph=std::vector<std::vector<MSTEdge>>;
 
