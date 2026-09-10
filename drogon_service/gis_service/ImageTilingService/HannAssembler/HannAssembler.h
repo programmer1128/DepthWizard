@@ -2,7 +2,7 @@
 #include <vector>
 #include <Halide.h>
 #include <omp.h>
-#include "../structures/TileGraph.h"
+#include "../../structures/TileGraph.h"
 // #include <mutex>
 
 // specification of each tile
