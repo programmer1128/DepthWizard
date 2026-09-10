@@ -52,6 +52,7 @@ file(GLOB COMPRESSOR CONFIGURE_DEPENDS "CompressionLib/*.cc" "CompressionLib/*.c
 file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cpp")
 file(GLOB STRUCTURES CONFIGURE_DEPENDS "structures/*.cc" "structures/*.cpp" "structures/*.h")
 file(GLOB_RECURSE IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp")
+file(GLOB STREAMER_GLB CONFIGURE_DEPENDS "StreamingGLB/*.cc" "StreamingGLB/*.cpp")
 
 #COMPILER OPTIMIZATIONS (Release Mode)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -85,7 +86,8 @@ target_sources(${PROJECT_NAME}
                ${COMPRESSOR}
                ${DATA_HANDLERS}
                ${IMAGE_TILER}
-               ${STRUCTURES})
+               ${STRUCTURES}
+               ${STREAMER_GLB})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -109,6 +111,9 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/GraphOrdering
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/HannAssembler
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/TilingOLS
+                           ${CMAKE_CURRENT_SOURCE_DIR}/StreamingGLB
+                           ${EIGEN3_INCLUDE_DIRS}
+                           ${OpenCV_INCLUDE_DIRS}
                            ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
 
 
@@ -122,6 +127,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     OpenMP::OpenMP_CXX #OpenMp Multi threading 
     Halide
     Eigen3::Eigen
+    ${OpenCV_LIBS}
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE 
