@@ -47,6 +47,35 @@ QuadTreeGraph QuadTreeBuilder::buildTree(const std::vector<float> &absolute_dsm,
     return graph;
 }
 
+void QuadTreeBuilder::computeHeuristics(const std::vector<float> &absolute_dsm, int total_width, int total_height, int &max_level, float &error_threshold)
+{
+    // Max Level: calculated based on the patch size limit
+    int min_leaf_size = 16; // the smallest allowable tile dimension (16x16 pixels)
+    int max_dim = std::max(total_width, total_height);
+    // if the map is smaller than the minimum leaf -> level 0 is forced
+    if (max_dim <= min_leaf_size)
+    {
+        max_level = 0;
+    }
+    else
+    {
+        max_level = static_cast<int>(std::log2(max_dim / min_leaf_size));
+    }
+
+    // Error Threshold: the global variance of the entire dsm
+    MatrixBounds root_bounds = {0, 0, total_width, total_height};
+    float global_variance = calculateVariance(absolute_dsm, root_bounds, total_width);
+
+    // threshold set to a 5% of the global baseline -> it means, only split a tile if its local roughness is at least 5% as extreme as the entire map's roughness
+    error_threshold = global_variance * 0.05f;
+
+    // fallback floor to avoid an impossible threshold on perfectly flat maps -> acts as noise gate
+    if (error_threshold < 0.1f)
+    {
+        error_threshold = 0.1f;
+    }
+}
+
 void QuadTreeBuilder::recursiveQuadTree(QuadTreeGraph &graph, std::vector<std::vector<uint32_t>> &temp_adj, uint32_t current_id, const std::vector<float> &absolute_dsm, int total_width, int max_level, float error_threshold, uint32_t &id_counter) // current_id acts as the base of the recursion
 {
     // extracting bounds and level directly by value to avoid dangling references, in case graph.nodes vector reallocates memory during push_back() (if the entire block is reallocated)

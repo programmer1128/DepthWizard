@@ -15,6 +15,14 @@ public:
         int max_level,
         float error_threshold);
 
+    // isolated helper function to calculate LOD parameters
+    static void computeHeuristics(
+        const std::vector<float> &absolute_dsm,
+        int total_width,
+        int total_height,
+        int &max_level,
+        float &error_threshold);
+
 private:
     // calculates topographical variance for a specific matrix window
     static float calculateVariance(
