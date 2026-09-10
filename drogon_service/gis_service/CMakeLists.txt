@@ -134,3 +134,13 @@ endif ()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/CMakeLists.txt")
     add_subdirectory(test)
 endif()
+
+# Copy local config file containing MinIO credentials to build dir
+# Automatically copy local config to the binary output directory if it exists
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config.local.json")
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/config.local.json" 
+         DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+    message(STATUS "[MinioClient] Copied config.local.json to the build directory.")
+else ()
+    message(STATUS "Please store your MinIO credentials in a config.local.json file to avoid bugs. Follow the format in config.local.json.example.")
+endif()

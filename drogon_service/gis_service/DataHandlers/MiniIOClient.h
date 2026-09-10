@@ -24,3 +24,38 @@ public:
         int expirationSeconds = 3600
     );
 };
+
+/*
+#pragma once
+#include <vector>
+#include <string>
+#include <cstdint>
+
+class MinioClient 
+{
+public:
+    static void initAPI();
+    static void shutdownAPI();
+
+    static bool uploadBuffer(
+        const std::string& bucketName, 
+        const std::string& objectKey, 
+        const std::vector<uint8_t>& buffer, 
+        const std::string& contentType
+    );
+
+    // NEW: Stream a file directly from disk to avoid RAM spikes
+    static bool uploadFileStream(
+        const std::string& bucketName, 
+        const std::string& objectKey, 
+        const std::string& filePath, 
+        const std::string& contentType
+    );
+
+    static std::string generatePresignedUrl(
+        const std::string& bucketName, 
+        const std::string& objectKey, 
+        int expirationSeconds = 3600
+    );
+};
+*/

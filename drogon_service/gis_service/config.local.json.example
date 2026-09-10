@@ -1,0 +1,7 @@
+{
+  "minio_endpoint": "127.0.0.1:9000",
+  "minio_access_key": "<insert access key here>",
+  "minio_secret_key": "<insert secret key here>",
+  // you can change the region here
+  "minio_region": "us-east-1"
+}
