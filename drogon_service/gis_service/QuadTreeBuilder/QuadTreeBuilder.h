@@ -33,7 +33,7 @@ private:
     // recursive engine utilizing the 4 recursive call structure
     static void recursiveQuadTree(
         QuadTreeGraph &graph,
-        std::vector<std::vector<uint32_t>> &temp_adj,
+        std::vector<uint32_t> &first_child_map,
         uint32_t current_id,
         const std::vector<float> &absolute_dsm,
         int total_width,
