@@ -1,54 +1,1008 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DepthWizard 3D - ISRO</title>
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  />
+
+  <title>DepthWizard 3D</title>
+
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; font-family: sans-serif; }
-    body { display: flex; height: 100vh; background: #121212; color: #fff; overflow: hidden; }
-    
-    /* Left Sidebar */
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+    }
+
+    :root {
+      --bg: #090c12;
+      --panel: #10151d;
+      --panel-2: #151b24;
+      --border: #252d38;
+      --text: #f3f6fa;
+      --muted: #8c98a8;
+      --accent: #4da3ff;
+      --accent-dark: #247bc7;
+      --success: #48d597;
+      --warning: #f0b45b;
+    }
+
+    body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    /* --------------------------------
+       APP
+    -------------------------------- */
+
+    #app {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+
+    /* --------------------------------
+       TOP BAR
+    -------------------------------- */
+
+    #topbar {
+      height: 64px;
+      min-height: 64px;
+
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+
+      padding: 0 22px;
+
+      background: rgba(10, 14, 20, 0.96);
+      border-bottom: 1px solid var(--border);
+
+      z-index: 20;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 34px;
+      height: 34px;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      border-radius: 9px;
+
+      background: linear-gradient(
+        135deg,
+        #4da3ff,
+        #2867a5
+      );
+
+      font-size: 17px;
+      font-weight: 800;
+    }
+
+    .brand-text h1 {
+      font-size: 17px;
+      letter-spacing: 0.4px;
+    }
+
+    .brand-text span {
+      display: block;
+
+      margin-top: 2px;
+
+      font-size: 10px;
+      color: var(--muted);
+
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .icon-btn {
+      width: 36px;
+      height: 36px;
+
+      border: 1px solid var(--border);
+      border-radius: 8px;
+
+      background: var(--panel-2);
+      color: var(--text);
+
+      cursor: pointer;
+
+      transition: 0.2s;
+    }
+
+    .icon-btn:hover {
+      background: #202936;
+      border-color: #3a4655;
+    }
+
+
+    /* --------------------------------
+       MAIN LAYOUT
+    -------------------------------- */
+
+    #workspace {
+      flex: 1;
+
+      display: flex;
+
+      min-height: 0;
+    }
+
+
+    /* --------------------------------
+       SIDEBAR
+    -------------------------------- */
+
     #sidebar {
-      width: 300px; background: #1e1e1e; border-right: 1px solid #333;
-      padding: 20px; display: flex; flex-direction: column; gap: 15px; z-index: 10;
+      width: 285px;
+      min-width: 285px;
+
+      padding: 18px;
+
+      background: var(--panel);
+
+      border-right: 1px solid var(--border);
+
+      overflow-y: auto;
+
+      z-index: 10;
     }
-    .btn {
-      background: #007acc; color: white; border: none; padding: 10px;
-      border-radius: 4px; cursor: pointer; font-weight: bold;
+
+    .section {
+      margin-bottom: 22px;
     }
-    .btn:hover { background: #005999; }
-    
-    /* 3D Viewport */
-    #canvas-container { flex: 1; position: relative; width: 100%; height: 100%; }
-    
-    /* Inspector Card */
+
+    .section-title {
+      margin-bottom: 10px;
+
+      font-size: 10px;
+      font-weight: 700;
+
+      color: #657286;
+
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+    }
+
+    .project-card {
+      padding: 13px;
+
+      border: 1px solid var(--border);
+      border-radius: 10px;
+
+      background: var(--panel-2);
+    }
+
+    .project-name {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .project-description {
+      margin-top: 5px;
+
+      color: var(--muted);
+
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+
+    /* --------------------------------
+       FILE INPUT
+    -------------------------------- */
+
+    .file-box {
+      padding: 14px;
+
+      border: 1px dashed #354252;
+      border-radius: 10px;
+
+      background: #0d1219;
+    }
+
+    .file-box label {
+      display: block;
+
+      margin-bottom: 9px;
+
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    #imageInput {
+      width: 100%;
+
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    #imageInput::file-selector-button {
+      margin-right: 8px;
+
+      padding: 7px 9px;
+
+      border: 1px solid var(--border);
+      border-radius: 6px;
+
+      background: #202936;
+      color: var(--text);
+
+      cursor: pointer;
+    }
+
+
+    /* --------------------------------
+       PRIMARY BUTTON
+    -------------------------------- */
+
+    .primary-btn {
+      width: 100%;
+
+      margin-top: 10px;
+
+      padding: 11px;
+
+      border: none;
+      border-radius: 8px;
+
+      background: linear-gradient(
+        135deg,
+        var(--accent),
+        var(--accent-dark)
+      );
+
+      color: white;
+
+      font-size: 12px;
+      font-weight: 700;
+
+      cursor: pointer;
+
+      transition: 0.2s;
+    }
+
+    .primary-btn:hover {
+      transform: translateY(-1px);
+
+      box-shadow:
+        0 7px 20px rgba(42, 130, 210, 0.25);
+    }
+
+
+    /* --------------------------------
+       CONTROL BUTTONS
+    -------------------------------- */
+
+    .control-grid {
+      display: grid;
+
+      grid-template-columns: 1fr 1fr;
+
+      gap: 7px;
+    }
+
+    .control-btn {
+      padding: 9px 7px;
+
+      border: 1px solid var(--border);
+      border-radius: 7px;
+
+      background: var(--panel-2);
+      color: #cbd4df;
+
+      font-size: 11px;
+
+      cursor: pointer;
+
+      transition: 0.2s;
+    }
+
+    .control-btn:hover {
+      background: #202936;
+      border-color: #3b4757;
+      color: white;
+    }
+
+    .control-btn.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(77, 163, 255, 0.08);
+    }
+
+
+    /* --------------------------------
+       ANALYSIS
+    -------------------------------- */
+
+    .coordinate-card {
+      padding: 13px;
+
+      border: 1px solid var(--border);
+      border-radius: 10px;
+
+      background: var(--panel-2);
+    }
+
+    .coordinate-row {
+      display: flex;
+
+      justify-content: space-between;
+
+      padding: 5px 0;
+
+      border-bottom: 1px solid #202731;
+
+      font-family: monospace;
+      font-size: 11px;
+    }
+
+    .coordinate-row:last-child {
+      border-bottom: none;
+    }
+
+    .coordinate-label {
+      color: var(--muted);
+    }
+
+    .coordinate-value {
+      color: #dfe8f3;
+    }
+
+
+    /* --------------------------------
+       VIEWER
+    -------------------------------- */
+
+    #viewer {
+      position: relative;
+
+      flex: 1;
+
+      min-width: 0;
+      min-height: 0;
+
+      background:
+        radial-gradient(
+          circle at center,
+          #1a2430 0%,
+          #0b0f15 65%
+        );
+    }
+
+    #canvas-container {
+      position: absolute;
+
+      inset: 0;
+
+      width: 100%;
+      height: 100%;
+    }
+
+
+    /* --------------------------------
+       VIEWER HUD
+    -------------------------------- */
+
+    .viewer-status {
+      position: absolute;
+
+      top: 16px;
+      left: 16px;
+
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      padding: 8px 11px;
+
+      background: rgba(8, 12, 17, 0.82);
+
+      border: 1px solid rgba(255,255,255,0.08);
+
+      border-radius: 8px;
+
+      font-size: 10px;
+      color: #aeb9c7;
+
+      backdrop-filter: blur(8px);
+
+      z-index: 5;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+
+      border-radius: 50%;
+
+      background: var(--success);
+
+      box-shadow:
+        0 0 8px rgba(72, 213, 151, 0.7);
+    }
+
+
+    /* --------------------------------
+       INSPECTOR
+    -------------------------------- */
+
     #inspector-overlay {
-      position: absolute; bottom: 20px; right: 20px;
-      background: rgba(0,0,0,0.85); padding: 12px 18px;
-      border-radius: 6px; border: 1px solid #444; font-size: 13px;
+      position: absolute;
+
+      right: 18px;
+      bottom: 18px;
+
+      width: 205px;
+
+      padding: 14px;
+
+      background: rgba(10, 14, 20, 0.90);
+
+      border: 1px solid rgba(255,255,255,0.10);
+
+      border-radius: 10px;
+
+      backdrop-filter: blur(10px);
+
+      z-index: 5;
     }
+
+    .inspector-title {
+      margin-bottom: 10px;
+
+      font-size: 10px;
+      font-weight: 700;
+
+      color: #7f8da0;
+
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+    }
+
+
+    /* --------------------------------
+       HELP
+    -------------------------------- */
+
+    #help-panel {
+      display: none;
+
+      position: absolute;
+
+      top: 60px;
+      right: 18px;
+
+      width: 245px;
+
+      padding: 15px;
+
+      background: rgba(10,14,20,0.96);
+
+      border: 1px solid var(--border);
+
+      border-radius: 10px;
+
+      z-index: 30;
+
+      box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+    }
+
+    #help-panel.show {
+      display: block;
+    }
+
+    .help-title {
+      margin-bottom: 10px;
+
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .help-row {
+      display: flex;
+
+      justify-content: space-between;
+
+      padding: 7px 0;
+
+      color: var(--muted);
+
+      font-size: 11px;
+    }
+
+    .key {
+      padding: 3px 6px;
+
+      border: 1px solid #35404d;
+      border-radius: 5px;
+
+      background: #161d26;
+
+      color: #dbe4ef;
+
+      font-family: monospace;
+    }
+
+
+    /* --------------------------------
+       BOTTOM BAR
+    -------------------------------- */
+
+    #bottom-bar {
+      position: absolute;
+
+      left: 16px;
+      right: 16px;
+      bottom: 16px;
+
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+
+      pointer-events: none;
+
+      z-index: 4;
+    }
+
+    .hint {
+      padding: 7px 10px;
+
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 7px;
+
+      background: rgba(8,12,17,0.70);
+
+      color: #788596;
+
+      font-size: 10px;
+
+      backdrop-filter: blur(8px);
+    }
+
+
+    /* --------------------------------
+       RESPONSIVE
+    -------------------------------- */
+
+    @media (max-width: 800px) {
+
+      #sidebar {
+        width: 230px;
+        min-width: 230px;
+      }
+
+      #inspector-overlay {
+        width: 180px;
+      }
+
+    }
+
   </style>
 </head>
+
+
 <body>
-  <div id="sidebar">
-    <h2>DepthWizard 3D</h2>
-    <p style="font-size: 11px; color: #aaa;">ISRO SIH 2026 - Problem 26175</p>
-    <hr style="border-color: #333;" />
-    
-    <label>Upload Remote Sensing Image:</label>
-    <input type="file" id="imageInput" accept=".png,.jpg,.jpeg,.tif,.tiff" />
-    <button class="btn" id="uploadBtn">Generate 3D Map</button>
-  </div>
 
-  <div id="canvas-container">
-    <div id="inspector-overlay">
-      <div id="coordinates">
-        <div>Click a point on the terrain</div>
+<div id="app">
+
+  <!-- ==============================
+       TOP BAR
+  =============================== -->
+
+  <header id="topbar">
+
+    <div class="brand">
+
+      <div class="brand-icon">
+        ◈
       </div>
-    </div>
-  </div>
 
-  <script type="module" src="/src/main.js"></script>
+      <div class="brand-text">
+
+        <h1>DepthWizard 3D</h1>
+
+        <span>
+          Single-View Height Estimation
+        </span>
+
+      </div>
+
+    </div>
+
+
+    <div class="top-actions">
+
+      <button
+        class="icon-btn"
+        id="helpBtn"
+        title="Controls"
+      >
+        ?
+      </button>
+
+      <button
+        class="icon-btn"
+        id="fullscreenBtn"
+        title="Fullscreen"
+      >
+        ⛶
+      </button>
+
+    </div>
+
+  </header>
+
+
+  <!-- ==============================
+       WORKSPACE
+  =============================== -->
+
+  <main id="workspace">
+
+
+    <!-- ============================
+         SIDEBAR
+    ============================= -->
+
+    <aside id="sidebar">
+
+
+      <!-- PROJECT -->
+
+      <section class="section">
+
+        <div class="section-title">
+          Project
+        </div>
+
+        <div class="project-card">
+
+          <div class="project-name">
+            ISRO SIH 2026
+          </div>
+
+          <div class="project-description">
+            Single-view remote sensing image
+            to interactive 3D terrain.
+          </div>
+
+        </div>
+
+      </section>
+
+
+      <!-- INPUT -->
+
+      <section class="section">
+
+        <div class="section-title">
+          Input imagery
+        </div>
+
+        <div class="file-box">
+
+          <label>
+            PNG, JPG or GeoTIFF
+          </label>
+
+          <input
+            type="file"
+            id="imageInput"
+            accept=".png,.jpg,.jpeg,.tif,.tiff"
+          />
+
+        </div>
+
+
+        <div
+            id="selectedFileInfo"
+            style="
+                margin-top:10px;
+                color:#778496;
+                font-size:10px;
+                line-height:1.6;
+            "
+        >
+            No file selected
+        </div>
+
+        <button
+            class="primary-btn"
+            id="uploadBtn"
+        >
+            Generate 3D Map
+        </button>
+
+      </section>
+
+
+      <!-- VIEW -->
+
+      <section class="section">
+
+        <div class="section-title">
+          View
+        </div>
+
+        <div class="control-grid">
+
+          <button
+            class="control-btn active"
+            id="orbitBtn"
+          >
+            ◉ Orbit
+          </button>
+
+          <button
+            class="control-btn"
+            id="flyBtn"
+          >
+            ◇ Flythrough
+          </button>
+
+          <button
+            class="control-btn"
+            id="resetBtn"
+          >
+            ↻ Reset View
+          </button>
+
+          <button
+            class="control-btn"
+            id="gridBtn"
+          >
+            ▦ Grid
+          </button>
+          <button
+              class="control-btn"
+              id="measureBtn"
+          >
+              ⟐ Measure
+          </button>
+
+        </div>
+
+      </section>
+
+
+      <!-- ANALYSIS -->
+
+      <section class="section">
+
+        <div class="section-title">
+          Point Inspector
+        </div>
+
+        <div class="coordinate-card">
+
+          <div id="coordinates">
+
+            <div class="coordinate-row">
+
+              <span class="coordinate-label">
+                X
+              </span>
+
+              <span class="coordinate-value">
+                —
+              </span>
+
+            </div>
+
+
+            <div class="coordinate-row">
+
+              <span class="coordinate-label">
+                Y
+              </span>
+
+              <span class="coordinate-value">
+                —
+              </span>
+
+            </div>
+
+
+            <div class="coordinate-row">
+
+              <span class="coordinate-label">
+                Z
+              </span>
+
+              <span class="coordinate-value">
+                —
+              </span>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      </section>
+
+
+      <!-- STATUS -->
+
+      <section class="section">
+
+        <div class="section-title">
+          System
+        </div>
+
+        <div class="project-card">
+
+          <div
+            id="systemStatus"
+            style="
+              color:#48d597;
+              font-size:11px;
+            "
+          >
+            ● Viewer ready
+          </div>
+
+          <div
+            id="fileStatus"
+            style="
+              margin-top:6px;
+              color:#778496;
+              font-size:10px;
+            "
+          >
+            No imagery selected
+          </div>
+
+        </div>
+
+      </section>
+
+
+    </aside>
+
+
+    <!-- ============================
+         3D VIEWER
+    ============================= -->
+
+    <section id="viewer">
+
+
+      <div id="canvas-container"></div>
+
+
+      <div class="viewer-status">
+
+        <span class="status-dot"></span>
+
+        <span id="viewerStatus">
+          3D VIEWER READY
+        </span>
+
+      </div>
+
+
+      <!-- Inspector -->
+
+      <div id="inspector-overlay">
+
+        <div class="inspector-title">
+          Selected Point
+        </div>
+
+        <div
+          id="inspector-content"
+          style="
+            color:#7f8da0;
+            font-size:10px;
+          "
+        >
+          Click the terrain
+          to inspect a point.
+        </div>
+
+      </div>
+
+
+      <!-- Help -->
+
+      <div id="help-panel">
+
+        <div class="help-title">
+          Navigation
+        </div>
+
+        <div class="help-row">
+          <span>Orbit</span>
+          <span class="key">
+            Mouse
+          </span>
+        </div>
+
+        <div class="help-row">
+          <span>Zoom</span>
+          <span class="key">
+            Scroll
+          </span>
+        </div>
+
+        <div class="help-row">
+          <span>Flythrough</span>
+          <span class="key">
+            F
+          </span>
+        </div>
+
+        <div class="help-row">
+          <span>Movement</span>
+          <span class="key">
+            W A S D
+          </span>
+        </div>
+
+        <div class="help-row">
+          <span>Inspect terrain</span>
+          <span class="key">
+            Click
+          </span>
+        </div>
+
+      </div>
+
+
+      <!-- Bottom HUD -->
+
+      <div id="bottom-bar">
+
+        <div class="hint">
+          Orbit • Scroll to zoom • F for flythrough
+        </div>
+
+        <div class="hint">
+          DepthWizard 3D
+        </div>
+
+      </div>
+
+
+    </section>
+
+  </main>
+
+</div>
+
+
+<script type="module" src="/src/main.js"></script>
+
 </body>
+
 </html>

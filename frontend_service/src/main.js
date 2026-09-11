@@ -14,6 +14,49 @@ const container = document.getElementById('canvas-container');
 
 const coordinates = document.getElementById('coordinates');
 
+const inspectorContent = document.getElementById('inspector-content');
+
+
+// add status indicators for viewer, system, and file
+const viewerStatus =
+    document.getElementById('viewerStatus');
+
+const systemStatus =
+    document.getElementById('systemStatus');
+
+const fileStatus =
+    document.getElementById('fileStatus');
+
+function setViewerStatus(status, type = 'ready') {
+
+    viewerStatus.textContent = status;
+
+    if (type === 'loading') {
+
+        systemStatus.textContent =
+            '● Loading terrain';
+
+        systemStatus.style.color =
+            '#f0b45b';
+
+    } else if (type === 'error') {
+
+        systemStatus.textContent =
+            '● Load error';
+
+        systemStatus.style.color =
+            '#ff6b6b';
+
+    } else {
+
+        systemStatus.textContent =
+            '● Viewer ready';
+
+        systemStatus.style.color =
+            '#48d597';
+    }
+}
+
 
 // -----------------------------
 // 2. Create the scene
@@ -23,40 +66,13 @@ const scene = new THREE.Scene();
 
 scene.background = new THREE.Color(0x1a1a24);
 
-// Create the TilesRenderer instance
-const TILESET_URL = '/glb_tileset.json';
-const tilesRenderer = new TilesRenderer(TILESET_URL);
-
-console.log('TilesRenderer created');
-console.log('Tileset URL:', TILESET_URL);
-
-tilesRenderer.addEventListener('load-tile-set', () => {
-    console.log('🔥 TILESET LOADED');
-});
-
-tilesRenderer.addEventListener('load-content', (event) => {
-    console.log('🔥 TILE CONTENT LOADED', event);
-});
-
-tilesRenderer.addEventListener('load-error', (event) => {
-    console.error('🔥 TILESET ERROR', event);
-});
-
-// testcases without  minIO
-tilesRenderer.addEventListener('load-tile-set', () => {
-    console.log('3D Tiles tileset loaded successfully');
-});
-
-tilesRenderer.addEventListener('load-content', (event) => {
-    console.log('3D Tiles content loaded:', event);
-});
-
-tilesRenderer.addEventListener('load-error', (event) => {
-    console.error('3D Tiles loading error:', event);
-});
 
 // Variable to hold the terrain model
 let terrainModel = null;
+
+let initialCameraPosition = new THREE.Vector3();
+let initialCameraTarget = new THREE.Vector3();
+let initialCameraZoom = 1;
 
 // -----------------------------
 // 3. Create the camera
@@ -92,9 +108,41 @@ renderer.setPixelRatio(
 
 container.appendChild(renderer.domElement);
 
-// Add the TilesRenderer group to the scene
-scene.add(tilesRenderer.group);
 
+// Variable to hold the TilesRenderer instance
+let tilesRenderer = null;
+
+function loadTileset(url) {
+    console.log('Loading tileset:', url);
+
+    tilesRenderer = new TilesRenderer(url);
+
+    tilesRenderer.addEventListener('load-tile-set', () => {
+        console.log('3D Tiles tileset loaded successfully');
+    });
+
+    tilesRenderer.addEventListener('load-content', (event) => {
+        console.log('3D Tiles content loaded:', event);
+    });
+
+    tilesRenderer.addEventListener('load-error', (event) => {
+        console.error('3D Tiles loading error:', event);
+    });
+
+    scene.add(tilesRenderer.group);
+
+    tilesRenderer.setCamera(camera);
+    tilesRenderer.setResolutionFromRenderer(camera, renderer);
+
+    return tilesRenderer;
+}
+
+setViewerStatus(
+    'LOADING TERRAIN',
+    'loading'
+);
+
+loadTileset('/glb_tileset.json');
 
 // -----------------------------
 // 5. Add lighting
@@ -116,6 +164,21 @@ const directionalLight = new THREE.DirectionalLight(
 directionalLight.position.set(200, 400, 200);
 
 scene.add(directionalLight);
+
+// -----------------------------
+// Ground Grid
+// -----------------------------
+
+const gridHelper = new THREE.GridHelper(
+    2000,
+    40,
+    0x4d5a68,
+    0x29313b
+);
+
+gridHelper.visible = false;
+
+scene.add(gridHelper);
 
 
 // -----------------------------
@@ -167,7 +230,7 @@ const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 renderer.domElement.addEventListener('click', (event) => {
 
-    if (!terrainModel) return;
+    if (!terrainModel && !tilesRenderer) return;
 
     const rect = renderer.domElement.getBoundingClientRect();
 
@@ -179,8 +242,24 @@ renderer.domElement.addEventListener('click', (event) => {
 
     raycaster.setFromCamera(mouse, camera);
 
-    const intersects =
-        raycaster.intersectObject(terrainModel, true);
+    let intersects = [];
+
+if (terrainModel) {
+    intersects = raycaster.intersectObject(
+        terrainModel,
+        true
+    );
+}
+
+if (
+    intersects.length === 0 &&
+    tilesRenderer
+) {
+    intersects = raycaster.intersectObject(
+        tilesRenderer.group,
+        true
+    );
+}
 
     if (intersects.length > 0) {
 
@@ -192,9 +271,38 @@ renderer.domElement.addEventListener('click', (event) => {
         console.log('Z:', point.z);
         // Update the coordinates display
         coordinates.innerHTML = `
-          <div><strong>X:</strong> ${point.x.toFixed(2)}</div>
-          <div><strong>Y:</strong> ${point.y.toFixed(2)}</div>
-          <div><strong>Z:</strong> ${point.z.toFixed(2)}</div>
+            <div class="coordinate-row">
+                <span class="coordinate-label">X</span>
+                <span class="coordinate-value">${point.x.toFixed(2)}</span>
+            </div>
+
+            <div class="coordinate-row">
+                <span class="coordinate-label">Y</span>
+                <span class="coordinate-value">${point.y.toFixed(2)}</span>
+            </div>
+
+            <div class="coordinate-row">
+                <span class="coordinate-label">Z</span>
+                <span class="coordinate-value">${point.z.toFixed(2)}</span>
+            </div>
+        `;
+        inspectorContent.innerHTML = `
+            <div style="line-height:1.8">
+                <div>
+                    <span style="color:#788596">X</span>
+                    <strong>${point.x.toFixed(2)}</strong>
+                </div>
+
+                <div>
+                    <span style="color:#788596">Y</span>
+                    <strong>${point.y.toFixed(2)}</strong>
+                </div>
+
+                <div>
+                    <span style="color:#788596">Z</span>
+                    <strong>${point.z.toFixed(2)}</strong>
+                </div>
+            </div>
         `;
 
     }
@@ -220,6 +328,11 @@ loader.load(
 
         console.log('GLB loaded successfully');
 
+        setViewerStatus(
+            '3D VIEWER READY',
+            'ready'
+        );
+
         const model = gltf.scene;
 
         terrainModel = model;
@@ -237,6 +350,14 @@ loader.load(
 
         // Move model so its center is near the origin
         model.position.sub(center);
+
+        // Recalculate terrain bounds after centering
+        const centeredBox = new THREE.Box3().setFromObject(model);
+
+        // Put grid slightly below the terrain
+        gridHelper.position.y = centeredBox.min.y - 1;
+
+        console.log('Grid Y position:', gridHelper.position.y);
 
         // Position camera according to model size
         const maxDimension = Math.max(
@@ -257,6 +378,10 @@ loader.load(
 
         orbitControls.target.set(0, 0, 0);
         orbitControls.update();
+
+        initialCameraPosition.copy(camera.position);
+        initialCameraTarget.copy(orbitControls.target);
+        initialCameraZoom = camera.zoom;
     },
 
     (progress) => {
@@ -273,6 +398,11 @@ loader.load(
     },
 
     (error) => {
+
+        setViewerStatus(
+            'ERROR LOADING TERRAIN',
+            'error'
+        );
 
         console.error(
             'Error loading GLB:',
@@ -304,10 +434,11 @@ function animate() {
 
     camera.updateMatrixWorld();
 
-    tilesRenderer.setCamera(camera);
-    tilesRenderer.setResolutionFromRenderer(camera, renderer);
-    tilesRenderer.update();
-
+    if (tilesRenderer) {
+        tilesRenderer.setCamera(camera);
+        tilesRenderer.setResolutionFromRenderer(camera, renderer);
+        tilesRenderer.update();
+    }
     renderer.render(
         scene,
         camera
@@ -337,3 +468,206 @@ window.addEventListener(
         );
     }
 );
+
+// -----------------------------
+// 10. Backend image upload
+// -----------------------------
+
+const imageInput = document.getElementById('imageInput');
+const selectedFileInfo = document.getElementById('selectedFileInfo');
+
+imageInput.addEventListener('change', () => {
+
+    const file = imageInput.files[0];
+
+    if (!file) {
+
+        selectedFileInfo.textContent =
+            'No file selected';
+
+        fileStatus.textContent =
+            'No imagery selected';
+
+        return;
+    }
+
+    const sizeMB =
+        file.size / (1024 * 1024);
+
+    selectedFileInfo.innerHTML = `
+        <strong style="color:#dfe8f3">
+            ${file.name}
+        </strong>
+        <br>
+        ${file.type || 'Unknown format'}
+        <br>
+        ${sizeMB.toFixed(2)} MB
+    `;
+
+    fileStatus.textContent =
+        `Selected: ${file.name}`;
+
+});
+
+
+const uploadBtn = document.getElementById('uploadBtn');
+
+uploadBtn.addEventListener('click', async () => {
+
+    const file = imageInput.files[0];
+
+    if (!file) {
+        console.log('Please select an image first.');
+        return;
+    }
+
+    console.log('Selected image:', file.name);
+    console.log('Image type:', file.type);
+    console.log('Image size:', file.size, 'bytes');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+
+        console.log('Sending image to backend...');
+
+        const response = await fetch('/api/v1/processor', {
+            method: 'POST',
+            body: formData
+        });
+
+        console.log('Backend status:', response.status);
+
+        const result = await response.json();
+
+        console.log('Backend response:', result);
+
+    } catch (error) {
+
+        console.error('Backend request failed:', error);
+
+    }
+
+});
+
+
+// -----------------------------
+// UI controls
+// -----------------------------
+
+const orbitBtn = document.getElementById('orbitBtn');
+const flyBtn = document.getElementById('flyBtn');
+const resetBtn = document.getElementById('resetBtn');
+
+const gridBtn = document.getElementById('gridBtn');
+// Grid toggle
+gridBtn.addEventListener('click', () => {
+
+    gridHelper.visible = !gridHelper.visible;
+
+    gridBtn.classList.toggle(
+        'active',
+        gridHelper.visible
+    );
+
+    console.log(
+        gridHelper.visible
+            ? 'Grid ON'
+            : 'Grid OFF'
+    );
+
+});
+
+const helpBtn = document.getElementById('helpBtn');
+const helpPanel = document.getElementById('help-panel');
+
+const fullscreenBtn =
+    document.getElementById('fullscreenBtn');
+
+
+// Orbit mode
+orbitBtn.addEventListener('click', () => {
+
+    flyMode = false;
+
+    orbitControls.enabled = true;
+    flyControls.enabled = false;
+
+    orbitBtn.classList.add('active');
+    flyBtn.classList.remove('active');
+
+    console.log('Orbit mode ON');
+
+});
+
+
+// Fly mode
+flyBtn.addEventListener('click', () => {
+
+    flyMode = true;
+
+    orbitControls.enabled = false;
+    flyControls.enabled = true;
+
+    flyBtn.classList.add('active');
+    orbitBtn.classList.remove('active');
+
+    console.log('Fly mode ON');
+
+});
+
+
+// Reset camera
+resetBtn.addEventListener('click', () => {
+
+    // Force Orbit mode
+    flyMode = false;
+
+    flyControls.enabled = false;
+    orbitControls.enabled = true;
+
+    // Restore camera position
+    camera.position.copy(initialCameraPosition);
+    camera.zoom = initialCameraZoom;
+    camera.updateProjectionMatrix();
+
+    // Restore orbit target
+    orbitControls.target.copy(initialCameraTarget);
+
+    // Make camera look toward target
+    camera.lookAt(initialCameraTarget);
+
+    // Update controls
+    orbitControls.update();
+
+    // Update UI
+    orbitBtn.classList.add('active');
+    flyBtn.classList.remove('active');
+
+    console.log('Camera reset successfully');
+});
+
+
+// Help
+helpBtn.addEventListener('click', () => {
+
+    helpPanel.classList.toggle('show');
+
+});
+
+
+// Fullscreen
+fullscreenBtn.addEventListener('click', async () => {
+
+    if (!document.fullscreenElement) {
+
+        await document.documentElement.requestFullscreen();
+
+    } else {
+
+        await document.exitFullscreen();
+
+    }
+
+});
