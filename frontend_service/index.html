@@ -11,602 +11,6 @@
 
   <title>DepthWizard 3D</title>
 
-  <style>
-
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont,
-        "Segoe UI", sans-serif;
-    }
-
-    :root {
-      --bg: #090c12;
-      --panel: #10151d;
-      --panel-2: #151b24;
-      --border: #252d38;
-      --text: #f3f6fa;
-      --muted: #8c98a8;
-      --accent: #4da3ff;
-      --accent-dark: #247bc7;
-      --success: #48d597;
-      --warning: #f0b45b;
-    }
-
-    body {
-      width: 100vw;
-      height: 100vh;
-      overflow: hidden;
-      background: var(--bg);
-      color: var(--text);
-    }
-
-    /* --------------------------------
-       APP
-    -------------------------------- */
-
-    #app {
-      width: 100%;
-      height: 100%;
-      display: flex;
-      flex-direction: column;
-    }
-
-
-    /* --------------------------------
-       TOP BAR
-    -------------------------------- */
-
-    #topbar {
-      height: 64px;
-      min-height: 64px;
-
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-
-      padding: 0 22px;
-
-      background: rgba(10, 14, 20, 0.96);
-      border-bottom: 1px solid var(--border);
-
-      z-index: 20;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .brand-icon {
-      width: 34px;
-      height: 34px;
-
-      display: flex;
-      align-items: center;
-      justify-content: center;
-
-      border-radius: 9px;
-
-      background: linear-gradient(
-        135deg,
-        #4da3ff,
-        #2867a5
-      );
-
-      font-size: 17px;
-      font-weight: 800;
-    }
-
-    .brand-text h1 {
-      font-size: 17px;
-      letter-spacing: 0.4px;
-    }
-
-    .brand-text span {
-      display: block;
-
-      margin-top: 2px;
-
-      font-size: 10px;
-      color: var(--muted);
-
-      letter-spacing: 1.2px;
-      text-transform: uppercase;
-    }
-
-    .top-actions {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .icon-btn {
-      width: 36px;
-      height: 36px;
-
-      border: 1px solid var(--border);
-      border-radius: 8px;
-
-      background: var(--panel-2);
-      color: var(--text);
-
-      cursor: pointer;
-
-      transition: 0.2s;
-    }
-
-    .icon-btn:hover {
-      background: #202936;
-      border-color: #3a4655;
-    }
-
-
-    /* --------------------------------
-       MAIN LAYOUT
-    -------------------------------- */
-
-    #workspace {
-      flex: 1;
-
-      display: flex;
-
-      min-height: 0;
-    }
-
-
-    /* --------------------------------
-       SIDEBAR
-    -------------------------------- */
-
-    #sidebar {
-      width: 285px;
-      min-width: 285px;
-
-      padding: 18px;
-
-      background: var(--panel);
-
-      border-right: 1px solid var(--border);
-
-      overflow-y: auto;
-
-      z-index: 10;
-    }
-
-    .section {
-      margin-bottom: 22px;
-    }
-
-    .section-title {
-      margin-bottom: 10px;
-
-      font-size: 10px;
-      font-weight: 700;
-
-      color: #657286;
-
-      letter-spacing: 1.4px;
-      text-transform: uppercase;
-    }
-
-    .project-card {
-      padding: 13px;
-
-      border: 1px solid var(--border);
-      border-radius: 10px;
-
-      background: var(--panel-2);
-    }
-
-    .project-name {
-      font-size: 13px;
-      font-weight: 600;
-    }
-
-    .project-description {
-      margin-top: 5px;
-
-      color: var(--muted);
-
-      font-size: 11px;
-      line-height: 1.5;
-    }
-
-
-    /* --------------------------------
-       FILE INPUT
-    -------------------------------- */
-
-    .file-box {
-      padding: 14px;
-
-      border: 1px dashed #354252;
-      border-radius: 10px;
-
-      background: #0d1219;
-    }
-
-    .file-box label {
-      display: block;
-
-      margin-bottom: 9px;
-
-      font-size: 11px;
-      color: var(--muted);
-    }
-
-    #imageInput {
-      width: 100%;
-
-      font-size: 10px;
-      color: var(--muted);
-    }
-
-    #imageInput::file-selector-button {
-      margin-right: 8px;
-
-      padding: 7px 9px;
-
-      border: 1px solid var(--border);
-      border-radius: 6px;
-
-      background: #202936;
-      color: var(--text);
-
-      cursor: pointer;
-    }
-
-
-    /* --------------------------------
-       PRIMARY BUTTON
-    -------------------------------- */
-
-    .primary-btn {
-      width: 100%;
-
-      margin-top: 10px;
-
-      padding: 11px;
-
-      border: none;
-      border-radius: 8px;
-
-      background: linear-gradient(
-        135deg,
-        var(--accent),
-        var(--accent-dark)
-      );
-
-      color: white;
-
-      font-size: 12px;
-      font-weight: 700;
-
-      cursor: pointer;
-
-      transition: 0.2s;
-    }
-
-    .primary-btn:hover {
-      transform: translateY(-1px);
-
-      box-shadow:
-        0 7px 20px rgba(42, 130, 210, 0.25);
-    }
-
-
-    /* --------------------------------
-       CONTROL BUTTONS
-    -------------------------------- */
-
-    .control-grid {
-      display: grid;
-
-      grid-template-columns: 1fr 1fr;
-
-      gap: 7px;
-    }
-
-    .control-btn {
-      padding: 9px 7px;
-
-      border: 1px solid var(--border);
-      border-radius: 7px;
-
-      background: var(--panel-2);
-      color: #cbd4df;
-
-      font-size: 11px;
-
-      cursor: pointer;
-
-      transition: 0.2s;
-    }
-
-    .control-btn:hover {
-      background: #202936;
-      border-color: #3b4757;
-      color: white;
-    }
-
-    .control-btn.active {
-      border-color: var(--accent);
-      color: var(--accent);
-      background: rgba(77, 163, 255, 0.08);
-    }
-
-
-    /* --------------------------------
-       ANALYSIS
-    -------------------------------- */
-
-    .coordinate-card {
-      padding: 13px;
-
-      border: 1px solid var(--border);
-      border-radius: 10px;
-
-      background: var(--panel-2);
-    }
-
-    .coordinate-row {
-      display: flex;
-
-      justify-content: space-between;
-
-      padding: 5px 0;
-
-      border-bottom: 1px solid #202731;
-
-      font-family: monospace;
-      font-size: 11px;
-    }
-
-    .coordinate-row:last-child {
-      border-bottom: none;
-    }
-
-    .coordinate-label {
-      color: var(--muted);
-    }
-
-    .coordinate-value {
-      color: #dfe8f3;
-    }
-
-
-    /* --------------------------------
-       VIEWER
-    -------------------------------- */
-
-    #viewer {
-      position: relative;
-
-      flex: 1;
-
-      min-width: 0;
-      min-height: 0;
-
-      background:
-        radial-gradient(
-          circle at center,
-          #1a2430 0%,
-          #0b0f15 65%
-        );
-    }
-
-    #canvas-container {
-      position: absolute;
-
-      inset: 0;
-
-      width: 100%;
-      height: 100%;
-    }
-
-
-    /* --------------------------------
-       VIEWER HUD
-    -------------------------------- */
-
-    .viewer-status {
-      position: absolute;
-
-      top: 16px;
-      left: 16px;
-
-      display: flex;
-      align-items: center;
-      gap: 8px;
-
-      padding: 8px 11px;
-
-      background: rgba(8, 12, 17, 0.82);
-
-      border: 1px solid rgba(255,255,255,0.08);
-
-      border-radius: 8px;
-
-      font-size: 10px;
-      color: #aeb9c7;
-
-      backdrop-filter: blur(8px);
-
-      z-index: 5;
-    }
-
-    .status-dot {
-      width: 7px;
-      height: 7px;
-
-      border-radius: 50%;
-
-      background: var(--success);
-
-      box-shadow:
-        0 0 8px rgba(72, 213, 151, 0.7);
-    }
-
-
-    /* --------------------------------
-       INSPECTOR
-    -------------------------------- */
-
-    #inspector-overlay {
-      position: absolute;
-
-      right: 18px;
-      bottom: 18px;
-
-      width: 205px;
-
-      padding: 14px;
-
-      background: rgba(10, 14, 20, 0.90);
-
-      border: 1px solid rgba(255,255,255,0.10);
-
-      border-radius: 10px;
-
-      backdrop-filter: blur(10px);
-
-      z-index: 5;
-    }
-
-    .inspector-title {
-      margin-bottom: 10px;
-
-      font-size: 10px;
-      font-weight: 700;
-
-      color: #7f8da0;
-
-      letter-spacing: 1.2px;
-      text-transform: uppercase;
-    }
-
-
-    /* --------------------------------
-       HELP
-    -------------------------------- */
-
-    #help-panel {
-      display: none;
-
-      position: absolute;
-
-      top: 60px;
-      right: 18px;
-
-      width: 245px;
-
-      padding: 15px;
-
-      background: rgba(10,14,20,0.96);
-
-      border: 1px solid var(--border);
-
-      border-radius: 10px;
-
-      z-index: 30;
-
-      box-shadow: 0 20px 50px rgba(0,0,0,0.4);
-    }
-
-    #help-panel.show {
-      display: block;
-    }
-
-    .help-title {
-      margin-bottom: 10px;
-
-      font-size: 12px;
-      font-weight: 700;
-    }
-
-    .help-row {
-      display: flex;
-
-      justify-content: space-between;
-
-      padding: 7px 0;
-
-      color: var(--muted);
-
-      font-size: 11px;
-    }
-
-    .key {
-      padding: 3px 6px;
-
-      border: 1px solid #35404d;
-      border-radius: 5px;
-
-      background: #161d26;
-
-      color: #dbe4ef;
-
-      font-family: monospace;
-    }
-
-
-    /* --------------------------------
-       BOTTOM BAR
-    -------------------------------- */
-
-    #bottom-bar {
-      position: absolute;
-
-      left: 16px;
-      right: 16px;
-      bottom: 16px;
-
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-
-      pointer-events: none;
-
-      z-index: 4;
-    }
-
-    .hint {
-      padding: 7px 10px;
-
-      border: 1px solid rgba(255,255,255,0.07);
-      border-radius: 7px;
-
-      background: rgba(8,12,17,0.70);
-
-      color: #788596;
-
-      font-size: 10px;
-
-      backdrop-filter: blur(8px);
-    }
-
-
-    /* --------------------------------
-       RESPONSIVE
-    -------------------------------- */
-
-    @media (max-width: 800px) {
-
-      #sidebar {
-        width: 230px;
-        min-width: 230px;
-      }
-
-      #inspector-overlay {
-        width: 180px;
-      }
-
-    }
-
-  </style>
 </head>
 
 
@@ -687,12 +91,12 @@
         <div class="project-card">
 
           <div class="project-name">
-            ISRO SIH 2026
+            Terrain Analysis
           </div>
 
           <div class="project-description">
-            Single-view remote sensing image
-            to interactive 3D terrain.
+            Convert optical imagery into an
+            interactive 3D terrain environment.
           </div>
 
         </div>
@@ -793,6 +197,51 @@
 
       </section>
 
+      <!-- VISUALIZATION -->
+
+      <section class="section">
+
+          <div class="section-title">
+              Visualization
+          </div>
+
+          <div class="visual-control">
+
+              <div class="visual-control-header">
+                  <span>Lighting</span>
+
+                  <button
+                      id="lightingBtn"
+                      class="mini-btn active"
+                  >
+                      ON
+                  </button>
+              </div>
+
+              <div class="slider-control">
+
+                  <div class="slider-label">
+                      <span>Light Intensity</span>
+
+                      <span id="lightValue">
+                          2.0
+                      </span>
+                  </div>
+
+                  <input
+                      id="lightSlider"
+                      type="range"
+                      min="0"
+                      max="3"
+                      step="0.1"
+                      value="2"
+                  >
+
+              </div>
+
+          </div>
+
+      </section>
 
       <!-- ANALYSIS -->
 
@@ -898,7 +347,19 @@
 
 
       <div id="canvas-container"></div>
+        <div id="compass-control" title="Reset orientation">
 
+          <div class="compass-face">
+
+              <div class="compass-north">
+                  N
+              </div>
+
+              <div class="compass-arrow"></div>
+
+          </div>
+
+      </div>
 
       <div class="viewer-status">
 
@@ -984,7 +445,7 @@
       <div id="bottom-bar">
 
         <div class="hint">
-          Orbit • Scroll to zoom • F for flythrough
+          Auto rotate • Drag to orbit • Scroll to zoom • F to fly
         </div>
 
         <div class="hint">
@@ -995,6 +456,7 @@
 
 
     </section>
+
 
   </main>
 

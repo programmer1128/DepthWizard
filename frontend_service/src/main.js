@@ -1,3 +1,5 @@
+import './style.css';
+
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { FlyControls } from 'three/examples/jsm/controls/FlyControls.js';
@@ -64,8 +66,8 @@ function setViewerStatus(status, type = 'ready') {
 
 const scene = new THREE.Scene();
 
-scene.background = new THREE.Color(0x1a1a24);
-
+//scene.background = new THREE.Color(0x1a1a24);
+scene.background = null; // Transparent background
 
 // Variable to hold the terrain model
 let terrainModel = null;
@@ -87,6 +89,80 @@ const camera = new THREE.PerspectiveCamera(
 
 camera.position.set(0, 100, 200);
 
+const compassControl =
+    document.getElementById('compass-control');
+
+const compassFace =
+    document.querySelector('.compass-face');
+// const cameraDirection = new THREE.Vector3();
+
+// camera.getWorldDirection(cameraDirection);
+
+// const angle = Math.atan2(
+//     cameraDirection.x,
+//     cameraDirection.z
+// );
+
+// compass.style.transform =
+//     `rotate(${angle}rad)`;
+
+compassControl.addEventListener('click', () => {
+
+    if (flyMode) {
+        return;
+    }
+
+    orbitControls.autoRotate = false;
+
+    const distance =
+        camera.position.distanceTo(
+            orbitControls.target
+        );
+
+    camera.position.set(
+        0,
+        distance,
+        0
+    );
+
+    camera.lookAt(
+        orbitControls.target
+    );
+
+    orbitControls.update();
+
+    setTimeout(() => {
+
+        if (!flyMode) {
+            orbitControls.autoRotate = true;
+        }
+
+    }, 2000);
+
+});
+
+function updateCompass(force = false) {
+
+    if (
+        orbitControls.autoRotate &&
+        !userInteracting &&
+        !force
+    ) {
+        return;
+    }
+
+    const direction = new THREE.Vector3();
+
+    camera.getWorldDirection(direction);
+
+    const angle = Math.atan2(
+        direction.x,
+        direction.z
+    );
+
+    compassFace.style.transform =
+        `rotate(${angle}rad)`;
+}
 
 // -----------------------------
 // 4. Create the renderer
@@ -94,8 +170,13 @@ camera.position.set(0, 100, 200);
 
 const renderer = new THREE.WebGLRenderer({
     antialias: true,
+    alpha: true,
     powerPreference: 'high-performance'
 });
+
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
 
 renderer.setSize(
     container.clientWidth,
@@ -144,6 +225,7 @@ setViewerStatus(
 
 loadTileset('/glb_tileset.json');
 
+
 // -----------------------------
 // 5. Add lighting
 // -----------------------------
@@ -153,16 +235,33 @@ const ambientLight = new THREE.AmbientLight(
     1.5
 );
 
-scene.add(ambientLight);
-
+const hemisphereLight = new THREE.HemisphereLight(
+    0xbfd7ea,
+    0x3b4650,
+    0.65
+);
 
 const directionalLight = new THREE.DirectionalLight(
     0xffffff,
     2
 );
 
-directionalLight.position.set(200, 400, 200);
+directionalLight.position.set(300, 600, 250);
+directionalLight.castShadow = true;
 
+directionalLight.shadow.mapSize.width = 2048;
+directionalLight.shadow.mapSize.height = 2048;
+
+directionalLight.shadow.camera.left = -1000;
+directionalLight.shadow.camera.right = 1000;
+directionalLight.shadow.camera.top = 1000;
+directionalLight.shadow.camera.bottom = -1000;
+
+directionalLight.shadow.camera.near = 1;
+directionalLight.shadow.camera.far = 3000;
+
+scene.add(ambientLight);
+scene.add(hemisphereLight);
 scene.add(directionalLight);
 
 // -----------------------------
@@ -192,6 +291,10 @@ const orbitControls = new OrbitControls(
 
 orbitControls.enableDamping = true;
 
+// Automatic terrain rotation
+orbitControls.autoRotate = true;
+orbitControls.autoRotateSpeed = 0.8;
+
 
 //adding fly controls for free movement
 const flyControls = new FlyControls(
@@ -206,6 +309,9 @@ flyControls.dragToLook = true;
 flyControls.enabled = false;
 
 let flyMode = false;
+let userInteracting = false;
+let interactionTimeout = null;
+
 
 window.addEventListener('keydown', (event) => {
 
@@ -351,6 +457,13 @@ loader.load(
         // Move model so its center is near the origin
         model.position.sub(center);
 
+        model.traverse((object) => {
+            if (object.isMesh) {
+                object.castShadow = true;
+                object.receiveShadow = true;
+            }
+        });
+
         // Recalculate terrain bounds after centering
         const centeredBox = new THREE.Box3().setFromObject(model);
 
@@ -433,6 +546,10 @@ function animate() {
     }
 
     camera.updateMatrixWorld();
+
+    if (flyMode || userInteracting) {
+        updateCompass();
+    }
 
     if (tilesRenderer) {
         tilesRenderer.setCamera(camera);
@@ -559,6 +676,9 @@ uploadBtn.addEventListener('click', async () => {
 const orbitBtn = document.getElementById('orbitBtn');
 const flyBtn = document.getElementById('flyBtn');
 const resetBtn = document.getElementById('resetBtn');
+const lightingBtn = document.getElementById('lightingBtn');
+const lightSlider = document.getElementById('lightSlider');
+const lightValue = document.getElementById('lightValue');
 
 const gridBtn = document.getElementById('gridBtn');
 // Grid toggle
@@ -579,6 +699,22 @@ gridBtn.addEventListener('click', () => {
 
 });
 
+lightingBtn.addEventListener('click', () => {
+    const isOn = lightingBtn.classList.toggle('active');
+
+    ambientLight.visible = isOn;
+    directionalLight.visible = isOn;
+
+    lightingBtn.textContent = isOn ? 'ON' : 'OFF';
+});
+
+lightSlider.addEventListener('input', () => {
+    const intensity = Number(lightSlider.value);
+
+    directionalLight.intensity = intensity;
+    lightValue.textContent = intensity.toFixed(1);
+});
+
 const helpBtn = document.getElementById('helpBtn');
 const helpPanel = document.getElementById('help-panel');
 
@@ -593,11 +729,37 @@ orbitBtn.addEventListener('click', () => {
 
     orbitControls.enabled = true;
     flyControls.enabled = false;
+    orbitControls.autoRotate = true;
 
     orbitBtn.classList.add('active');
     flyBtn.classList.remove('active');
 
     console.log('Orbit mode ON');
+
+});
+
+orbitControls.addEventListener('start', () => {
+
+    userInteracting = true;
+
+    orbitControls.autoRotate = false;
+
+    clearTimeout(interactionTimeout);
+});
+
+orbitControls.addEventListener('end', () => {
+
+    userInteracting = false;
+
+    clearTimeout(interactionTimeout);
+
+    interactionTimeout = setTimeout(() => {
+
+        if (!flyMode) {
+            orbitControls.autoRotate = true;
+        }
+
+    }, 2500);
 
 });
 
@@ -608,8 +770,9 @@ flyBtn.addEventListener('click', () => {
     flyMode = true;
 
     orbitControls.enabled = false;
+    orbitControls.autoRotate = false;
     flyControls.enabled = true;
-
+    
     flyBtn.classList.add('active');
     orbitBtn.classList.remove('active');
 
@@ -626,6 +789,8 @@ resetBtn.addEventListener('click', () => {
 
     flyControls.enabled = false;
     orbitControls.enabled = true;
+
+    orbitControls.autoRotate = true;
 
     // Restore camera position
     camera.position.copy(initialCameraPosition);
