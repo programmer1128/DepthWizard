@@ -5,6 +5,9 @@
 #include "../MeshMapping/MeshService.h"
 #include "../DataHandlers/MiniIOClient.h"
 #include "../ImageTilingService/TilingService.h"
+#include "../FileGenerators/GltfPackager.h"
+#include "../FileGenerators/TiffExporter.h"
+#include "StreamingService.h"
 #include <drogon/utils/Utilities.h>
 #include <gdal_priv.h>
 #include <stdexcept>
@@ -64,72 +67,108 @@ drogon::Task<std::string> PipelineService::executeCalibration(
          //upto this part logic will remain same even for tiling of the .glb files
          //
          std::vector<float> absoluteDsm = calibrateHeights(aiDepth, srtmHeight);
+
+         StreamingContext ctx 
+         {
+             absoluteDsm,            // The stitched and calibrated elevation matrix
+             textureBytes,           // The raw optical image bytes in RAM
+             meta.width,             // Master width from SpatialMetadata
+             meta.height,            // Master height from SpatialMetadata
+             meta,                   // The GDAL spatial context
+             "terrain-assets"        // Target MinIO bucket
+         };
+
+         //Orchestrate the pipeline and await the final URL
+         std::string tilesetUrl = co_await StreamingService::generateAndStreamTileset(ctx);
+
          
          auto end_calib = std::chrono::steady_clock::now();
 
-         auto calib_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_calib - start_calib).count();
-         std::cout << "[Latency] RANSAC Calibration: " << calib_ms << " ms\n";
+        //  auto calib_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_calib - start_calib).count();
+        //  std::cout << "[Latency] RANSAC Calibration: " << calib_ms << " ms\n";
 
-         auto start_mesh = std::chrono::steady_clock::now();
-         //Generate 3D Textured Mesh (.glb) and get raw bytes
-         //std::vector<uint8_t> glbBytes = build3DMesh(uuid, absoluteDsm, meta, imageFile);
+        //  auto start_mesh = std::chrono::steady_clock::now();
+        //  //Generate 3D Textured Mesh (.glb) and get raw bytes
+        //  //std::vector<uint8_t> glbBytes = build3DMesh(uuid, absoluteDsm, meta, imageFile);
 
-         std::vector<uint8_t> glbBytes = build3DMesh(uuid, absoluteDsm, meta, textureBytes);
-         auto end_mesh = std::chrono::steady_clock::now();
+        //  std::vector<uint8_t> glbBytes = build3DMesh(uuid, absoluteDsm, meta, textureBytes);
+        //  auto end_mesh = std::chrono::steady_clock::now();
 
-         auto mesh_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_mesh - start_mesh).count();
-         std::cout << "[Latency] Meshing & Draco Compression: " << mesh_ms << " ms\n";
+        //  auto mesh_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_mesh - start_mesh).count();
+        //  std::cout << "[Latency] Meshing & Draco Compression: " << mesh_ms << " ms\n";
 
          //upload the glbBytes to the MiniIO object storage
-         std::string bucket = "terrain-assets";
-         std::string key = "mesh_" + uuid + ".glb";
+        
+        //  std::string key = "mesh_" + uuid + ".glb";
  
-         auto start_upload = std::chrono::steady_clock::now();
-         //Upload to MinIO
-         bool minio_success = MinioClient::uploadBuffer(bucket, key, glbBytes, "model/gltf-binary");
+        //  auto start_upload = std::chrono::steady_clock::now();
+        //  //Upload to MinIO
+        //  bool minio_success = MinioClient::uploadBuffer(bucket, key, glbBytes, "model/gltf-binary");
 
-         if (!minio_success) 
-         {
-             throw std::runtime_error("Failed to upload GLB to MinIO.");
-         }
+        //  if (!minio_success) 
+        //  {
+        //      throw std::runtime_error("Failed to upload GLB to MinIO.");
+        //  }
 
-         std::string minio_url = MinioClient::generatePresignedUrl(bucket, key);
+        //  std::string minio_url = MinioClient::generatePresignedUrl(bucket, key);
 
          //the .tiff file generation is handed to a background async worker thread that generates
-         //the .tiff n server after the .glb file is sent for better performance. UI remains smooth
+         //the .tiff in server after the .glb file is sent for better performance. UI remains smooth
          //and better performance 
-         std::string tiff_output_path = "./heights_" + uuid + ".tif";
+         std::string bucket = "terrain-assets";
+         std::string tiff_key = "heights_" + uuid + ".tif";
 
+         // Hand off in-memory GeoTIFF encoding and MinIO upload to the background thread
          std::thread([
-             dsm = std::move(absoluteDsm),// Safely transfer memory ownership to the thread
-             tiff_output_path, 
+             dsm = std::move(absoluteDsm), // Transfer ownership of elevation matrix
+             uuid,
+             tiff_key,
+             bucket,
              w = meta.width, 
              h = meta.height, 
-             geoTransform = meta.geoTransform,// Copy the spatial array
-             proj = meta.projectionRef // Copy the projection string
-             ]() mutable {
-            
-             TiffExporter::writeFloatTiff(
-                 tiff_output_path, 
-                 dsm,w,h, geoTransform.data(),proj.c_str());
- 
-         }).detach(); // Detach allows the thread to execute independently
+             geoTransform = meta.geoTransform, // Copy spatial parameters
+             proj = meta.projectionRef 
+             ]() 
+         mutable 
+         { 
+             try 
+             {
+                 //generate the GeoTIFF in RAM
+                 std::vector<uint8_t> tiffBytes = TiffExporter::exportTiffToBuffer(
+                     uuid, dsm, w, h, geoTransform.data(), proj.c_str());
 
-         //return glb download URL of minio to frontend.
-         auto end_upload = std::chrono::steady_clock::now();
-         auto upload_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_upload - start_upload).count();
-         std::cout << "[Latency] MinIO Network Upload: " << upload_ms << " ms\n";
+                 if (tiffBytes.empty()) 
+                 {
+                     std::cerr << "Failed to generate GeoTIFF buffer for UUID: " << uuid << "\n";
+                     return;
+                 }
+                 //upload byte stream to MinIO
+                 bool success = MinioClient::uploadBuffer(bucket, tiff_key, tiffBytes, "image/tiff");
+                 if (!success) 
+                 {
+                     std::cerr << "[MinIO Error] Background upload failed for: " << tiff_key << "\n";
+                 }
+                 else 
+                 {
+                     std::cout << "[MinIO] Successfully uploaded background GeoTIFF: " << tiff_key 
+                               << " (" << (tiffBytes.size() / 1024) << " KB)\n";
+                 }
+             } 
+             catch (const std::exception& e) 
+             {
+                 std::cerr << "[Worker Exception] Background TIFF task failed: " << e.what() << "\n";
+             }
 
-         // Total Time
-         //auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_upload - start_total).count();
-         //std::cout << "[Latency] TOTAL PIPELINE EXECUTION: " << total_ms << " ms\n";
-         co_return minio_url;
+         }).detach();
+
+         //Return to frontend
+         co_return tilesetUrl;
      } 
      catch (const std::exception& e) 
      {
          // Failsafe RAM cleanup
          std::remove(vsi_path.c_str());
-         std::cerr << "CRASH DETECTED: " << e.what() << "\n";
+         std::cerr << "exception error in pipeline service " << e.what() << "\n";
          // Explicitly rethrow to bypass the GCC coroutine bug
          throw std::runtime_error(e.what());
      }

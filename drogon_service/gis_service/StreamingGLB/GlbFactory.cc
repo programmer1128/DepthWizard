@@ -9,6 +9,8 @@
 #include <opencv2/opencv.hpp>
 #include "stb_image_write.h"
 #include <iostream>
+#include <queue>
+#include <omp.h>
 #include <cstring> // for std::memcpy
 
 // inline for STB to write JPEG bytes directly into RAM - faster
@@ -20,96 +22,129 @@ inline void writeJpegCallback(void* context, void* data, int size)
 }
 
 void GlbFactory::generateAndUploadAll(
-    QuadTreeGraph& graph, 
-    const std::vector<float>& master_dsm, 
-    const std::string& image_path) // dsm is the complete absolute DSM matrix
+     QuadTreeGraph& graph, 
+     const std::vector<float>& master_dsm, 
+     const std::vector<uint8_t>& rawJpegBytes, 
+     int master_width, 
+     int master_height) // dsm is the complete absolute DSM matrix
 {
-    // load the image to RAM once
-    // IMREAD_COLOR guarantees we get a standard 3-channel image (BGR)
-    cv::Mat image = cv::imread(image_path, cv::IMREAD_COLOR);
-    if (image.empty()) 
-    {
-        throw std::runtime_error("Cannot find or open the Master Image!");
-    }
+     // load the image to RAM once
+     // IMREAD_COLOR guarantees we get a standard 3-channel image (BGR)
+     cv::Mat image = cv::imdecode(rawJpegBytes, cv::IMREAD_COLOR);
+     if (image.empty()) 
+     {
+         throw std::runtime_error("Cannot decode the Master Image in memory!");
+     }
+     
+     cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
+     // OpenCV loads as BGR but we need RGB 
+     cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
 
-    int master_width = image.cols; // width of the complete image
-    int master_height = image.rows; // width of the complete image
+     //Build the BFS Queue for Upload Prioritization
+     // We want to upload root/low-detail nodes first so the frontend stream starts instantly
+     std::vector<uint32_t> bfs_queue;
+     bfs_queue.reserve(graph.nodes.size());
+     std::queue<uint32_t> q;
+    
+     q.push(0); // Root node ID
+     while (!q.empty()) 
+     {
+         uint32_t current_id = q.front();
+         q.pop();
+         bfs_queue.push_back(current_id);
 
-    // OpenCV loads as BGR but we need RGB 
-    cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
+         //find children using the CSR graph markers
+         size_t start_idx = graph.edge_markers[current_id];
+         size_t end_idx = graph.edge_markers[current_id + 1];
+         for (size_t idx = start_idx; idx < end_idx; ++idx) 
+         {
+             q.push(graph.edges[idx]);
+         }
+     }
 
-    GlbMesher mesher;
-    std::string bucket = "terrain-assets"; // MinIO storage folder
+     //GlbMesher mesher;
+     std::string bucket = "terrain-assets"; // MinIO storage folder
 
-    // now we iterate through every quad node in the array
-    for (size_t i = 0; i < graph.nodes.size(); ++i) 
-    {
-        QuadNode& node = graph.nodes[i]; // actual node
+     // 3. Multithreaded Processing & Uploading
+    // schedule(dynamic, 8) ensures threads assigned to "easy" flat tiles don't sit idle
+     #pragma omp parallel for schedule(dynamic, 8) 
+     for (size_t i = 0; i < bfs_queue.size(); ++i) 
+     {
+         uint32_t node_id = bfs_queue[i];
+         QuadNode& node = graph.nodes[node_id];
+ 
+         int x = node.bounds.x_offset;
+         int y = node.bounds.y_offset;
+         int w = node.bounds.width;
+         int h = node.bounds.height;
 
-        int x = node.bounds.x_offset;
-        int y = node.bounds.y_offset;
-        int w = node.bounds.width;
-        int h = node.bounds.height;
+         int safe_w = std::min(w, master_width - x);
+         int safe_h = std::min(h, master_height - y);
 
-        // no copy image cropping
-        // we put a mathematical window (cv::Rect) over the image
+         // --- A. Image Slicing and Compression ---
+         cv::Rect roi(x, y, safe_w, safe_h);
+         cv::Mat image_slice = image(roi);
 
-        // clamp width and height so they never exceed the master image boundaries
-        int safe_w = std::min(w, master_width - x);
-        int safe_h = std::min(h, master_height - y); 
+         // Downscale for zoomed-out tiles (LOD concept)
+         if (node.level < 3) 
+         {
+             cv::Mat resized_slice;
+             cv::resize(image_slice, resized_slice, cv::Size(512, 512), 0, 0, cv::INTER_AREA);
+             image_slice = resized_slice;
+         }
 
-        cv::Rect roi(x, y, safe_w, safe_h);
-        cv::Mat image_slice = image(roi); // extracted image
-
-        // downscaling for zoomed out tile (levels 0, 1, 2)
-        // Level of Detail (LOD) concept
-        if (node.level < 3) 
-        {
-            cv::Mat resized_slice;
-
-            // we shrink it to 512x512 pixels 
-            // cv::INTER_AREA shrinks images without making them look jagged
-            cv::resize(image_slice, resized_slice, cv::Size(512, 512), 0, 0, cv::INTER_AREA);
-            image_slice = resized_slice; 
-        }
-
-        // now we turn raw pixels (cv::Mat) into a JPEG
-        std::vector<uint8_t> jpeg_buffer;
-
-        // compress the image slice at 90% quality and save it into jpeg_buffer
-        stbi_write_jpg_to_func(writeJpegCallback, &jpeg_buffer, image_slice.cols, image_slice.rows, 3, image_slice.data, 90);
+         std::vector<uint8_t> jpeg_buffer;
+         stbi_write_jpg_to_func(writeJpegCallback, &jpeg_buffer, image_slice.cols, image_slice.rows, 3, image_slice.data, 90);
 
 
-        // next we have to extract the local DSM from the master DSM
-        // we make blank array for just this tile's elevation heights
-        std::vector<float> local_dsm(safe_w * safe_h);
+         // --- B. DSM Slicing & Dynamic Height Calculation ---
+         std::vector<float> local_dsm(safe_w * safe_h);
+         float local_min = std::numeric_limits<float>::max();
+         float local_max = std::numeric_limits<float>::lowest();
 
-        for (int row = 0; row < safe_h; ++row) 
-        {
-            // we calculate where this specific row lives inside the master array
-            int master_idx = ((y + row) * master_width) + x;
-            int local_idx = row * safe_w;
+         for (int row = 0; row < safe_h; ++row) 
+         {
+             int master_idx = ((y + row) * master_width) + x;
+             int local_idx = row * safe_w;
             
-            // copy one row of floats from the giant array into our small array
-            std::memcpy(&local_dsm[local_idx], &master_dsm[master_idx], safe_w * sizeof(float));
-        }
+             // Copy row from massive array
+             std::memcpy(&local_dsm[local_idx], &master_dsm[master_idx], safe_w * sizeof(float));
 
-        // now we build the 3D mesh
-        // we send the local dsm and JPEG image to the mesher
-        // it compresses 3D mesh using Draco compression and gives us the .glb file
+             // Extract true Min/Max heights on the fly for OGC Frustum Culling
+             for (int col = 0; col < safe_w; ++col) 
+             {
+                 float val = local_dsm[local_idx + col];
+                 if (!std::isnan(val)) 
+                 {
+                     if (val < local_min) local_min = val;
+                     if (val > local_max) local_max = val;
+                 }
+             }
+         }
 
-        std::vector<uint8_t> glb_bytes = mesher.generateGlb(local_dsm, safe_w, safe_h, 1.0f, reinterpret_cast<const char*>(jpeg_buffer.data()), jpeg_buffer.size());
+         // Handle edge case of entirely NaN tiles (ocean/void)
+         if (local_min > local_max) { local_min = 0.0f; local_max = 0.0f; }
         
-        // upload to MinIO
-        std::string key = "tile_" + std::to_string(node.id) + ".glb";
-        bool uploaded = MinioClient::uploadBuffer(bucket, key, glb_bytes, "model/gltf-binary");
+         // Store the true calculated heights into the node for OgcIndexer to use
+         node.volume.min_height = local_min;
+         node.volume.max_height = local_max;
 
-        if (!uploaded)
-        {
-             throw std::runtime_error("Failed to upload GLB to MinIO");
-        }
 
-        // now save the link to node structure
-        node.glb_url = MinioClient::generatePresignedUrl(bucket, key);
-    }
+         // --- C. Mesh Generation & MinIO Upload ---
+         // Instantiate mesher inside the loop to guarantee thread safety
+         GlbMesher mesher; 
+         std::vector<uint8_t> glb_bytes = mesher.generateGlb(local_dsm, safe_w, safe_h, 1.0f, reinterpret_cast<const char*>(jpeg_buffer.data()), jpeg_buffer.size());
+         
+         std::string key = "tile_" + std::to_string(node.id) + ".glb";
+         bool uploaded = MinioClient::uploadBuffer(bucket, key, glb_bytes, "model/gltf-binary");
+ 
+         if (!uploaded)
+         {
+             // Log error, but don't throw an exception to prevent killing other healthy OpenMP threads
+             std::cerr << "Failed to upload GLB for node " << node.id << " to MinIO" << std::endl;
+         }
+ 
+         // Save the link to node structure
+         node.glb_url = MinioClient::generatePresignedUrl(bucket, key);
+     }
 }

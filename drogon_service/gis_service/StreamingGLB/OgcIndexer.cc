@@ -9,7 +9,7 @@
 
 #define PI 3.14159265358979323846
 
-std::string OgcIndexer::buildAndUploadTileset(const QuadTreeGraph& graph, const double geoTransform[6])
+std::string OgcIndexer::buildAndUploadTileset(const QuadTreeGraph& graph, const SpatialMetadata& meta)
 {
     /*  WE DO NOT NEED THE BFS AND HASH MAPS FOR OFFICIAL OGC 3D TILES FORMAT
 
@@ -57,41 +57,59 @@ std::string OgcIndexer::buildAndUploadTileset(const QuadTreeGraph& graph, const 
     }
     */
 
+
+    OGRSpatialReference sourceSRS;
+    sourceSRS.importFromWkt(meta.projectionRef.c_str());
+
+    OGRSpatialReference targetSRS;
+    targetSRS.SetWellKnownGeogCS("WGS84");
+
+    OGRCoordinateTransformation* coordTransform = 
+        OGRCreateCoordinateTransformation(&sourceSRS, &targetSRS);
+
     // we write the json file
     Json::Value tileset;
     tileset["asset"]["version"] = "1.0"; // required by OGC standard
 
-    // root node determines the max error for the whole map
-    tileset["geometricError"] = graph.nodes[0].error * 2.0; 
+     // root node determines the max error for the whole map (Physical width of the root tile in meters)
+     tileset["geometricError"] = graph.nodes[0].bounds.width * meta.geoTransform[1];
 
-    // we build the nested tree structure using our recursive helper
-    tileset["root"] = serializeNode(graph, 0, geoTransform); 
+     // we build the nested tree structure using our recursive helper
+     tileset["root"] = serializeNode(graph, 0, meta.geoTransform.data(), coordTransform);
 
-    // next we convert the C++ json object into a string
-    Json::StreamWriterBuilder writer;
-    std::string json_payload = Json::writeString(writer, tileset);
-    std::vector<uint8_t> json_bytes(json_payload.begin(), json_payload.end());
+     if (coordTransform) 
+     {
+         OGRCoordinateTransformation::DestroyCT(coordTransform);
+     }
 
-    // now we upload the rulebook to MinIO
-    std::string bucket = "terrain-assets";
-    std::string json_key = "tileset.json";
-    MinioClient::uploadBuffer(bucket, json_key, json_bytes, "application/json");
+     // next we convert the C++ json object into a string
+     Json::StreamWriterBuilder writer;
+     std::string json_payload = Json::writeString(writer, tileset);
+     std::vector<uint8_t> json_bytes(json_payload.begin(), json_payload.end());
+
+     // now we upload the rulebook to MinIO
+     std::string bucket = "terrain-assets";
+     std::string json_key = "tileset.json";
+     MinioClient::uploadBuffer(bucket, json_key, json_bytes, "application/json");
     
-    // return the final link so drogon can send it to frontend
-    return MinioClient::generatePresignedUrl(bucket, json_key);
+     // return the final link so drogon can send it to frontend
+     return MinioClient::generatePresignedUrl(bucket, json_key);
 }
 
 // recursively builds the parent/child json structure
-Json::Value OgcIndexer::serializeNode(const QuadTreeGraph& graph, uint32_t current_id, const double geoTransform[6])
+Json::Value OgcIndexer::serializeNode(const QuadTreeGraph& graph, uint32_t current_id, 
+         const double* geoTransform, 
+         OGRCoordinateTransformation* coordTransform)
 {
     const QuadNode& node = graph.nodes[current_id];
     Json::Value tile;
 
     // convert pixels to real-world GPS boundaries
-    tile["boundingVolume"] = calculateDynamicBounds(node.bounds, geoTransform);
+    tile["boundingVolume"] = calculateDynamicBounds(node, geoTransform,coordTransform);
     
-    // to inform frontend how blurry this tile is allowed to get before swapping it
-    tile["geometricError"] = node.error;
+
+     // to inform frontend how blurry this tile is allowed to get before swapping it (Physical width in meters)
+     tile["geometricError"] = node.bounds.width * geoTransform[1];
     
     // inform frontend to completely swap out the parent when loading the children
     tile["refine"] = "REPLACE"; 
@@ -112,7 +130,7 @@ Json::Value OgcIndexer::serializeNode(const QuadTreeGraph& graph, uint32_t curre
             uint32_t child_id = graph.edges[idx];
             
             // recursion: call this function again for the child and add it to the array
-            children_array.append(serializeNode(graph, child_id, geoTransform));
+            children_array.append(serializeNode(graph, child_id, geoTransform,coordTransform));
         }
         tile["children"] = children_array;
     }
@@ -120,37 +138,91 @@ Json::Value OgcIndexer::serializeNode(const QuadTreeGraph& graph, uint32_t curre
     return tile;
 }
 
-// converts pixels to GPS Radians using GDAL's affine transform math
-Json::Value OgcIndexer::calculateDynamicBounds(const MatrixBounds& bounds, const double geoTransform[6])
+
+
+Json::Value OgcIndexer::calculateDynamicBounds(
+    const QuadNode& node, 
+    const double* geoTransform, 
+    OGRCoordinateTransformation* coordTransform)
 {
-    // GDAL geoTransform array breakdown:
-    // [0]: Top-Left X (Longitude)
-    // [1]: W-E pixel resolution (Pixel Width)
-    // [2]: Row rotation (typically 0)
-    // [3]: Top-Left Y (Latitude)
-    // [4]: Column rotation (typically 0)
-    // [5]: N-S pixel resolution (Pixel Height - usually a negative number)
+    const MatrixBounds& bounds = node.bounds;
 
-    // calculate Longitude (west and east) in degrees
-    double west_deg = geoTransform[0] + (bounds.x_offset * geoTransform[1]);
-    double east_deg = geoTransform[0] + ((bounds.x_offset + bounds.width) * geoTransform[1]);
+    // 1. Teammate's original Affine math (Outputs Source CRS, e.g., UTM or Lat/Lon)
+    double west_geo = geoTransform[0] + (bounds.x_offset * geoTransform[1]);
+    double east_geo = geoTransform[0] + ((bounds.x_offset + bounds.width) * geoTransform[1]);
+    double north_geo = geoTransform[3] + (bounds.y_offset * geoTransform[5]);
+    double south_geo = geoTransform[3] + ((bounds.y_offset + bounds.height) * geoTransform[5]);
 
-    // calculate Latitude (north and south) in degrees
-    double north_deg = geoTransform[3] + (bounds.y_offset * geoTransform[5]);
-    double south_deg = geoTransform[3] + ((bounds.y_offset + bounds.height) * geoTransform[5]);
-
-    // OGC requires radians not degrees
-    double rad_conv = PI / 180.0;
+    //Apply GDAL Transform to guarantee WGS84
+    double x[2] = {west_geo, east_geo};
+    double y[2] = {north_geo, south_geo};
     
-    Json::Value region(Json::arrayValue);
-    region.append(west_deg * rad_conv);  // west
-    region.append(south_deg * rad_conv); // south
-    region.append(east_deg * rad_conv);  // east
-    region.append(north_deg * rad_conv); // north
-    region.append(0.0);                  // min height (meters)
-    region.append(8848.0);               // max height (meters) - roughly (Mt Everest)
+     if (coordTransform) 
+     {
+         coordTransform->Transform(2, x, y);
+     }
 
-    Json::Value bv;
-    bv["region"] = region;
-    return bv;
+     //Convert to Radians
+     double rad_conv = PI / 180.0;
+    
+     //error for the 3d tiles format as shown by 3d-tiles testing 
+     //The 'south' entry of the bounding region may not be larger than the 'north' entry,
+     // but the south is 1.273522634791319 and the north is 1.2715418284680933
+     //this part fixes that
+     double true_west  = std::min(x[0], x[1]) * rad_conv;
+     double true_east  = std::max(x[0], x[1]) * rad_conv;
+     double true_south = std::min(y[0], y[1]) * rad_conv;
+     double true_north = std::max(y[0], y[1]) * rad_conv;
+
+     Json::Value region(Json::arrayValue);
+     region.append(true_west);
+     region.append(true_south);
+     region.append(true_east);
+     region.append(true_north);
+    
+     //Use the true heights calculated by the GlbFactory OpenMP loop
+     region.append(node.volume.min_height); 
+     region.append(node.volume.max_height); 
+
+     Json::Value bv;
+     bv["region"] = region;
+     return bv;
 }
+
+
+
+
+// converts pixels to GPS Radians using GDAL's affine transform math
+// Json::Value OgcIndexer::calculateDynamicBounds(const MatrixBounds& bounds, const double geoTransform[6])
+// {
+//     // GDAL geoTransform array breakdown:
+//     // [0]: Top-Left X (Longitude)
+//     // [1]: W-E pixel resolution (Pixel Width)
+//     // [2]: Row rotation (typically 0)
+//     // [3]: Top-Left Y (Latitude)
+//     // [4]: Column rotation (typically 0)
+//     // [5]: N-S pixel resolution (Pixel Height - usually a negative number)
+
+//     // calculate Longitude (west and east) in degrees
+//     double west_deg = geoTransform[0] + (bounds.x_offset * geoTransform[1]);
+//     double east_deg = geoTransform[0] + ((bounds.x_offset + bounds.width) * geoTransform[1]);
+
+//     // calculate Latitude (north and south) in degrees
+//     double north_deg = geoTransform[3] + (bounds.y_offset * geoTransform[5]);
+//     double south_deg = geoTransform[3] + ((bounds.y_offset + bounds.height) * geoTransform[5]);
+
+//     // OGC requires radians not degrees
+//     double rad_conv = PI / 180.0;
+    
+//     Json::Value region(Json::arrayValue);
+//     region.append(west_deg * rad_conv);  // west
+//     region.append(south_deg * rad_conv); // south
+//     region.append(east_deg * rad_conv);  // east
+//     region.append(north_deg * rad_conv); // north
+//     region.append(0.0);                  // min height (meters)
+//     region.append(8848.0);               // max height (meters) - roughly (Mt Everest)
+
+//     Json::Value bv;
+//     bv["region"] = region;
+//     return bv;
+// }

@@ -52,7 +52,9 @@ file(GLOB COMPRESSOR CONFIGURE_DEPENDS "CompressionLib/*.cc" "CompressionLib/*.c
 file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cpp")
 file(GLOB STRUCTURES CONFIGURE_DEPENDS "structures/*.cc" "structures/*.cpp" "structures/*.h")
 file(GLOB_RECURSE IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp")
-file(GLOB STREAMER_GLB CONFIGURE_DEPENDS "StreamingGLB/*.cc" "StreamingGLB/*.cpp")
+file(GLOB STREAMING_GLB CONFIGURE_DEPENDS "StreamingGLB/*.cc" "StreamingGLB/*.cpp")
+file(GLOB QUAD_TREE_BUILDER CONFIGURE_DEPENDS "QuadTreeBuilder/*.cc" "QuadTreeBuilder/*.cpp")
+
 
 #COMPILER OPTIMIZATIONS (Release Mode)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -87,7 +89,8 @@ target_sources(${PROJECT_NAME}
                ${DATA_HANDLERS}
                ${IMAGE_TILER}
                ${STRUCTURES}
-               ${STREAMER_GLB})
+               ${STREAMING_GLB}
+               ${QUAD_TREE_BUILDER})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -128,12 +131,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Halide
     Eigen3::Eigen
     ${OpenCV_LIBS}
-)
-
-target_compile_options(${PROJECT_NAME} PRIVATE 
-    -O3 
-    -march=native 
-    -flto
 )
 
 if (CMAKE_CXX_STANDARD LESS 20)

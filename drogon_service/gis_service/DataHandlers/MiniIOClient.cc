@@ -13,16 +13,24 @@ static std::shared_ptr<Aws::S3::S3Client> s_s3Client;
 
 void MinioClient::initAPI() 
 {
-    // 1. HARD BYPASS: Completely disable the 4-second IMDS black-hole timeout
+    // Completely disable the 4-second IMDS black-hole timeout
     setenv("AWS_EC2_METADATA_DISABLED", "true", 1);
 
     Aws::InitAPI(awsOptions);
 
-    // 2. Initialize the S3 Client ONCE for the entire application lifecycle
+    //Initialize the S3 Client ONCE for the entire application lifecycle
     Aws::Client::ClientConfiguration clientConfig;
     clientConfig.endpointOverride = "127.0.0.1:9000";
     clientConfig.scheme = Aws::Http::Scheme::HTTP;
     clientConfig.region = "us-east-1"; 
+
+    // Expand the pool to match or exceed expected OpenMP thread count
+    clientConfig.maxConnections = 200;
+
+    // Since MinIO is on localhost, tighten the timeouts. 
+    // If it takes longer than 1 second to connect locally, something is wrong.
+    clientConfig.connectTimeoutMs = 1000; 
+    clientConfig.httpRequestTimeoutMs = 3000;
 
     Aws::Auth::AWSCredentials credentials("9490b5330aebc7f8088a", 
          "6z+Xd9fn5ndPHHlNW9jbtK8xF6y9MxfRDW9PQ6ewsrI=");
