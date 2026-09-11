@@ -13,7 +13,7 @@
 #include <thread>
 #include <chrono>
 #include <iostream>
-#include "TiffExporter.h"
+#include "../FileGenerators/TiffExporter.h"
 #include "stb_image_write.h"
 #include "stb_image.h"
 #include <fstream>
@@ -98,22 +98,50 @@ drogon::Task<std::string> PipelineService::executeCalibration(
          //the .tiff file generation is handed to a background async worker thread that generates
          //the .tiff n server after the .glb file is sent for better performance. UI remains smooth
          //and better performance 
-         std::string tiff_output_path = "./heights_" + uuid + ".tif";
+         std::string tiff_key = "heights_" + uuid + ".tif";
 
+         // Hand off in-memory GeoTIFF encoding and MinIO upload to the background thread
          std::thread([
-             dsm = std::move(absoluteDsm),// Safely transfer memory ownership to the thread
-             tiff_output_path, 
+             dsm = std::move(absoluteDsm), // Transfer ownership of elevation matrix
+             uuid,
+             tiff_key,
+             bucket,
              w = meta.width, 
              h = meta.height, 
-             geoTransform = meta.geoTransform,// Copy the spatial array
-             proj = meta.projectionRef // Copy the projection string
-             ]() mutable {
-            
-             TiffExporter::writeFloatTiff(
-                 tiff_output_path, 
-                 dsm,w,h, geoTransform.data(),proj.c_str());
- 
-         }).detach(); // Detach allows the thread to execute independently
+             geoTransform = meta.geoTransform, // Copy spatial parameters
+             proj = meta.projectionRef 
+             ]() 
+         mutable 
+         { 
+             try 
+             {
+                 //generate the GeoTIFF in RAM
+                 std::vector<uint8_t> tiffBytes = TiffExporter::exportTiffToBuffer(
+                     uuid, dsm, w, h, geoTransform.data(), proj.c_str());
+
+                 if (tiffBytes.empty()) 
+                 {
+                     std::cerr << "Failed to generate GeoTIFF buffer for UUID: " << uuid << "\n";
+                     return;
+                 }
+                 //upload byte stream to MinIO
+                 bool success = MinioClient::uploadBuffer(bucket, tiff_key, tiffBytes, "image/tiff");
+                 if (!success) 
+                 {
+                     std::cerr << "[MinIO Error] Background upload failed for: " << tiff_key << "\n";
+                 }
+                 else 
+                 {
+                     std::cout << "[MinIO] Successfully uploaded background GeoTIFF: " << tiff_key 
+                               << " (" << (tiffBytes.size() / 1024) << " KB)\n";
+                 }
+             } 
+             catch (const std::exception& e) 
+             {
+                 std::cerr << "[Worker Exception] Background TIFF task failed: " << e.what() << "\n";
+             }
+
+         }).detach();
 
          //return glb download URL of minio to frontend.
          auto end_upload = std::chrono::steady_clock::now();

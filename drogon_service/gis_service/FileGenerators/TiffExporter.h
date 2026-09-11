@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <cstdint>
 
 class TiffExporter {
 public:
@@ -12,4 +13,13 @@ public:
         double* geoTransform, // Required to map pixels back to lat/lon on the frontend
         const char* projectionRef
     );
+
+     //in memory byte exporter for MiniIO
+     static std::vector<uint8_t> exportTiffToBuffer(
+         const std::string& uuid,
+         std::vector<float>& dsm_matrix, 
+         int width, 
+         int height,
+         double* geoTransform,
+         const char* projectionRef);
 };
