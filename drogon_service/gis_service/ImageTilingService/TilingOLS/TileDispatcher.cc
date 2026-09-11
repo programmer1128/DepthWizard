@@ -1,9 +1,9 @@
 #include "TileDispatcher.h"
 
-#include <sys/mman.h>     // memory mapping - mmap
-#include <fcntl.h>     // file control options - O_RDONLY
+#include <sys/mman.h>      // memory mapping - mmap
+#include <fcntl.h>        // file control options - O_RDONLY
 #include <unistd.h>      
-#include <cstring>      // memcpy
+#include <cstring>         // memcpy
 #include <numeric>        // std::accumulate
 #include <sys/stat.h>    // to read exact file size dynamically
 
@@ -29,7 +29,7 @@ drogon::Task<GraphPayload> TileDispatcher::processGeoTiff(const std::string& fil
     float absolute_max_variance = -1.0f;
     uint32_t current_tile_id = 0;
 
-    std::vector<std::string> available_gpus = { "127.0.0.1" };
+    std::vector<std::string> available_gpus = { "100.113.71.19" };
     int tile_size = 518;
     int stride = 414;   
 

@@ -67,15 +67,29 @@ std::string OgcIndexer::buildAndUploadTileset(const QuadTreeGraph& graph, const 
     OGRCoordinateTransformation* coordTransform = 
         OGRCreateCoordinateTransformation(&sourceSRS, &targetSRS);
 
+    // --- NEW: DYNAMIC GEOMETRIC ERROR UNIT CHECK ---
+    double meter_conversion = 1.0; 
+    if (sourceSRS.IsGeographic()) 
+    {
+        // If it's in Degrees (EPSG:4326), 1 degree is roughly 111,319 meters.
+        meter_conversion = 111319.49; 
+    } 
+    else 
+    {
+        // If it's already Projected (UTM), grab its exact metric scale (usually 1.0)
+        meter_conversion = sourceSRS.GetLinearUnits(); 
+    }
+
     // we write the json file
     Json::Value tileset;
-    tileset["asset"]["version"] = "1.0"; // required by OGC standard
+    tileset["asset"]["version"] = "1.0";
 
-     // root node determines the max error for the whole map (Physical width of the root tile in meters)
-     tileset["geometricError"] = graph.nodes[0].bounds.width * meta.geoTransform[1];
+    // Dynamically converted to physical meters!
+    double root_error = graph.nodes[0].bounds.width * std::abs(meta.geoTransform[1]) * meter_conversion;
+    tileset["geometricError"] = root_error;
 
-     // we build the nested tree structure using our recursive helper
-     tileset["root"] = serializeNode(graph, 0, meta.geoTransform.data(), coordTransform);
+    // Pass the root_error into the recursive function so it can halve it for children
+    tileset["root"] = serializeNode(graph, 0, meta.geoTransform.data(), coordTransform, root_error / 2.0);
 
      if (coordTransform) 
      {
@@ -99,17 +113,18 @@ std::string OgcIndexer::buildAndUploadTileset(const QuadTreeGraph& graph, const 
 // recursively builds the parent/child json structure
 Json::Value OgcIndexer::serializeNode(const QuadTreeGraph& graph, uint32_t current_id, 
          const double* geoTransform, 
-         OGRCoordinateTransformation* coordTransform)
+         OGRCoordinateTransformation* coordTransform,
+         double current_error) // <--- ADDED THE 5TH PARAMETER HERE
 {
     const QuadNode& node = graph.nodes[current_id];
     Json::Value tile;
 
     // convert pixels to real-world GPS boundaries
-    tile["boundingVolume"] = calculateDynamicBounds(node, geoTransform,coordTransform);
+    tile["boundingVolume"] = calculateDynamicBounds(node, geoTransform, coordTransform);
     
-
-     // to inform frontend how blurry this tile is allowed to get before swapping it (Physical width in meters)
-     tile["geometricError"] = node.bounds.width * geoTransform[1];
+    // to inform frontend how blurry this tile is allowed to get before swapping it
+    // USING THE PASSED-IN DESCENDING ERROR INSTEAD OF PIXEL WIDTH
+    tile["geometricError"] = current_error; 
     
     // inform frontend to completely swap out the parent when loading the children
     tile["refine"] = "REPLACE"; 
@@ -129,8 +144,8 @@ Json::Value OgcIndexer::serializeNode(const QuadTreeGraph& graph, uint32_t curre
         {
             uint32_t child_id = graph.edges[idx];
             
-            // recursion: call this function again for the child and add it to the array
-            children_array.append(serializeNode(graph, child_id, geoTransform,coordTransform));
+            // recursion: call this function again for the child and halve the error!
+            children_array.append(serializeNode(graph, child_id, geoTransform, coordTransform, current_error / 2.0)); // <--- FIXED: PASSED 5 ARGUMENTS HERE
         }
         tile["children"] = children_array;
     }

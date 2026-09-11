@@ -18,7 +18,7 @@ class OgcIndexer
     // recursive BFS helper function
     static Json::Value serializeNode(const QuadTreeGraph& graph, uint32_t current_id, 
          const double* geoTransform, 
-         OGRCoordinateTransformation* coordTransform);
+         OGRCoordinateTransformation* coordTransform, double current_error);
     
     // dynamic math conversion from pixels to GPS radians
     // for OGC official format

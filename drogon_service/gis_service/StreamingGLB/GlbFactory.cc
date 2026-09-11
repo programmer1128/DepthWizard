@@ -26,10 +26,8 @@ void GlbFactory::generateAndUploadAll(
      const std::vector<float>& master_dsm, 
      const std::vector<uint8_t>& rawJpegBytes, 
      int master_width, 
-     int master_height) // dsm is the complete absolute DSM matrix
+     int master_height) 
 {
-     // load the image to RAM once
-     // IMREAD_COLOR guarantees we get a standard 3-channel image (BGR)
      cv::Mat image = cv::imdecode(rawJpegBytes, cv::IMREAD_COLOR);
      if (image.empty()) 
      {
@@ -37,11 +35,26 @@ void GlbFactory::generateAndUploadAll(
      }
      
      cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
-     // OpenCV loads as BGR but we need RGB 
-     cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
 
-     //Build the BFS Queue for Upload Prioritization
-     // We want to upload root/low-detail nodes first so the frontend stream starts instantly
+     // --- NEW: GLOBAL Z-EXAGGERATION MATH ---
+     // We MUST calculate the scale globally so all tiles connect seamlessly at their seams.
+     float global_min_z = 1e9f, global_max_z = -1e9f;
+     for (float val : master_dsm) {
+         if (!std::isnan(val)) {
+             if (val < global_min_z) global_min_z = val;
+             if (val > global_max_z) global_max_z = val;
+         }
+     }
+     
+     float z_range = global_max_z - global_min_z;
+     if (z_range < 0.1f) z_range = 1.0f; // Failsafe
+     
+     float max_dimension = std::max(static_cast<float>(master_width), static_cast<float>(master_height));
+     float cinematic_ratio = 0.25f; // Max peak is 25% of total map width
+     float global_dynamic_scale = (max_dimension * cinematic_ratio) / z_range;
+     float global_base_thickness = max_dimension * 0.02f; // 2% base
+
+     // Build the BFS Queue for Upload Prioritization
      std::vector<uint32_t> bfs_queue;
      bfs_queue.reserve(graph.nodes.size());
      std::queue<uint32_t> q;
@@ -53,7 +66,6 @@ void GlbFactory::generateAndUploadAll(
          q.pop();
          bfs_queue.push_back(current_id);
 
-         //find children using the CSR graph markers
          size_t start_idx = graph.edge_markers[current_id];
          size_t end_idx = graph.edge_markers[current_id + 1];
          for (size_t idx = start_idx; idx < end_idx; ++idx) 
@@ -62,11 +74,9 @@ void GlbFactory::generateAndUploadAll(
          }
      }
 
-     //GlbMesher mesher;
-     std::string bucket = "terrain-assets"; // MinIO storage folder
+     std::string bucket = "terrain-assets"; 
 
-     // 3. Multithreaded Processing & Uploading
-    // schedule(dynamic, 8) ensures threads assigned to "easy" flat tiles don't sit idle
+     // Multithreaded Processing & Uploading
      #pragma omp parallel for schedule(dynamic, 8) 
      for (size_t i = 0; i < bfs_queue.size(); ++i) 
      {
@@ -78,12 +88,15 @@ void GlbFactory::generateAndUploadAll(
          int w = node.bounds.width;
          int h = node.bounds.height;
 
-         int safe_w = std::min(w, master_width - x);
-         int safe_h = std::min(h, master_height - y);
+        // OVERLAP FIX: Add +1 to grab the neighbor's border pixel so they stitch together seamlessly!
+         int safe_w = std::min(w + 1, master_width - x);
+         int safe_h = std::min(h + 1, master_height - y);
 
          // --- A. Image Slicing and Compression ---
          cv::Rect roi(x, y, safe_w, safe_h);
-         cv::Mat image_slice = image(roi);
+         
+         // CRITICAL BUG FIX: .clone() forces OpenCV to create contiguous memory!
+         cv::Mat image_slice = image(roi).clone(); 
 
          // Downscale for zoomed-out tiles (LOD concept)
          if (node.level < 3) 
@@ -107,31 +120,37 @@ void GlbFactory::generateAndUploadAll(
              int master_idx = ((y + row) * master_width) + x;
              int local_idx = row * safe_w;
             
-             // Copy row from massive array
-             std::memcpy(&local_dsm[local_idx], &master_dsm[master_idx], safe_w * sizeof(float));
-
-             // Extract true Min/Max heights on the fly for OGC Frustum Culling
+             // Replaced memcpy with a per-pixel loop to safely apply cinematic scaling
              for (int col = 0; col < safe_w; ++col) 
              {
-                 float val = local_dsm[local_idx + col];
+                 float val = master_dsm[master_idx + col];
                  if (!std::isnan(val)) 
                  {
+                     // Apply the global cinematic stretch to this local pixel
+                     val = ((val - global_min_z) * global_dynamic_scale) + global_base_thickness;
+                     
+                     // Track true min/max for OGC bounding boxes
                      if (val < local_min) local_min = val;
                      if (val > local_max) local_max = val;
                  }
+                 else 
+                 {
+                     val = 0.0f; // Replace NaNs to prevent 3D rendering crashes
+                 }
+                 local_dsm[local_idx + col] = val;
              }
          }
 
          // Handle edge case of entirely NaN tiles (ocean/void)
          if (local_min > local_max) { local_min = 0.0f; local_max = 0.0f; }
         
-         // Store the true calculated heights into the node for OgcIndexer to use
+         // Store the true CALCULATED heights into the node for OgcIndexer to use
+         // If we don't store the scaled heights, the renderer will cull the tiles incorrectly!
          node.volume.min_height = local_min;
          node.volume.max_height = local_max;
 
 
          // --- C. Mesh Generation & MinIO Upload ---
-         // Instantiate mesher inside the loop to guarantee thread safety
          GlbMesher mesher; 
          std::vector<uint8_t> glb_bytes = mesher.generateGlb(local_dsm, safe_w, safe_h, 1.0f, reinterpret_cast<const char*>(jpeg_buffer.data()), jpeg_buffer.size());
          
@@ -140,11 +159,9 @@ void GlbFactory::generateAndUploadAll(
  
          if (!uploaded)
          {
-             // Log error, but don't throw an exception to prevent killing other healthy OpenMP threads
              std::cerr << "Failed to upload GLB for node " << node.id << " to MinIO" << std::endl;
          }
  
-         // Save the link to node structure
          node.glb_url = MinioClient::generatePresignedUrl(bucket, key);
      }
 }

@@ -115,6 +115,7 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/HannAssembler
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/TilingOLS
                            ${CMAKE_CURRENT_SOURCE_DIR}/StreamingGLB
+                           ${CMAKE_CURRENT_SOURCE_DIR}/QuadTreeBuilder
                            ${EIGEN3_INCLUDE_DIRS}
                            ${OpenCV_INCLUDE_DIRS}
                            ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
