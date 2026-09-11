@@ -1,0 +1,6 @@
+/home/satadru345/DepthWizard/drogon_service/gis_service/build/CMakeFiles/gis_service.dir
+/home/satadru345/DepthWizard/drogon_service/gis_service/build/CMakeFiles/edit_cache.dir
+/home/satadru345/DepthWizard/drogon_service/gis_service/build/CMakeFiles/rebuild_cache.dir
+/home/satadru345/DepthWizard/drogon_service/gis_service/build/test/CMakeFiles/gis_service_test.dir
+/home/satadru345/DepthWizard/drogon_service/gis_service/build/test/CMakeFiles/edit_cache.dir
+/home/satadru345/DepthWizard/drogon_service/gis_service/build/test/CMakeFiles/rebuild_cache.dir

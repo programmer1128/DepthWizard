@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/satadru345/DepthWizard/drogon_service/gis_service/build/cmake_install.cmake",
+		"/home/satadru345/DepthWizard/drogon_service/gis_service/build/test/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
