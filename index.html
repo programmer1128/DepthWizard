@@ -178,6 +178,94 @@
             ▦ Grid On
           </button>
         </div>
+
+        <div class="control-grid-2" style="margin-top: 6px;">
+          <button class="tool-btn active" id="inspectToggleBtn" title="Toggle Surface Elevation & WGS84 Inspector">
+            📍 Inspector On
+          </button>
+          <button class="tool-btn" id="inspectSampleBtn" title="Drop inspection pin at summit">
+            ✦ Inspect Apex
+          </button>
+        </div>
+      </section>
+
+      <!-- RAYCAST MEASUREMENT (3D METRIC VECTOR & SLOPE ANALYSIS) -->
+      <section class="sidebar-section" id="raycastMeasurementSection">
+        <div class="section-header">
+          <span class="section-title">Raycast Measurement</span>
+          <span class="section-badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4);">3D Vector</span>
+        </div>
+
+        <div class="panel-card measurement-panel-card" style="border: 1px solid rgba(245, 158, 11, 0.3); background: linear-gradient(180deg, rgba(245, 158, 11, 0.08) 0%, rgba(11, 19, 41, 0.9) 100%);">
+          <div style="font-size: 11px; font-weight: 700; color: #fef08a; display: flex; items-center; gap: 6px; margin-bottom: 8px;">
+            <span>📐</span>
+            <span>3D Metric Vector & Slope Analysis</span>
+          </div>
+
+          <!-- High-Visibility Amber Toggle Button -->
+          <button
+            class="btn-measure-toggle"
+            id="measureToolToggleBtn"
+            title="Toggle 2-Point Caliper Measurement Tool"
+          >
+            <span>⊙</span>
+            <span id="measureToolBtnText">Enable Raycast Measurement</span>
+          </button>
+
+          <div class="measure-instruction-text" id="measureInstructionText">
+            Click Point A then Point B on the 3D block to measure.
+          </div>
+
+          <!-- Point A & Point B Sub-Cards -->
+          <div class="measure-points-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px;">
+            <!-- Point A Card -->
+            <div class="point-subcard point-a-subcard" id="measurePointACard">
+              <div class="point-subcard-header" style="color: #22d3ee;">● Point A (Start)</div>
+              <div class="point-subcard-elev" id="measurePointAElev">Elev: -- m</div>
+              <div class="point-subcard-coord" id="measurePointACoord">Click on 3D terrain</div>
+            </div>
+
+            <!-- Point B Card -->
+            <div class="point-subcard point-b-subcard" id="measurePointBCard">
+              <div class="point-subcard-header" style="color: #f59e0b;">● Point B (Target)</div>
+              <div class="point-subcard-elev" id="measurePointBElev">Elev: -- m</div>
+              <div class="point-subcard-coord" id="measurePointBCoord">Click target on 3D terrain</div>
+            </div>
+          </div>
+
+          <!-- Calculated 3D Vector Telemetry Grid -->
+          <div class="measure-telemetry-grid" id="measureTelemetryGrid" style="display: none; margin-top: 8px;">
+            <div style="font-size: 10px; font-weight: 700; color: #f1f5f9; text-transform: uppercase; margin-bottom: 4px; font-family: var(--font-mono);">
+              Calculated 3D Telemetry
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-family: var(--font-mono); font-size: 11px;">
+              <div class="telemetry-cell">
+                <span class="telemetry-cell-label">3D Straight Dist:</span>
+                <span class="telemetry-cell-val" id="measureStraightDist">-- m</span>
+              </div>
+              <div class="telemetry-cell">
+                <span class="telemetry-cell-label">Horizontal Planar:</span>
+                <span class="telemetry-cell-val" id="measureHorizontalDist">-- m</span>
+              </div>
+              <div class="telemetry-cell">
+                <span class="telemetry-cell-label">Elevation Delta (ΔH):</span>
+                <span class="telemetry-cell-val" id="measureDeltaH">-- m</span>
+              </div>
+              <div class="telemetry-cell">
+                <span class="telemetry-cell-label">Slope Gradient:</span>
+                <span class="telemetry-cell-val" id="measureSlopeGrad" style="color: #f59e0b;">--° (--)</span>
+              </div>
+            </div>
+
+            <!-- Dynamic SVG Elevation Profile Curve -->
+            <div id="measureProfileContainer" style="margin-top: 8px;"></div>
+
+            <!-- Clear Measurement Points Button -->
+            <button class="tool-btn" id="clearMeasureBtn" style="width: 100%; margin-top: 8px; font-size: 11px;">
+              ✕ Clear Measurement Points
+            </button>
+          </div>
+        </div>
       </section>
 
       <!-- INTERACTIVE ROUTE PLANNING -->
@@ -293,6 +381,81 @@
         </div>
       </div>
 
+      <!-- ============================================================
+           TOP-BAR FLOATING NAVIGATION DOCK & COMPASS WIDGET
+           ============================================================ -->
+      <div id="topNavDock" class="top-nav-dock">
+        <!-- 1. Compass Widget (Far Left) -->
+        <div
+          id="compassWidget"
+          class="compass-widget-card"
+          title="Click to reset viewport to True North (0°)"
+          role="button"
+          tabindex="0"
+          aria-label="Compass - Reset to True North"
+        >
+          <div class="compass-dial-wrapper">
+            <svg
+              id="compassDialSvg"
+              viewBox="0 0 32 32"
+              class="compass-dial-svg"
+            >
+              <defs>
+                <filter id="compassNeedleShadow" x="-30%" y="-30%" width="160%" height="160%">
+                  <feDropShadow dx="0" dy="0.8" stdDeviation="0.6" floodColor="#000000" floodOpacity="0.75" />
+                </filter>
+              </defs>
+              <circle cx="16" cy="16" r="14" fill="none" stroke="#334155" stroke-width="1.2" stroke-opacity="0.8" />
+              <!-- Cardinal Ticks -->
+              <line x1="16" y1="2" x2="16" y2="5" stroke="#ef4444" stroke-width="1.6" stroke-linecap="round" />
+              <line x1="27" y1="16" x2="30" y2="16" stroke="#64748b" stroke-width="1.2" stroke-linecap="round" />
+              <line x1="16" y1="27" x2="16" y2="30" stroke="#06b6d4" stroke-width="1.4" stroke-linecap="round" />
+              <line x1="2" y1="16" x2="5" y2="16" stroke="#64748b" stroke-width="1.2" stroke-linecap="round" />
+              <!-- Sub-cardinal dots -->
+              <circle cx="25.9" cy="6.1" r="0.6" fill="#475569" />
+              <circle cx="25.9" cy="25.9" r="0.6" fill="#475569" />
+              <circle cx="6.1" cy="25.9" r="0.6" fill="#475569" />
+              <circle cx="6.1" cy="6.1" r="0.6" fill="#475569" />
+              <text x="16" y="8.2" text-anchor="middle" font-size="4.2" font-weight="bold" fill="#ef4444" font-family="monospace">N</text>
+              <g filter="url(#compassNeedleShadow)">
+                <polygon points="16,8.5 18.5,16 16,14.8" fill="#ef4444" />
+                <polygon points="16,8.5 13.5,16 16,14.8" fill="#dc2626" />
+                <polygon points="16,23.5 18.5,16 16,17.2" fill="#06b6d4" />
+                <polygon points="16,23.5 13.5,16 16,17.2" fill="#0891b2" />
+                <circle cx="16" cy="16" r="2.2" fill="#ffffff" stroke="#0b1329" stroke-width="0.8" />
+              </g>
+            </svg>
+          </div>
+          <span id="compassHeadingText" class="compass-heading-text">0°</span>
+        </div>
+
+        <div class="dock-divider"></div>
+
+        <!-- 2. View Snapping Buttons -->
+        <div class="dock-buttons-group">
+          <button id="snapTopBtn" class="dock-snap-btn" title="Snap to Top / Plan View (90° Down)">
+            <span class="dock-btn-icon">⬇</span>
+            <span class="dock-btn-label">TOP</span>
+          </button>
+          <button id="snapPerspectiveBtn" class="dock-snap-btn" title="Snap to 3D Isometric / Oblique Perspective">
+            <span class="dock-btn-icon">⬡</span>
+            <span class="dock-btn-label">3D</span>
+          </button>
+          <button id="snapFrontBtn" class="dock-snap-btn" title="Snap to Front Elevation View (North-Facing)">
+            <span class="dock-btn-icon">⬆</span>
+            <span class="dock-btn-label">FRONT</span>
+          </button>
+          <button id="snapEastBtn" class="dock-snap-btn" title="Snap to East Elevation View (Looking West)">
+            <span class="dock-btn-icon">➡</span>
+            <span class="dock-btn-label">EAST</span>
+          </button>
+          <button id="snapResetBtn" class="dock-snap-btn dock-reset-btn" title="Reset View Framing">
+            <span class="dock-btn-icon">↺</span>
+            <span class="dock-btn-label">RESET</span>
+          </button>
+        </div>
+      </div>
+
       <!-- VIEWER TOP-LEFT HUD -->
       <div class="viewer-hud-status">
         <span class="status-dot ready" id="hudStatusDot"></span>
@@ -307,6 +470,102 @@
         <span>✦</span>
         <span>Route Draw Active: Click terrain to place waypoints (Esc to finish)</span>
       </div>
+
+      <!-- ============================================================
+           SURFACE ELEVATION / WGS84 INSPECTION CARD (EXACT VISUAL REPLICA)
+           fixed top-16 right-5 z-30 w-84 select-none rounded-xl border border-cyan-500/30
+           bg-[#0b1329]/90 p-4 shadow-2xl backdrop-blur-md text-white
+           ============================================================ -->
+      <aside
+        id="inspectionCard"
+        class="inspection-card fixed top-16 right-5 z-30 w-84 select-none rounded-xl border border-cyan-500/30 bg-[#0b1329]/90 p-4 shadow-2xl backdrop-blur-md text-white"
+        role="region"
+        aria-label="Surface Elevation and WGS84 Inspection Card"
+      >
+        <!-- Header -->
+        <div class="inspection-header">
+          <div class="inspection-header-top">
+            <div class="inspection-title-group">
+              <div class="inspection-compass-icon" title="WGS84 Compass Heading">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10" stroke-opacity="0.5" />
+                  <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" fill="#06b6d4" fill-opacity="0.5" />
+                </svg>
+              </div>
+              <div class="inspection-title-badge">
+                <span class="inspection-title" title="Surface Elevation Inspection">Surface Elevatio...</span>
+                <span class="inspection-badge-id" id="inspectBadgeId">[DW3D-2574]</span>
+              </div>
+            </div>
+
+            <div class="inspection-actions">
+              <button class="inspection-btn-action" id="inspectExportBtn" title="Export GeoJSON Feature">Export JSON</button>
+              <button class="inspection-btn-action inspection-btn-copy" id="inspectCopyBtn" title="Copy coordinate telemetry">Copy</button>
+              <button class="inspection-btn-close" id="inspectCloseBtn" title="Close Inspector">✕</button>
+            </div>
+          </div>
+
+          <div class="inspection-subtitle">
+            <span id="inspectTimestamp">00:00:00</span>
+            <span>•</span>
+            <span class="inspection-datum-tag">WGS84 Datum</span>
+          </div>
+        </div>
+
+        <!-- Body Rows -->
+        <div class="inspection-body-rows">
+          <div class="inspection-row">
+            <span class="inspection-label">Latitude</span>
+            <span class="inspection-value" id="inspectLat">45.980776° N</span>
+          </div>
+          <div class="inspection-row">
+            <span class="inspection-label">Longitude</span>
+            <span class="inspection-value" id="inspectLon">7.696169° E</span>
+          </div>
+          <div class="inspection-row">
+            <span class="inspection-label">Absolute Elevation</span>
+            <span class="inspection-value elevation-val" id="inspectElevation">1,879.09 m MSL</span>
+          </div>
+          <div class="inspection-row">
+            <span class="inspection-label">Slope Angle</span>
+            <span class="inspection-value" id="inspectSlope">8.6°</span>
+          </div>
+        </div>
+
+        <!-- LiDAR Ground Truth Comparison Sub-Card -->
+        <div class="inspection-benchmark-card">
+          <div class="inspection-benchmark-header">
+            <div class="inspection-benchmark-title">
+              <span>✦</span>
+              <span>LiDAR Ground Truth Comparison</span>
+            </div>
+            <span class="inspection-benchmark-pill">BENCHMARK</span>
+          </div>
+
+          <div class="inspection-benchmark-grid">
+            <div class="benchmark-box">
+              <div class="benchmark-box-label">Reference LiDAR</div>
+              <div class="benchmark-box-val" id="inspectRefLidar">1,878.28 m</div>
+            </div>
+            <div class="benchmark-box">
+              <div class="benchmark-box-label">Delta Error</div>
+              <div class="benchmark-box-val benchmark-delta-emerald" id="inspectDelta">±0.81 m</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="inspection-footer">
+          <div class="inspection-footer-item">
+            <span>Eye Altitude:</span>
+            <span class="inspection-footer-val" id="inspectEyeAlt">354.2 m</span>
+          </div>
+          <div class="inspection-footer-item">
+            <span>Target Range:</span>
+            <span class="inspection-footer-val" id="inspectTargetRange">482.7 m</span>
+          </div>
+        </div>
+      </aside>
 
       <!-- BOTTOM HUD BAR -->
       <div id="bottom-hud">

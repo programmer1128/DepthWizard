@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "3d-tiles-renderer": "^0.5.2",
+    "axios": "^1.20.0",
+    "lucide-react": "^1.45.0",
     "three": "^0.186.0"
   }
 }
