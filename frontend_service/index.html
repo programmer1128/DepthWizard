@@ -107,28 +107,35 @@
       </section>
 
       <section class="sidebar-section">
+
         <div class="section-header">
-          <span class="section-title">2D vs 3D Comparison</span>
-          <span class="section-badge">PiP Mode</span>
+            <span class="section-title">
+                2D vs 3D Comparison
+            </span>
+
+            <span class="section-badge">
+                INSPECT
+            </span>
         </div>
 
-        <div class="panel-card comparison-card">
-          <div>
-            <div style="font-size: 11px; font-weight: 600; color: var(--text-primary);">
-              Optical Source PiP
-            </div>
-            <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">
-              Overlay 2D input alongside 3D mesh
-            </div>
-          </div>
-          <div class="toggle-switch-wrapper">
-            <label class="switch">
-              <input type="checkbox" id="pipToggle" checked />
-              <span class="slider"></span>
-            </label>
-          </div>
+        <div class="panel-card">
+
+            <p class="section-description">
+                Compare your elevation data against
+                an external reference dataset.
+            </p>
+
+            <button
+                id="compareBtn"
+                class="primary-action-btn"
+                type="button"
+            >
+                Compare Elevation
+            </button>
+
         </div>
-      </section>
+
+    </section>
 
       <!-- CAMERA & NAVIGATION -->
       <section class="sidebar-section">

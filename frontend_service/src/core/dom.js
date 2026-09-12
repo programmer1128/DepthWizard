@@ -202,5 +202,7 @@ export const dom = {
         document.getElementById('compass-control'),
 
     compassFace:
-        document.querySelector('.compass-face')
+        document.querySelector('.compass-face'),
+
+    compareBtn: document.getElementById('compareBtn')
 };

@@ -1,3 +1,11 @@
+import {
+    initHeightInspection
+} from './features/height.js';
+
+import {
+    openCompareModal
+} from './ui/compareUI.js';
+
 // ============================================================
 // DEPTHWIZARD
 // MAIN APPLICATION ENTRY POINT
@@ -168,6 +176,14 @@ function initializeApplication() {
     initFileUI();
     initControlsUI();
     initPiP();
+
+    initHeightInspection();
+    if (dom.compareBtn) {
+    dom.compareBtn.addEventListener(
+        'click',
+        openCompareModal
+    );
+    }
 
 
     // --------------------------------------------------------
