@@ -27,6 +27,74 @@ inline void writeJpegCallback(void* context, void* data, int size)
 }
 
 
+drogon::Task<std::string> PipelineService::executeCalibrationNormalImage(
+     const drogon::HttpFile& imageFile)
+{
+     std::string uuid = drogon::utils::getUuid(); //
+     std::string vsi_path = mountImageToRAM(uuid, imageFile); //
+
+     try
+     {
+         //extract exact pixel dimensions from the JPG/PNG buffer
+         int width = 0, height = 0, channels = 0;
+         int ok = stbi_info_from_memory(
+             reinterpret_cast<const stbi_uc*>(imageFile.fileData()), 
+             imageFile.fileLength(), 
+             &width, 
+             &height, 
+             &channels
+         );
+
+         if (!ok || width <= 0 || height <= 0)
+         {
+             throw std::runtime_error("STB Failed to parse JPG/PNG image dimensions.");
+         }
+
+         //extract textures (for JPG/PNG this is a zero-copy passthrough)
+         std::vector<uint8_t> texture_map = extractTextureFromNormalImage(imageFile); //
+
+         std::cout << "[Texture Debug] Size: " << texture_map.size() << " bytes\n";
+
+         //generate stitched AI depth matrix with accurate dimensions
+         std::vector<float> aiDepth = 
+             co_await TilingService::generateStitchedDepth(vsi_path, width, height);
+
+         //free RAM disk file to prevent memory leaks
+         std::remove(vsi_path.c_str()); //
+
+         //Build Relative 3D Mesh (rDSM)
+         std::vector<uint8_t> glbBytes = buildRelative3DMesh(
+             uuid, 
+             aiDepth, 
+             width, 
+             height, 
+             texture_map
+         );
+
+         //Upload .glb to MinIO
+         std::string bucket = "terrain-assets"; //
+         std::string key = "mesh_" + uuid + ".glb"; //
+
+         bool minio_success = MinioClient::uploadBuffer(bucket, key, glbBytes, "model/gltf-binary"); //
+         if (!minio_success) 
+         {
+             throw std::runtime_error("Failed to upload relative GLB to MinIO."); //
+         }
+
+         //Generate Presigned URL for frontend consumption
+         std::string minio_url = MinioClient::generatePresignedUrl(bucket, key); //
+
+         co_return minio_url; 
+     }
+     catch (const std::exception& e)
+     {
+         // Failsafe RAM cleanup
+         std::remove(vsi_path.c_str()); //
+         std::cerr << "[Relative Pipeline Error] " << e.what() << "\n";
+         throw std::runtime_error(e.what()); //
+     }
+}
+
 drogon::Task<Json::Value> PipelineService::executeCalibration(
      const drogon::HttpFile& imageFile)
 {
@@ -318,6 +386,60 @@ inline std::vector<uint8_t> PipelineService::build3DMesh(
      return glbBytes;
 }
 
+
+//for the JPG/PNG images
+inline std::vector<uint8_t> PipelineService::buildRelative3DMesh(
+     const std::string& uuid, 
+     const std::vector<float>& relativeDsm, 
+     int width,
+     int height,
+     const std::vector<uint8_t>& textureBytes) const
+{
+     GlbMesher mesher;
+
+     // 1. Find the relative range of the AI's raw output
+     auto min_it = std::min_element(relativeDsm.begin(), relativeDsm.end());
+     auto max_it = std::max_element(relativeDsm.begin(), relativeDsm.end());
+     float min_z = (min_it != relativeDsm.end()) ? *min_it : 0.0f;
+     float max_z = (max_it != relativeDsm.end()) ? *max_it : 1.0f;
+     
+     float z_range = max_z - min_z;
+     if (z_range < 1e-6f) z_range = 1.0f; // Failsafe for flat images
+
+     // 2. Extract dimensions directly from the JPG/PNG width and height
+     float max_dimension = std::max(static_cast<float>(width), static_cast<float>(height));
+     
+     // 3. Cinematic auto-scaling
+     float cinematic_ratio = 0.25f; 
+     float desired_max_height = max_dimension * cinematic_ratio; 
+     float dynamic_scale = desired_max_height / z_range;
+     float base_thickness = max_dimension * 0.02f; 
+
+     // 4. Apply the scale to the relative depths
+     std::vector<float> exaggeratedDsm = relativeDsm;
+     for (float& z : exaggeratedDsm) 
+     {
+         z = ((z - min_z) * dynamic_scale) + base_thickness;
+     }
+
+     // 5. Pass to your existing GlbMesher
+     std::vector<uint8_t> glbBytes = mesher.generateGlb(
+         exaggeratedDsm,  
+         width, 
+         height, 
+         1.0f, // Keep the grid strictly 1:1 with the pixel coordinates
+         reinterpret_cast<const char*>(textureBytes.data()),   
+         textureBytes.size()
+     );
+
+     if (glbBytes.empty()) 
+     {
+         throw std::runtime_error("Failed to package the relative .glb 3D mesh.");
+     }
+
+     return glbBytes;
+}
+
 inline std::vector<uint8_t> PipelineService::extractJpegTexture(
     const std::string& vsi_path, 
     const drogon::HttpFile& imageFile) const
@@ -365,6 +487,51 @@ inline std::vector<uint8_t> PipelineService::extractJpegTexture(
     {
          throw std::runtime_error("STB JPEG encoding failed.");
     }
+
+    return jpegBuffer;
+}
+
+
+
+inline std::vector<uint8_t> PipelineService::extractTextureFromNormalImage(const drogon::HttpFile& imageFile)
+{
+    const uint8_t* rawData = reinterpret_cast<const uint8_t*>(imageFile.fileData());
+    size_t length = imageFile.fileLength();
+
+    if (!rawData || length < 4) 
+    {
+        return {};
+    }
+
+    // 1. Passthrough if the input is already a JPEG
+    if (rawData[0] == 0xFF && rawData[1] == 0xD8) 
+    {
+        return std::vector<uint8_t>(rawData, rawData + length);
+    }
+
+    // 2. Decode PNG / other formats to raw RGB
+    int w = 0, h = 0, channels = 0;
+    stbi_uc* decodedPixels = stbi_load_from_memory(
+        rawData, static_cast<int>(length), &w, &h, &channels, 3 // Force 3 channels (RGB)
+    );
+
+    if (!decodedPixels) 
+    {
+        std::cerr << "[Texture Error] stbi_load_from_memory failed: " << stbi_failure_reason() << "\n";
+        return {};
+    }
+
+    // 3. Re-encode to JPEG in memory for glTF compatibility
+    std::vector<uint8_t> jpegBuffer;
+    auto writeFunc = [](void* context, void* data, int size) 
+    {
+        auto* buf = reinterpret_cast<std::vector<uint8_t>*>(context);
+        const auto* bytes = reinterpret_cast<const uint8_t*>(data);
+        buf->insert(buf->end(), bytes, bytes + size);
+    };
+
+    stbi_write_jpg_to_func(writeFunc, &jpegBuffer, w, h, 3, decodedPixels, 90);
+    stbi_image_free(decodedPixels);
 
     return jpegBuffer;
 }

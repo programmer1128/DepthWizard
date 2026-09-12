@@ -17,8 +17,10 @@ struct SpatialMetadata
 
 class PipelineService 
 {
-        public:
-        drogon::Task<Json::Value> executeCalibration(const drogon::HttpFile& imageFile);
+         public:
+         drogon::Task<Json::Value> executeCalibration(const drogon::HttpFile& imageFile);
+
+         drogon::Task<std::string> executeCalibrationNormalImage(const drogon::HttpFile& imageFile);
 
 
          private:
@@ -45,7 +47,14 @@ class PipelineService
                 const SpatialMetadata& meta, 
                 const std::vector<uint8_t>& textureBytes) const;
 
+         inline std::vector<uint8_t> buildRelative3DMesh(
+                 const std::string& uuid, 
+                 const std::vector<float>& relativeDsm,int width,int height,
+                 const std::vector<uint8_t>& textureBytes) const;
+         
          inline std::vector<uint8_t> extractJpegTexture(
             const std::string& vsi_path, 
             const drogon::HttpFile& imageFile) const;
+
+         inline std::vector<uint8_t> extractTextureFromNormalImage(const drogon::HttpFile& imageFile);
 };
