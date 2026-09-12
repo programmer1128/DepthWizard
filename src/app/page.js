@@ -14,27 +14,12 @@ import { getAvailableDatasets, uploadReferenceDem } from '../services/elevationA
 
 export default function DepthWizardApp() {
   const containerRef = useRef(null);
-  const [isCardOpen, setIsCardOpen] = useState(true);
+  const [isCardOpen, setIsCardOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(true);
   const [isMeasureMode, setIsMeasureMode] = useState(false);
 
-  // Synchronized telemetry state across Left Drawer and Right Card
-  const [inspectionData, setInspectionData] = useState({
-    id: 'DW3D-2574',
-    badgeId: 'DW3D-2574',
-    timestamp: '12:00:00',
-    datum: 'WGS84 Datum',
-    latitude: 45.980776,
-    longitude: 7.696169,
-    absoluteElevation: 1879.09,
-    elevation: 1879.09,
-    slopeAngle: 8.6,
-    referenceLidar: 1878.28,
-    deltaError: 0.81,
-    eyeAltitude: 354.2,
-    targetRange: 482.7,
-    endpointUrl: '/api/v1/get-actual-height/x=7.696169,y=45.980776,z=1879.09'
-  });
+  // Surface inspection telemetry state
+  const [inspectionData, setInspectionData] = useState(null);
 
   const [measurementData, setMeasurementData] = useState(null);
   const [datasets, setDatasets] = useState([]);

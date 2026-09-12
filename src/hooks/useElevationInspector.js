@@ -3,28 +3,11 @@
 import { useState, useCallback, useRef } from 'react';
 import { TerrainRaycaster } from '../utils/terrainRaycaster.js';
 
-/**
- * useElevationInspector - React hook for managing terrain raycast inspection
- * and Surface Elevation card state in Next.js / React applications.
- */
 export function useElevationInspector(initialData = null) {
-  const [inspectionData, setInspectionData] = useState(
-    initialData || {
-      latitude: 45.980776,
-      longitude: 7.696169,
-      elevation: 1879.09,
-      slopeAngle: 8.6,
-      eyeAltitude: 354.2,
-      targetRange: 482.7
-    }
-  );
-
-  const [isCardOpen, setIsCardOpen] = useState(true);
+  const [inspectionData, setInspectionData] = useState(initialData);
+  const [isCardOpen, setIsCardOpen] = useState(false);
   const raycasterRef = useRef(null);
 
-  /**
-   * Attach Raycaster to Three.js scene and canvas DOM element
-   */
   const initRaycaster = useCallback((scene, camera, domElement, getTerrainMesh) => {
     if (raycasterRef.current) {
       raycasterRef.current.dispose();
@@ -38,39 +21,25 @@ export function useElevationInspector(initialData = null) {
       onInspect: (data) => {
         setInspectionData(data);
         setIsCardOpen(true);
+      },
+      onDeselect: () => {
+        setIsCardOpen(false);
+        setInspectionData(null);
       }
     });
-
-    return raycasterRef.current;
-  }, []);
-
-  /**
-   * Update animation loop tick for the pulsing cyan 3D pin
-   */
-  const updateTick = useCallback((delta) => {
-    if (raycasterRef.current) {
-      raycasterRef.current.update(delta);
-    }
   }, []);
 
   const closeCard = useCallback(() => {
     setIsCardOpen(false);
-    if (raycasterRef.current) {
-      raycasterRef.current.hidePin();
-    }
-  }, []);
-
-  const openCard = useCallback(() => {
-    setIsCardOpen(true);
+    setInspectionData(null);
   }, []);
 
   return {
     inspectionData,
+    setInspectionData,
     isCardOpen,
-    openCard,
+    setIsCardOpen,
     closeCard,
     initRaycaster,
-    updateTick,
-    raycaster: raycasterRef.current
   };
 }

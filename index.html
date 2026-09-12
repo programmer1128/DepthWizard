@@ -180,8 +180,8 @@
         </div>
 
         <div class="control-grid-2" style="margin-top: 6px;">
-          <button class="tool-btn active" id="inspectToggleBtn" title="Toggle Surface Elevation & WGS84 Inspector">
-            📍 Inspector On
+          <button class="tool-btn" id="inspectToggleBtn" title="Toggle Surface Elevation & WGS84 Inspector">
+            📍 Inspector Off
           </button>
           <button class="tool-btn" id="inspectSampleBtn" title="Drop inspection pin at summit">
             ✦ Inspect Apex
@@ -472,100 +472,10 @@
       </div>
 
       <!-- ============================================================
-           SURFACE ELEVATION / WGS84 INSPECTION CARD (EXACT VISUAL REPLICA)
-           fixed top-16 right-5 z-30 w-84 select-none rounded-xl border border-cyan-500/30
-           bg-[#0b1329]/90 p-4 shadow-2xl backdrop-blur-md text-white
+           SURFACE ELEVATION INSPECTION CARD (DYNAMIC MOUNT CONTAINER)
+           Rendered only when a terrain elevation point is selected
            ============================================================ -->
-      <aside
-        id="inspectionCard"
-        class="inspection-card fixed top-16 right-5 z-30 w-84 select-none rounded-xl border border-cyan-500/30 bg-[#0b1329]/90 p-4 shadow-2xl backdrop-blur-md text-white"
-        role="region"
-        aria-label="Surface Elevation and WGS84 Inspection Card"
-      >
-        <!-- Header -->
-        <div class="inspection-header">
-          <div class="inspection-header-top">
-            <div class="inspection-title-group">
-              <div class="inspection-compass-icon" title="WGS84 Compass Heading">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="10" stroke-opacity="0.5" />
-                  <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" fill="#06b6d4" fill-opacity="0.5" />
-                </svg>
-              </div>
-              <div class="inspection-title-badge">
-                <span class="inspection-title" title="Surface Elevation Inspection">Surface Elevatio...</span>
-                <span class="inspection-badge-id" id="inspectBadgeId">[DW3D-2574]</span>
-              </div>
-            </div>
-
-            <div class="inspection-actions">
-              <button class="inspection-btn-action" id="inspectExportBtn" title="Export GeoJSON Feature">Export JSON</button>
-              <button class="inspection-btn-action inspection-btn-copy" id="inspectCopyBtn" title="Copy coordinate telemetry">Copy</button>
-              <button class="inspection-btn-close" id="inspectCloseBtn" title="Close Inspector">✕</button>
-            </div>
-          </div>
-
-          <div class="inspection-subtitle">
-            <span id="inspectTimestamp">00:00:00</span>
-            <span>•</span>
-            <span class="inspection-datum-tag">WGS84 Datum</span>
-          </div>
-        </div>
-
-        <!-- Body Rows -->
-        <div class="inspection-body-rows">
-          <div class="inspection-row">
-            <span class="inspection-label">Latitude</span>
-            <span class="inspection-value" id="inspectLat">45.980776° N</span>
-          </div>
-          <div class="inspection-row">
-            <span class="inspection-label">Longitude</span>
-            <span class="inspection-value" id="inspectLon">7.696169° E</span>
-          </div>
-          <div class="inspection-row">
-            <span class="inspection-label">Absolute Elevation</span>
-            <span class="inspection-value elevation-val" id="inspectElevation">1,879.09 m MSL</span>
-          </div>
-          <div class="inspection-row">
-            <span class="inspection-label">Slope Angle</span>
-            <span class="inspection-value" id="inspectSlope">8.6°</span>
-          </div>
-        </div>
-
-        <!-- LiDAR Ground Truth Comparison Sub-Card -->
-        <div class="inspection-benchmark-card">
-          <div class="inspection-benchmark-header">
-            <div class="inspection-benchmark-title">
-              <span>✦</span>
-              <span>LiDAR Ground Truth Comparison</span>
-            </div>
-            <span class="inspection-benchmark-pill">BENCHMARK</span>
-          </div>
-
-          <div class="inspection-benchmark-grid">
-            <div class="benchmark-box">
-              <div class="benchmark-box-label">Reference LiDAR</div>
-              <div class="benchmark-box-val" id="inspectRefLidar">1,878.28 m</div>
-            </div>
-            <div class="benchmark-box">
-              <div class="benchmark-box-label">Delta Error</div>
-              <div class="benchmark-box-val benchmark-delta-emerald" id="inspectDelta">±0.81 m</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Footer -->
-        <div class="inspection-footer">
-          <div class="inspection-footer-item">
-            <span>Eye Altitude:</span>
-            <span class="inspection-footer-val" id="inspectEyeAlt">354.2 m</span>
-          </div>
-          <div class="inspection-footer-item">
-            <span>Target Range:</span>
-            <span class="inspection-footer-val" id="inspectTargetRange">482.7 m</span>
-          </div>
-        </div>
-      </aside>
+      <div id="inspectionCardContainer"></div>
 
       <!-- BOTTOM HUD BAR -->
       <div id="bottom-hud">

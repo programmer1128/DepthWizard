@@ -14,6 +14,7 @@ export class TerrainRaycaster {
       domElement,
       getTerrainMesh = () => null,
       onInspect = () => {},
+      onDeselect = () => {},
       geoBounds = DEFAULT_GEO_BOUNDS
     } = options;
 
@@ -22,6 +23,7 @@ export class TerrainRaycaster {
     this.domElement = domElement;
     this.getTerrainMesh = getTerrainMesh;
     this.onInspect = onInspect;
+    this.onDeselect = onDeselect;
     this.geoBounds = { ...DEFAULT_GEO_BOUNDS, ...geoBounds };
 
     this.raycaster = new THREE.Raycaster();
@@ -160,7 +162,12 @@ export class TerrainRaycaster {
     if (!terrain) return null;
 
     const intersects = this.raycaster.intersectObject(terrain, true);
-    if (intersects.length === 0) return null;
+    if (intersects.length === 0) {
+      if (this.onDeselect) {
+        this.onDeselect();
+      }
+      return null;
+    }
 
     const hit = intersects[0];
     const hitPoint = hit.point;
