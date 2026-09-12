@@ -1,838 +1,793 @@
-import './style.css';
+// ============================================================
+// DEPTHWIZARD
+// MAIN APPLICATION ENTRY POINT
+// ============================================================
 
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { FlyControls } from 'three/examples/jsm/controls/FlyControls.js';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
-
-import { TilesRenderer } from '3d-tiles-renderer';
-
-// -----------------------------
-// 1. Get the container
-// -----------------------------
-
-const container = document.getElementById('canvas-container');
-
-const coordinates = document.getElementById('coordinates');
-
-const inspectorContent = document.getElementById('inspector-content');
 
 
-// add status indicators for viewer, system, and file
-const viewerStatus =
-    document.getElementById('viewerStatus');
+// ============================================================
+// CORE
+// ============================================================
 
-const systemStatus =
-    document.getElementById('systemStatus');
+import { dom } from './core/dom.js';
+import { state } from './core/state.js';
 
-const fileStatus =
-    document.getElementById('fileStatus');
 
-function setViewerStatus(status, type = 'ready') {
+// ============================================================
+// VIEWER
+// ============================================================
 
-    viewerStatus.textContent = status;
+import {
+    scene,
+    camera,
+    renderer,
+    resizeRenderer
+} from './viewer/scene.js';
 
-    if (type === 'loading') {
+import {
+    initLighting,
+    setLightingEnabled,
+    setLightIntensity,
+    setGridVisible
+} from './viewer/lighting.js';
 
-        systemStatus.textContent =
-            '● Loading terrain';
+import {
+    loadTerrainGLB
+} from './viewer/terrain.js';
 
-        systemStatus.style.color =
-            '#f0b45b';
+import {
+    loadTiles,
+    updateTiles,
+    disposeTiles
+} from './viewer/tiles.js';
 
-    } else if (type === 'error') {
 
-        systemStatus.textContent =
-            '● Load error';
+// ============================================================
+// CONTROLS
+// ============================================================
 
-        systemStatus.style.color =
-            '#ff6b6b';
+import {
+    initNavigation,
+    orbitControls,
+    flyControls,
+    updateNavigation,
+    resetCamera
+} from './controls/navigation.js';
 
-    } else {
 
-        systemStatus.textContent =
-            '● Viewer ready';
+// ============================================================
+// FEATURES
+// ============================================================
 
-        systemStatus.style.color =
-            '#48d597';
-    }
+import {
+    initInspector
+} from './features/inspector.js';
+
+import {
+    initMeasurement
+} from './features/measurement.js';
+
+import {
+    initRoute,
+    clearRoute,
+    updateRouteFlythrough
+} from './features/route.js';
+
+import {
+    processGeoTIFF,
+    isGeoTIFFFile
+} from './features/geotiff.js';
+
+
+// ============================================================
+// SERVICES
+// ============================================================
+
+import {
+    processImage
+} from './services/backend.js';
+
+import {
+    normalizeResult
+} from './services/result.js';
+
+
+// ============================================================
+// UI
+// ============================================================
+
+import {
+    initPanel,
+    closeHelp
+} from './ui/panel.js';
+
+import {
+    initFileUI
+} from './ui/fileUI.js';
+
+import {
+    initControlsUI
+} from './ui/controlsUI.js';
+
+import {
+    initPiP
+} from './ui/pipUI.js';
+
+import {
+    setViewerStatus,
+    setSystemStatus,
+    setFileStatus,
+    setModeStatus,
+    setGridStatus
+} from './ui/status.js';
+
+
+// ============================================================
+// CLOCK
+// ============================================================
+
+const clock =
+    new THREE.Clock();
+
+
+// ============================================================
+// APPLICATION INITIALIZATION
+// ============================================================
+
+function initializeApplication() {
+
+    // --------------------------------------------------------
+    // Navigation
+    // --------------------------------------------------------
+
+    initNavigation();
+
+
+    // --------------------------------------------------------
+    // Visualization
+    // --------------------------------------------------------
+
+    initLighting();
+
+
+    // --------------------------------------------------------
+    // Features
+    // --------------------------------------------------------
+
+    initInspector();
+    initMeasurement();
+    initRoute();
+
+
+    // --------------------------------------------------------
+    // UI
+    // --------------------------------------------------------
+
+    initPanel();
+    initFileUI();
+    initControlsUI();
+    initPiP();
+
+
+    // --------------------------------------------------------
+    // Initial state
+    // --------------------------------------------------------
+
+    state.lightingEnabled = true;
+    state.gridVisible = true;
+
+    setLightingEnabled(true);
+    setLightIntensity(2.0);
+    setGridVisible(true);
+
+    setModeStatus('orbit');
+    setGridStatus(true);
+
+    setViewerStatus(
+        'Viewer ready',
+        'ready'
+    );
+
+    setSystemStatus(
+        'Viewer Ready',
+        'ready'
+    );
+
+    setFileStatus(
+        'No terrain loaded'
+    );
+
+
+    // --------------------------------------------------------
+    // Events
+    // --------------------------------------------------------
+
+    initializeApplicationEvents();
+
+
+    // --------------------------------------------------------
+    // Start render loop
+    // --------------------------------------------------------
+
+    animate();
+
 }
 
 
-// -----------------------------
-// 2. Create the scene
-// -----------------------------
+// ============================================================
+// APPLICATION EVENTS
+// ============================================================
 
-const scene = new THREE.Scene();
+function initializeApplicationEvents() {
 
-//scene.background = new THREE.Color(0x1a1a24);
-scene.background = null; // Transparent background
+    // --------------------------------------------------------
+    // Demo
+    // --------------------------------------------------------
 
-// Variable to hold the terrain model
-let terrainModel = null;
+    if (dom.demoBtn) {
 
-let initialCameraPosition = new THREE.Vector3();
-let initialCameraTarget = new THREE.Vector3();
-let initialCameraZoom = 1;
-
-// -----------------------------
-// 3. Create the camera
-// -----------------------------
-
-const camera = new THREE.PerspectiveCamera(
-    60,
-    container.clientWidth / container.clientHeight,
-    0.1,
-    5000
-);
-
-camera.position.set(0, 100, 200);
-
-const compassControl =
-    document.getElementById('compass-control');
-
-const compassFace =
-    document.querySelector('.compass-face');
-// const cameraDirection = new THREE.Vector3();
-
-// camera.getWorldDirection(cameraDirection);
-
-// const angle = Math.atan2(
-//     cameraDirection.x,
-//     cameraDirection.z
-// );
-
-// compass.style.transform =
-//     `rotate(${angle}rad)`;
-
-compassControl.addEventListener('click', () => {
-
-    if (flyMode) {
-        return;
-    }
-
-    orbitControls.autoRotate = false;
-
-    const distance =
-        camera.position.distanceTo(
-            orbitControls.target
+        dom.demoBtn.addEventListener(
+            'click',
+            handleDemo
         );
 
-    camera.position.set(
-        0,
-        distance,
-        0
-    );
-
-    camera.lookAt(
-        orbitControls.target
-    );
-
-    orbitControls.update();
-
-    setTimeout(() => {
-
-        if (!flyMode) {
-            orbitControls.autoRotate = true;
-        }
-
-    }, 2000);
-
-});
-
-function updateCompass(force = false) {
-
-    if (
-        orbitControls.autoRotate &&
-        !userInteracting &&
-        !force
-    ) {
-        return;
     }
 
-    const direction = new THREE.Vector3();
+    if (dom.emptyDemoTrigger) {
 
-    camera.getWorldDirection(direction);
-
-    const angle = Math.atan2(
-        direction.x,
-        direction.z
-    );
-
-    compassFace.style.transform =
-        `rotate(${angle}rad)`;
-}
-
-// -----------------------------
-// 4. Create the renderer
-// -----------------------------
-
-const renderer = new THREE.WebGLRenderer({
-    antialias: true,
-    alpha: true,
-    powerPreference: 'high-performance'
-});
-
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
-
-renderer.setSize(
-    container.clientWidth,
-    container.clientHeight
-);
-
-renderer.setPixelRatio(
-    Math.min(window.devicePixelRatio, 2)
-);
-
-container.appendChild(renderer.domElement);
-
-
-// Variable to hold the TilesRenderer instance
-let tilesRenderer = null;
-
-function loadTileset(url) {
-    console.log('Loading tileset:', url);
-
-    tilesRenderer = new TilesRenderer(url);
-
-    tilesRenderer.addEventListener('load-tile-set', () => {
-        console.log('3D Tiles tileset loaded successfully');
-    });
-
-    tilesRenderer.addEventListener('load-content', (event) => {
-        console.log('3D Tiles content loaded:', event);
-    });
-
-    tilesRenderer.addEventListener('load-error', (event) => {
-        console.error('3D Tiles loading error:', event);
-    });
-
-    scene.add(tilesRenderer.group);
-
-    tilesRenderer.setCamera(camera);
-    tilesRenderer.setResolutionFromRenderer(camera, renderer);
-
-    return tilesRenderer;
-}
-
-setViewerStatus(
-    'LOADING TERRAIN',
-    'loading'
-);
-
-loadTileset('/glb_tileset.json');
-
-
-// -----------------------------
-// 5. Add lighting
-// -----------------------------
-
-const ambientLight = new THREE.AmbientLight(
-    0xffffff,
-    1.5
-);
-
-const hemisphereLight = new THREE.HemisphereLight(
-    0xbfd7ea,
-    0x3b4650,
-    0.65
-);
-
-const directionalLight = new THREE.DirectionalLight(
-    0xffffff,
-    2
-);
-
-directionalLight.position.set(300, 600, 250);
-directionalLight.castShadow = true;
-
-directionalLight.shadow.mapSize.width = 2048;
-directionalLight.shadow.mapSize.height = 2048;
-
-directionalLight.shadow.camera.left = -1000;
-directionalLight.shadow.camera.right = 1000;
-directionalLight.shadow.camera.top = 1000;
-directionalLight.shadow.camera.bottom = -1000;
-
-directionalLight.shadow.camera.near = 1;
-directionalLight.shadow.camera.far = 3000;
-
-scene.add(ambientLight);
-scene.add(hemisphereLight);
-scene.add(directionalLight);
-
-// -----------------------------
-// Ground Grid
-// -----------------------------
-
-const gridHelper = new THREE.GridHelper(
-    2000,
-    40,
-    0x4d5a68,
-    0x29313b
-);
-
-gridHelper.visible = false;
-
-scene.add(gridHelper);
-
-
-// -----------------------------
-// 6. Add OrbitControls
-// -----------------------------
-
-const orbitControls = new OrbitControls(
-    camera,
-    renderer.domElement
-);
-
-orbitControls.enableDamping = true;
-
-// Automatic terrain rotation
-orbitControls.autoRotate = true;
-orbitControls.autoRotateSpeed = 0.8;
-
-
-//adding fly controls for free movement
-const flyControls = new FlyControls(
-    camera,
-
-    renderer.domElement
-);
-
-flyControls.movementSpeed = 50;
-flyControls.rollSpeed = Math.PI / 12;
-flyControls.dragToLook = true;
-flyControls.enabled = false;
-
-let flyMode = false;
-let userInteracting = false;
-let interactionTimeout = null;
-
-
-window.addEventListener('keydown', (event) => {
-
-    if (event.key.toLowerCase() === 'f') {
-
-        flyMode = !flyMode;
-
-        orbitControls.enabled = !flyMode;
-        flyControls.enabled = flyMode;
-
-        console.log(
-            flyMode
-                ? 'Fly mode ON'
-                : 'Orbit mode ON'
+        dom.emptyDemoTrigger.addEventListener(
+            'click',
+            handleDemo
         );
-    }
-
-});
-
-//add raycasting to detect clicks on the terrain model
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
-renderer.domElement.addEventListener('click', (event) => {
-
-    if (!terrainModel && !tilesRenderer) return;
-
-    const rect = renderer.domElement.getBoundingClientRect();
-
-    mouse.x =
-        ((event.clientX - rect.left) / rect.width) * 2 - 1;
-
-    mouse.y =
-        -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-    raycaster.setFromCamera(mouse, camera);
-
-    let intersects = [];
-
-if (terrainModel) {
-    intersects = raycaster.intersectObject(
-        terrainModel,
-        true
-    );
-}
-
-if (
-    intersects.length === 0 &&
-    tilesRenderer
-) {
-    intersects = raycaster.intersectObject(
-        tilesRenderer.group,
-        true
-    );
-}
-
-    if (intersects.length > 0) {
-
-        const point = intersects[0].point;
-
-        console.log('Clicked terrain point:');
-        console.log('X:', point.x);
-        console.log('Y:', point.y);
-        console.log('Z:', point.z);
-        // Update the coordinates display
-        coordinates.innerHTML = `
-            <div class="coordinate-row">
-                <span class="coordinate-label">X</span>
-                <span class="coordinate-value">${point.x.toFixed(2)}</span>
-            </div>
-
-            <div class="coordinate-row">
-                <span class="coordinate-label">Y</span>
-                <span class="coordinate-value">${point.y.toFixed(2)}</span>
-            </div>
-
-            <div class="coordinate-row">
-                <span class="coordinate-label">Z</span>
-                <span class="coordinate-value">${point.z.toFixed(2)}</span>
-            </div>
-        `;
-        inspectorContent.innerHTML = `
-            <div style="line-height:1.8">
-                <div>
-                    <span style="color:#788596">X</span>
-                    <strong>${point.x.toFixed(2)}</strong>
-                </div>
-
-                <div>
-                    <span style="color:#788596">Y</span>
-                    <strong>${point.y.toFixed(2)}</strong>
-                </div>
-
-                <div>
-                    <span style="color:#788596">Z</span>
-                    <strong>${point.z.toFixed(2)}</strong>
-                </div>
-            </div>
-        `;
 
     }
 
-});
+
+    // --------------------------------------------------------
+    // Empty upload trigger
+    // --------------------------------------------------------
+
+    if (dom.emptyUploadTrigger) {
+
+        dom.emptyUploadTrigger.addEventListener(
+            'click',
+            () => {
+
+                if (dom.imageInput) {
+                    dom.imageInput.click();
+                }
+
+            }
+        );
+
+    }
 
 
-// -----------------------------
-// 7. Load GLB
-// -----------------------------
+    // --------------------------------------------------------
+    // Upload button
+    // --------------------------------------------------------
 
-const loader = new GLTFLoader();
+    if (dom.uploadBtn) {
 
-// Set up DRACO loader
-const dracoLoader = new DRACOLoader();
-dracoLoader.setDecoderPath('/draco/');
-loader.setDRACOLoader(dracoLoader);
+        dom.uploadBtn.addEventListener(
+            'click',
+            handleUpload
+        );
 
-loader.load(
-    '/test_8_output.glb',
+    }
 
-    (gltf) => {
 
-        console.log('GLB loaded successfully');
+    // --------------------------------------------------------
+    // Fullscreen
+    // --------------------------------------------------------
+
+    if (dom.fullscreenBtn) {
+
+        dom.fullscreenBtn.addEventListener(
+            'click',
+            toggleFullscreen
+        );
+
+    }
+
+
+    // --------------------------------------------------------
+    // Keyboard
+    // --------------------------------------------------------
+
+    window.addEventListener(
+        'keydown',
+        handleKeyboard
+    );
+
+
+    // --------------------------------------------------------
+    // Resize
+    // --------------------------------------------------------
+
+    window.addEventListener(
+        'resize',
+        resizeRenderer
+    );
+
+}
+
+
+// ============================================================
+// UPLOAD HANDLER
+// ============================================================
+
+async function handleUpload() {
+
+    const file =
+        state.selectedFile;
+
+    if (!file) {
+
+        setFileStatus(
+            'Select an image first'
+        );
+
+        return;
+
+    }
+
+
+    try {
 
         setViewerStatus(
-            '3D VIEWER READY',
+            'Processing image...',
+            'loading'
+        );
+
+
+        setFileStatus(
+            `Processing ${file.name}...`
+        );
+
+
+        // ----------------------------------------------------
+        // GeoTIFF
+        // ----------------------------------------------------
+
+        if (isGeoTIFFFile(file)) {
+
+            await processGeoTIFF(file);
+
+            return;
+
+        }
+
+
+        // ----------------------------------------------------
+        // Clear previous route before new terrain
+        // ----------------------------------------------------
+
+        clearRoute();
+
+        disposeTiles();
+
+
+        // ----------------------------------------------------
+        // Send image to backend
+        // ----------------------------------------------------
+
+        const result =
+            await processImage(file);
+
+
+        const normalized =
+            normalizeResult(result);
+
+
+        if (
+            !normalized.success ||
+            !normalized.terrainUrl
+        ) {
+
+            throw new Error(
+                normalized.message ||
+                'Height estimation pipeline did not return a GLB mesh.'
+            );
+
+        }
+
+
+        // ----------------------------------------------------
+        // Load generated GLB
+        // ----------------------------------------------------
+
+        await loadTerrainGLB(
+            normalized.terrainUrl
+        );
+
+
+        // ----------------------------------------------------
+        // Optional 3D Tiles
+        // ----------------------------------------------------
+
+        if (normalized.tilesUrl) {
+
+            try {
+
+                await loadTiles(
+                    normalized.tilesUrl
+                );
+
+            } catch (tilesError) {
+
+                console.warn(
+                    '3D Tiles could not be loaded:',
+                    tilesError
+                );
+
+            }
+
+        }
+
+
+        // ----------------------------------------------------
+        // Success
+        // ----------------------------------------------------
+
+        setViewerStatus(
+            'Terrain loaded',
             'ready'
         );
 
-        const model = gltf.scene;
 
-        terrainModel = model;
+    } catch (error) {
 
-        scene.add(model);
-
-        // Calculate the model's bounding box
-        const box = new THREE.Box3().setFromObject(model);
-
-        const center = box.getCenter(new THREE.Vector3());
-        const size = box.getSize(new THREE.Vector3());
-
-        console.log('Model center:', center);
-        console.log('Model size:', size);
-
-        // Move model so its center is near the origin
-        model.position.sub(center);
-
-        model.traverse((object) => {
-            if (object.isMesh) {
-                object.castShadow = true;
-                object.receiveShadow = true;
-            }
-        });
-
-        // Recalculate terrain bounds after centering
-        const centeredBox = new THREE.Box3().setFromObject(model);
-
-        // Put grid slightly below the terrain
-        gridHelper.position.y = centeredBox.min.y - 1;
-
-        console.log('Grid Y position:', gridHelper.position.y);
-
-        // Position camera according to model size
-        const maxDimension = Math.max(
-            size.x,
-            size.y,
-            size.z
+        console.error(
+            'Upload processing failed:',
+            error
         );
 
-        const distance = maxDimension * 1.5;
-
-        camera.position.set(
-          distance,
-          distance * 0.7,
-          distance
-        );
-
-        camera.lookAt(0, 0, 0);
-
-        orbitControls.target.set(0, 0, 0);
-        orbitControls.update();
-
-        initialCameraPosition.copy(camera.position);
-        initialCameraTarget.copy(orbitControls.target);
-        initialCameraZoom = camera.zoom;
-    },
-
-    (progress) => {
-
-        if (progress.total) {
-            const percent =
-                (progress.loaded / progress.total) * 100;
-
-            console.log(
-                `Loading: ${percent.toFixed(1)}%`
-            );
-        }
-
-    },
-
-    (error) => {
 
         setViewerStatus(
-            'ERROR LOADING TERRAIN',
+            error.message ||
+            'Processing failed',
             'error'
         );
 
+
+        setFileStatus(
+            'Processing failed'
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// DEMO TERRAIN
+// ============================================================
+
+async function handleDemo() {
+
+    try {
+
+        clearRoute();
+        disposeTiles();
+
+
+        setViewerStatus(
+            'Loading demo terrain...',
+            'loading'
+        );
+
+
+        setFileStatus(
+            'Loading ISRO satellite sample...'
+        );
+
+
+        // ----------------------------------------------------
+        // Original demo asset
+        // ----------------------------------------------------
+
+        await loadTerrainGLB(
+            '/test_8_output.glb'
+        );
+
+
+        // ----------------------------------------------------
+        // Original demo file information
+        // ----------------------------------------------------
+
+        setFileStatus(
+            'test_8_output.glb (Demo)'
+        );
+
+
+        // ----------------------------------------------------
+        // Demo PiP image
+        // ----------------------------------------------------
+
+        if (dom.pipImage) {
+
+            dom.pipImage.src =
+                '/icons.svg';
+
+            dom.pipImage.classList.remove(
+                'hidden'
+            );
+
+        }
+
+        if (dom.pipPlaceholder) {
+
+            dom.pipPlaceholder.classList.add(
+                'hidden'
+            );
+
+        }
+
+        if (dom.pipFilename) {
+
+            dom.pipFilename.textContent =
+                'Demo Terrain Mesh';
+
+        }
+
+        if (dom.pipDimensions) {
+
+            dom.pipDimensions.textContent =
+                'ISRO Satellite Sample';
+
+        }
+
+
+        if (dom.pipToggle) {
+            dom.pipToggle.checked = true;
+        }
+
+        if (dom.comparisonPiP) {
+
+            dom.comparisonPiP.classList.remove(
+                'hidden'
+            );
+
+        }
+
+
+        setViewerStatus(
+            'Demo terrain ready',
+            'ready'
+        );
+
+
+    } catch (error) {
+
         console.error(
-            'Error loading GLB:',
+            'Demo loading failed:',
+            error
+        );
+
+
+        setViewerStatus(
+            error.message ||
+            'Demo terrain failed to load',
+            'error'
+        );
+
+
+        setFileStatus(
+            'Demo loading failed'
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// FULLSCREEN
+// ============================================================
+
+async function toggleFullscreen() {
+
+    try {
+
+        if (!document.fullscreenElement) {
+
+            await document.documentElement.requestFullscreen();
+
+        } else {
+
+            await document.exitFullscreen();
+
+        }
+
+    } catch (error) {
+
+        console.error(
+            'Fullscreen error:',
             error
         );
 
     }
+
+}
+
+
+// ============================================================
+// UPDATE FULLSCREEN BUTTON
+// ============================================================
+
+function updateFullscreenButton() {
+
+    if (!dom.fullscreenBtn) {
+        return;
+    }
+
+    dom.fullscreenBtn.textContent =
+        document.fullscreenElement
+            ? '🗗'
+            : '⛶';
+
+}
+
+
+// ============================================================
+// FULLSCREEN EVENT
+// ============================================================
+
+document.addEventListener(
+    'fullscreenchange',
+    updateFullscreenButton
 );
 
 
-// -----------------------------
-// 8. Animation loop
-// -----------------------------
-const timer= new THREE.Timer();
+// ============================================================
+// KEYBOARD CONTROLS
+// ============================================================
+
+function handleKeyboard(event) {
+
+    // Never capture shortcuts while typing
+    const target =
+        event.target;
+
+    const isTyping =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        target?.isContentEditable;
+
+
+    if (isTyping) {
+        return;
+    }
+
+
+    // --------------------------------------------------------
+    // F = Toggle Fly / Orbit
+    // --------------------------------------------------------
+
+    if (
+        event.key === 'f' ||
+        event.key === 'F'
+    ) {
+
+        event.preventDefault();
+
+        if (state.isFlyingRoute) {
+            return;
+        }
+
+        if (state.flyMode) {
+
+            orbitControls.enabled = true;
+            flyControls.enabled = false;
+            state.flyMode = false;
+
+            setModeStatus('orbit');
+
+        } else {
+
+            orbitControls.enabled = false;
+            flyControls.enabled = true;
+            state.flyMode = true;
+
+            setModeStatus('fly');
+
+        }
+
+        return;
+
+    }
+
+
+    // --------------------------------------------------------
+    // Escape
+    // --------------------------------------------------------
+
+    if (
+        event.key === 'Escape'
+    ) {
+
+        if (state.isFlyingRoute) {
+
+            state.isFlyingRoute = false;
+
+        }
+
+        state.isDrawingRoute = false;
+
+        closeHelp();
+
+    }
+
+}
+
+
+// ============================================================
+// ANIMATION LOOP
+// ============================================================
 
 function animate() {
 
-    requestAnimationFrame(animate);
+    requestAnimationFrame(
+        animate
+    );
 
-    timer.update();
 
-    const delta = timer.getDelta();
+    const delta =
+        Math.min(
+            clock.getDelta(),
+            0.1
+        );
 
-    if (flyMode) {
-        flyControls.update(delta);
+
+    // --------------------------------------------------------
+    // Route flythrough
+    // --------------------------------------------------------
+
+    if (
+        state.isFlyingRoute
+    ) {
+
+        updateRouteFlythrough(
+            delta
+        );
+
     } else {
-        orbitControls.update();
+
+        // ----------------------------------------------------
+        // Normal navigation
+        // ----------------------------------------------------
+
+        updateNavigation(
+            delta
+        );
+
     }
 
-    camera.updateMatrixWorld();
 
-    if (flyMode || userInteracting) {
-        updateCompass();
-    }
+    // --------------------------------------------------------
+    // 3D Tiles
+    // --------------------------------------------------------
 
-    if (tilesRenderer) {
-        tilesRenderer.setCamera(camera);
-        tilesRenderer.setResolutionFromRenderer(camera, renderer);
-        tilesRenderer.update();
-    }
+    updateTiles();
+
+
+    // --------------------------------------------------------
+    // Render
+    // --------------------------------------------------------
+
     renderer.render(
         scene,
         camera
     );
+
 }
 
-animate();
 
+// ============================================================
+// START APPLICATION
+// ============================================================
 
-// -----------------------------
-// 9. Handle window resize
-// -----------------------------
-
-window.addEventListener(
-    'resize',
-    () => {
-
-        camera.aspect =
-            container.clientWidth /
-            container.clientHeight;
-
-        camera.updateProjectionMatrix();
-
-        renderer.setSize(
-            container.clientWidth,
-            container.clientHeight
-        );
-    }
-);
-
-// -----------------------------
-// 10. Backend image upload
-// -----------------------------
-
-const imageInput = document.getElementById('imageInput');
-const selectedFileInfo = document.getElementById('selectedFileInfo');
-
-imageInput.addEventListener('change', () => {
-
-    const file = imageInput.files[0];
-
-    if (!file) {
-
-        selectedFileInfo.textContent =
-            'No file selected';
-
-        fileStatus.textContent =
-            'No imagery selected';
-
-        return;
-    }
-
-    const sizeMB =
-        file.size / (1024 * 1024);
-
-    selectedFileInfo.innerHTML = `
-        <strong style="color:#dfe8f3">
-            ${file.name}
-        </strong>
-        <br>
-        ${file.type || 'Unknown format'}
-        <br>
-        ${sizeMB.toFixed(2)} MB
-    `;
-
-    fileStatus.textContent =
-        `Selected: ${file.name}`;
-
-});
-
-
-const uploadBtn = document.getElementById('uploadBtn');
-
-uploadBtn.addEventListener('click', async () => {
-
-    const file = imageInput.files[0];
-
-    if (!file) {
-        console.log('Please select an image first.');
-        return;
-    }
-
-    console.log('Selected image:', file.name);
-    console.log('Image type:', file.type);
-    console.log('Image size:', file.size, 'bytes');
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-
-        console.log('Sending image to backend...');
-
-        const response = await fetch('/api/v1/processor', {
-            method: 'POST',
-            body: formData
-        });
-
-        console.log('Backend status:', response.status);
-
-        const result = await response.json();
-
-        console.log('Backend response:', result);
-
-    } catch (error) {
-
-        console.error('Backend request failed:', error);
-
-    }
-
-});
-
-
-// -----------------------------
-// UI controls
-// -----------------------------
-
-const orbitBtn = document.getElementById('orbitBtn');
-const flyBtn = document.getElementById('flyBtn');
-const resetBtn = document.getElementById('resetBtn');
-const lightingBtn = document.getElementById('lightingBtn');
-const lightSlider = document.getElementById('lightSlider');
-const lightValue = document.getElementById('lightValue');
-
-const gridBtn = document.getElementById('gridBtn');
-// Grid toggle
-gridBtn.addEventListener('click', () => {
-
-    gridHelper.visible = !gridHelper.visible;
-
-    gridBtn.classList.toggle(
-        'active',
-        gridHelper.visible
-    );
-
-    console.log(
-        gridHelper.visible
-            ? 'Grid ON'
-            : 'Grid OFF'
-    );
-
-});
-
-lightingBtn.addEventListener('click', () => {
-    const isOn = lightingBtn.classList.toggle('active');
-
-    ambientLight.visible = isOn;
-    directionalLight.visible = isOn;
-
-    lightingBtn.textContent = isOn ? 'ON' : 'OFF';
-});
-
-lightSlider.addEventListener('input', () => {
-    const intensity = Number(lightSlider.value);
-
-    directionalLight.intensity = intensity;
-    lightValue.textContent = intensity.toFixed(1);
-});
-
-const helpBtn = document.getElementById('helpBtn');
-const helpPanel = document.getElementById('help-panel');
-
-const fullscreenBtn =
-    document.getElementById('fullscreenBtn');
-
-
-// Orbit mode
-orbitBtn.addEventListener('click', () => {
-
-    flyMode = false;
-
-    orbitControls.enabled = true;
-    flyControls.enabled = false;
-    orbitControls.autoRotate = true;
-
-    orbitBtn.classList.add('active');
-    flyBtn.classList.remove('active');
-
-    console.log('Orbit mode ON');
-
-});
-
-orbitControls.addEventListener('start', () => {
-
-    userInteracting = true;
-
-    orbitControls.autoRotate = false;
-
-    clearTimeout(interactionTimeout);
-});
-
-orbitControls.addEventListener('end', () => {
-
-    userInteracting = false;
-
-    clearTimeout(interactionTimeout);
-
-    interactionTimeout = setTimeout(() => {
-
-        if (!flyMode) {
-            orbitControls.autoRotate = true;
-        }
-
-    }, 2500);
-
-});
-
-
-// Fly mode
-flyBtn.addEventListener('click', () => {
-
-    flyMode = true;
-
-    orbitControls.enabled = false;
-    orbitControls.autoRotate = false;
-    flyControls.enabled = true;
-    
-    flyBtn.classList.add('active');
-    orbitBtn.classList.remove('active');
-
-    console.log('Fly mode ON');
-
-});
-
-
-// Reset camera
-resetBtn.addEventListener('click', () => {
-
-    // Force Orbit mode
-    flyMode = false;
-
-    flyControls.enabled = false;
-    orbitControls.enabled = true;
-
-    orbitControls.autoRotate = true;
-
-    // Restore camera position
-    camera.position.copy(initialCameraPosition);
-    camera.zoom = initialCameraZoom;
-    camera.updateProjectionMatrix();
-
-    // Restore orbit target
-    orbitControls.target.copy(initialCameraTarget);
-
-    // Make camera look toward target
-    camera.lookAt(initialCameraTarget);
-
-    // Update controls
-    orbitControls.update();
-
-    // Update UI
-    orbitBtn.classList.add('active');
-    flyBtn.classList.remove('active');
-
-    console.log('Camera reset successfully');
-});
-
-
-// Help
-helpBtn.addEventListener('click', () => {
-
-    helpPanel.classList.toggle('show');
-
-});
-
-
-// Fullscreen
-fullscreenBtn.addEventListener('click', async () => {
-
-    if (!document.fullscreenElement) {
-
-        await document.documentElement.requestFullscreen();
-
-    } else {
-
-        await document.exitFullscreen();
-
-    }
-
-});
+initializeApplication();
