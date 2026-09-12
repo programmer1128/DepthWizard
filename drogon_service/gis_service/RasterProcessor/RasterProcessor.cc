@@ -10,11 +10,9 @@
 //updated GDAL warp to use multi threading for calculations for maximum performance
 
 // helper functions
-
 std::vector<std::string> RasterProcessor::buildWarpArgs(const GDALDatasetPtr& hInputDS)
 {
      // build the string configuration for warping the fetched tile
-
      // physical pixel dimensions of the target
      int target_W = hInputDS->GetRasterXSize(); // width
      int target_H = hInputDS->GetRasterYSize(); // height
