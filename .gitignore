@@ -1,2 +1,3 @@
 .vscode/
 minio
+drogon_service/gis_service/build/

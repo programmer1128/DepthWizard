@@ -1,5 +1,7 @@
 inside build folder
 
+cd drogon_service/gis_service/build
+
 rm -rf * - for fresh build
 cmake ..
 make -j$(nproc)

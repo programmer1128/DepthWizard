@@ -29,7 +29,7 @@ drogon::Task<GraphPayload> TileDispatcher::processGeoTiff(const std::string& fil
     float absolute_max_variance = -1.0f;
     uint32_t current_tile_id = 0;
 
-    std::vector<std::string> available_gpus = { "100.76.213.53" };
+    std::vector<std::string> available_gpus = { "100.86.46.55" };
     int tile_size = 518;
     int stride = 414;   
 
