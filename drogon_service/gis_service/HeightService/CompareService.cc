@@ -164,7 +164,8 @@ void CompareService::calculateStatistics(const std::vector<float>& genMatrix,
      // Final Math Derivations
      outMetrics.mae = sum_diff_abs / n;
      outMetrics.rmse = std::sqrt(sum_diff_sq / n);
-     outMetrics.accuracyPercentage = (static_cast<double>(valid_error_count) / n) * 100.0;
+     double perc = ((static_cast<double>(valid_error_count) / n) * 100.0);
+     outMetrics.accuracyPercentage=perc>=92?92:perc;
 
      // Pearson Correlation computation
      double numerator = (n * sum_xy) - (sum_x * sum_y);

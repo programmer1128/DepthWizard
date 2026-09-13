@@ -236,7 +236,6 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
      }
 }
 
-
 inline std::vector<float> PipelineService::parseDepthMatrix(const drogon::HttpFile& depthFile) const
 {
      size_t floatCount = depthFile.fileLength() / sizeof(float);
