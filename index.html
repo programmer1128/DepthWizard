@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DepthWizard 3D — ISRO Single-View Height Estimation</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <!-- GeoTIFF.js parser for rendering .tif/.tiff satellite optical raster data -->
+  <script src="https://cdn.jsdelivr.net/npm/geotiff"></script>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+
+<body>
+<div id="app">
+
+  <header id="topbar">
+    <div class="brand-section">
+      <div class="brand-badge">◈</div>
+      <div class="brand-info">
+        <h1>
+          DepthWizard 3D
+          <span class="brand-tag"></span>
+        </h1>
+        <div class="brand-sub">
+          Single-View Height Estimation & Geospatial 3D Terrain
+        </div>
+      </div>
+    </div>
+
+    <div class="top-center-telemetry">
+      <div class="telemetry-item">
+        <span>Mode:</span>
+        <strong id="topModeText">ORBIT VIEW</strong>
+      </div>
+      <div class="telemetry-divider"></div>
+      <div class="telemetry-item">
+        <span>Grid:</span>
+        <strong id="topGridText">ACTIVE</strong>
+      </div>
+      <div class="telemetry-divider"></div>
+      <div class="telemetry-item">
+        <span>Engine:</span>
+        <strong>THREE.JS R186</strong>
+      </div>
+    </div>
+
+    <div class="top-actions">
+      <button class="icon-btn" id="helpBtn" title="Keyboard & Mouse Controls">?</button>
+      <button class="icon-btn" id="fullscreenBtn" title="Toggle Fullscreen">⛶</button>
+    </div>
+  </header>
+
+  <main id="workspace">
+
+    <aside id="sidebar">
+
+      <section class="sidebar-section">
+        <div class="section-header">
+          <span class="section-title">Mission Overview</span>
+          <span class="section-badge"></span>
+        </div>
+        <div class="panel-card project-card">
+          <div class="project-title">
+            <span>ISRO Space Applications Centre</span>
+          </div>
+          <div class="project-desc">
+            Monocular elevation inference converting 2D optical remote sensing imagery into interactive 3D terrain meshes.
+          </div>
+          <div class="project-meta">
+            <span class="meta-tag">Remote Sensing</span>
+            <span class="meta-tag">GLTF / Draco</span>
+            <span class="meta-tag">3D Mesh</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="sidebar-section">
+        <div class="section-header">
+          <span class="section-title">Optical Imagery Input</span>
+          <span class="section-badge">2D Source</span>
+        </div>
+
+        <div class="image-type-toggle" id="imageTypeToggle">
+          <button type="button" class="type-tab-btn active" id="typeGeoTiffBtn" data-type="geotiff" title="Upload GeoTIFF (.tif) via /api/v1/processor">
+            GeoTIFF (.tif)
+          </button>
+          <button type="button" class="type-tab-btn" id="typeNormalBtn" data-type="normal" title="Upload Normal Image (.jpg, .png) via /api/v1/processor/normal-image">
+            Normal Image (.jpg, .png)
+          </button>
+        </div>
+
+        <div class="file-dropzone" id="fileDropzone">
+          <input type="file" id="imageInput" accept=".tif,.tiff" />
+          <div class="dropzone-icon" id="dropzoneIcon">🛰️</div>
+          <div class="dropzone-text" id="dropzoneTitle">Select or drop GeoTIFF image</div>
+          <div class="dropzone-sub" id="dropzoneSubtitle">GeoTIFF (.tif, .tiff) • Uses /api/v1/processor</div>
+        </div>
+
+        <div class="file-info-box" id="selectedFileInfoBox">
+          <div class="file-details">
+            <div class="file-name" id="selectedFileName">No file chosen</div>
+            <div class="file-size" id="selectedFileSize">Ready for upload</div>
+          </div>
+          <img id="thumbnailPreview" class="file-thumbnail-preview" alt="Source Preview" />
+        </div>
+
+        <button class="btn-primary" id="uploadBtn">
+          <span>⚡</span>
+          <span>Generate 3D Map</span>
+        </button>
+
+        <button class="btn-secondary" id="demoBtn" title="Load sample GLB terrain directly">
+          <span>📦</span>
+          <span>Load Sample Terrain</span>
+        </button>
+      </section>
+
+      <section class="sidebar-section">
+
+        <div class="section-header">
+            <span class="section-title">
+                2D vs 3D Comparison
+            </span>
+
+            <span class="section-badge">
+                INSPECT
+            </span>
+        </div>
+
+        <div class="panel-card">
+
+            <p class="section-description">
+                Compare your elevation data against
+                an external reference dataset (OpenTopography / ISRO Bhuvan).
+            </p>
+
+            <button
+                id="compareBtn"
+                class="primary-action-btn"
+                type="button"
+            >
+                Compare Elevation
+            </button>
+
+        </div>
+
+    </section>
+
+      <!-- CAMERA & NAVIGATION -->
+      <section class="sidebar-section">
+        <div class="section-header">
+          <span class="section-title">Camera & Navigation</span>
+          <span class="section-badge" id="autoRotateBadge">AUTO ROTATE</span>
+        </div>
+
+        <div class="control-grid-2">
+          <button class="tool-btn active" id="orbitBtn" title="Standard orbit and pan controls">
+            ◉ Orbit View
+          </button>
+          <button class="tool-btn" id="flyBtn" title="First-person fly navigation (WASD)">
+            ◇ Free Fly [F]
+          </button>
+        </div>
+
+        <div class="control-grid-2" style="margin-top: 6px;">
+          <button class="tool-btn" id="resetBtn" title="Reset camera to default view">
+            ↻ Reset View
+          </button>
+          <button class="tool-btn active" id="gridBtn" title="Toggle ground reference grid">
+            ▦ Grid On
+          </button>
+        </div>
+      </section>
+
+      <!-- VISUAL CONTROLS: RESTORED -->
+      <section class="sidebar-section">
+        <div class="section-header">
+          <span class="section-title">Visual Controls</span>
+          <span class="section-badge">LIGHTING</span>
+        </div>
+
+        <div class="panel-card visual-control-card">
+
+          <div class="visual-control-header">
+            <span>Light Intensity</span>
+            <button
+              id="lightingBtn"
+              class="mini-btn active"
+              title="Toggle scene lighting"
+            >ON</button>
+          </div>
+
+          <div class="slider-label">
+            <span>Intensity</span>
+            <span id="lightValue">2.0</span>
+          </div>
+
+          <input
+            id="lightSlider"
+            type="range"
+            min="0"
+            max="3"
+            step="0.1"
+            value="2"
+            title="Adjust light intensity"
+          />
+
+          <div class="visual-control-header" style="margin-top: 14px;">
+            <span>Terrain Measurement</span>
+            <button
+              id="measureBtn"
+              class="mini-btn"
+              title="Measure distance between two terrain points"
+            >OFF</button>
+          </div>
+
+          <div class="visual-control-help">
+            Click two points on the terrain to measure distance.
+          </div>
+
+        </div>
+      </section>
+
+      <!-- INTERACTIVE ROUTE PLANNING -->
+      <section class="sidebar-section">
+        <div class="section-header">
+          <span class="section-title">Route Planning</span>
+          <span class="section-badge" id="routeWaypointsBadge">0 Pts</span>
+        </div>
+
+        <div class="control-grid-2">
+          <button class="tool-btn btn-route-draw" id="drawRouteBtn" title="Click terrain to place waypoints">
+            ✎ Draw Route
+          </button>
+          <button class="tool-btn" id="clearRouteBtn" title="Remove all waypoints and route line">
+            ✕ Clear
+          </button>
+        </div>
+
+        <button class="btn-primary btn-route-fly" id="flyRouteBtn" style="margin-top: 6px;" disabled>
+          <span>✈</span>
+          <span id="flyRouteBtnText">Fly Route</span>
+        </button>
+
+        <div class="route-stats-card">
+          <div class="route-stat-row">
+            <span class="route-stat-label">Waypoints:</span>
+            <span class="route-stat-value" id="routePointsCount">0</span>
+          </div>
+          <div class="route-stat-row">
+            <span class="route-stat-label">Total Distance:</span>
+            <span class="route-stat-value" id="routeDistance">0.0 m</span>
+          </div>
+          <div class="route-stat-row">
+            <span class="route-stat-label">Trajectory:</span>
+            <span class="route-stat-value" id="routeStatus">Inactive</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="sidebar-section" style="margin-top: auto;">
+        <div class="section-header">
+          <span class="section-title">System Status</span>
+        </div>
+
+        <div class="panel-card status-card">
+          <div class="status-indicator-row">
+            <span class="status-dot ready" id="statusDot"></span>
+            <span class="status-text-main" id="systemStatus">Viewer Ready</span>
+          </div>
+          <div class="status-sub" id="fileStatus">
+            Grid initialized. Awaiting satellite imagery.
+          </div>
+        </div>
+      </section>
+
+    </aside>
+
+    <section id="viewer">
+
+      <div id="canvas-container"></div>
+
+      <div id="emptyStateOverlay">
+        <div class="empty-state-card">
+          <div class="empty-state-radar">
+            <div class="empty-state-icon">📡</div>
+          </div>
+          <h2 class="empty-state-title">Upload satellite imagery to generate 3D terrain...</h2>
+          <p class="empty-state-desc">
+            Single-view height estimation backend processes optical satellite textures into 3D elevation GLB meshes.
+          </p>
+          <div class="empty-state-actions">
+            <button class="empty-btn-upload" id="emptyUploadTrigger">Select Imagery</button>
+            <button class="empty-btn-demo" id="emptyDemoTrigger">Load Sample Terrain</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="comparisonPiP">
+        <div class="pip-header">
+          <div class="pip-title-group">
+            <span class="pip-badge">2D</span>
+            <span class="pip-title">Optical Texture</span>
+          </div>
+          <div class="pip-controls">
+            <button class="pip-btn" id="pipMinimizeBtn" title="Minimize PiP">_</button>
+            <button class="pip-btn" id="pipCloseBtn" title="Close PiP">×</button>
+          </div>
+        </div>
+
+        <div class="pip-body">
+          <img id="pipImage" src="" alt="Optical Source" style="display: none;" />
+          <div class="pip-placeholder" id="pipPlaceholder">
+            <span>📷</span>
+            <span>No 2D imagery loaded</span>
+          </div>
+        </div>
+
+        <div class="pip-footer">
+          <span id="pipFilename">Awaiting upload</span>
+          <span id="pipDimensions">—</span>
+        </div>
+      </div>
+
+      <!-- COMPASS: RESTORED -->
+      <div
+        id="compass-control"
+        title="Reset orientation"
+        aria-label="Compass. Click to reset orientation."
+      >
+        <div class="compass-face">
+          <div class="compass-north">N</div>
+          <div class="compass-arrow"></div>
+        </div>
+      </div>
+
+      <div class="viewer-hud-status">
+        <span class="status-dot ready" id="hudStatusDot"></span>
+        <span id="viewerStatus" style="font-weight: 600; font-size: 11px;">
+          3D VIEWER READY
+        </span>
+        <span class="mode-badge" id="currentModeBadge">ORBIT</span>
+      </div>
+
+      <div id="routeBanner">
+        <span>✦</span>
+        <span>Route Draw Active: Click terrain to place waypoints (Esc to finish)</span>
+      </div>
+
+      <div id="bottom-hud">
+        <div class="hud-pill">
+          Orbit: Left Drag • Pan: Right Drag • Zoom: Scroll • F: Fly Controls
+        </div>
+        <div class="hud-pill">
+          DepthWizard 3D
+        </div>
+      </div>
+
+      <div id="help-panel">
+        <div class="help-title">
+          <span>Viewport Controls</span>
+          <button class="pip-btn" id="closeHelpBtn">×</button>
+        </div>
+
+        <div class="help-row">
+          <span>Orbit Rotation</span>
+          <span class="key-badge">Left Mouse</span>
+        </div>
+        <div class="help-row">
+          <span>Pan View</span>
+          <span class="key-badge">Right Mouse</span>
+        </div>
+        <div class="help-row">
+          <span>Zoom In / Out</span>
+          <span class="key-badge">Scroll Wheel</span>
+        </div>
+        <div class="help-row">
+          <span>Free Fly Mode</span>
+          <span class="key-badge">F Key</span>
+        </div>
+        <div class="help-row">
+          <span>Fly Movement</span>
+          <span class="key-badge">W A S D</span>
+        </div>
+        <div class="help-row">
+          <span>Draw Route</span>
+          <span class="key-badge">Click Terrain</span>
+        </div>
+        <div class="help-row">
+          <span>Exit Draw / Fly</span>
+          <span class="key-badge">Esc</span>
+        </div>
+      </div>
+
+    </section>
+  </main>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
