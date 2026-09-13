@@ -95,7 +95,7 @@ drogon::Task<std::string> PipelineService::executeCalibrationNormalImage(
      }
 }
 
-drogon::Task<std::string> PipelineService::executeCalibration(
+drogon::Task<Json::Value> PipelineService::executeCalibration(
      const drogon::HttpFile& imageFile)
 {
      std::string uuid = drogon::utils::getUuid();
@@ -219,7 +219,12 @@ drogon::Task<std::string> PipelineService::executeCalibration(
          // Total Time
          //auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_upload - start_total).count();
          //std::cout << "[Latency] TOTAL PIPELINE EXECUTION: " << total_ms << " ms\n";
-         co_return minio_url;
+         
+         // New JSON return
+         Json::Value responseJson;
+         responseJson["uuid"] = uuid;
+         responseJson["glb_url"] = minio_url;
+         co_return responseJson; // Make sure to change the method signature in .h to drogon::Task<Json::Value>
      } 
      catch (const std::exception& e) 
      {
@@ -230,7 +235,6 @@ drogon::Task<std::string> PipelineService::executeCalibration(
          throw std::runtime_error(e.what());
      }
 }
-
 
 inline std::vector<float> PipelineService::parseDepthMatrix(const drogon::HttpFile& depthFile) const
 {
