@@ -354,6 +354,23 @@
             "name": "Loader",
             "dependencies": [],
             "config": {}
+        },
+        {
+            "name": "drogon::plugin::CorsPlugin",
+            "dependencies": [],
+            "config": {
+                // Set to true for rapid development (allows any frontend to connect)
+                "allow_all": true,
+                
+                // Allowed HTTP methods
+                "allow_methods": "GET, POST, PUT, DELETE, OPTIONS",
+                
+                // Allowed headers (crucial for your multipart/form-data and JSON requests)
+                "allow_headers": "Content-Type, Authorization, X-Requested-With",
+                
+                // Expose headers if your frontend needs to read specific response headers
+                "expose_headers": "Content-Disposition"
+            }
         }
     ],
     //custom_config: custom configuration for users. This object can be get by the app().getCustomConfig() method. 

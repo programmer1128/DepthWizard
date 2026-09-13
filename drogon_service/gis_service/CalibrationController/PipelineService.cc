@@ -27,7 +27,7 @@ inline void writeJpegCallback(void* context, void* data, int size)
 }
 
 
-drogon::Task<std::string> PipelineService::executeCalibration(
+drogon::Task<Json::Value> PipelineService::executeCalibration(
      const drogon::HttpFile& imageFile)
 {
      std::string uuid = drogon::utils::getUuid();
@@ -151,7 +151,12 @@ drogon::Task<std::string> PipelineService::executeCalibration(
          // Total Time
          //auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_upload - start_total).count();
          //std::cout << "[Latency] TOTAL PIPELINE EXECUTION: " << total_ms << " ms\n";
-         co_return minio_url;
+         
+         // New JSON return
+         Json::Value responseJson;
+         responseJson["uuid"] = uuid;
+         responseJson["glb_url"] = minio_url;
+         co_return responseJson; // Make sure to change the method signature in .h to drogon::Task<Json::Value>
      } 
      catch (const std::exception& e) 
      {
@@ -342,7 +347,7 @@ inline std::vector<uint8_t> PipelineService::extractJpegTexture(
         GDALRasterBand* band = poDS->GetRasterBand(srcB);
         
         // Read the band as 8-bit bytes
-        band->RasterIO(GF_Read, 0, 0, width, height, bandData.data(), width, height, GDT_Byte, 0, 0);
+        (void)band->RasterIO(GF_Read, 0, 0, width, height, bandData.data(), width, height, GDT_Byte, 0, 0);
 
         // Interleave the flat band data into RGB format (e.g., [R,G,B, R,G,B])
         for (int i = 0; i < width * height; ++i) 

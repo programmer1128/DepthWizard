@@ -49,7 +49,8 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(drog
         //  // Copy the raw bytes directly into the vector's memory
         //  std::memcpy(aiDepth.data(), depthFile.fileData(), depthFile.fileLength());
          //Execute the strictly isolated C++ GIS Pipeline
-         std::string saved_file = co_await PipelineService().executeCalibration(
+         //Execute the strictly isolated C++ GIS Pipeline
+         Json::Value pipelineResult = co_await PipelineService().executeCalibration(
                  imageFile
              );
 
@@ -57,7 +58,10 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(drog
          Json::Value success;
          success["status"] = "success";
          success["message"] = "Pipeline completed successfully.";
-         success["saved_file"] = saved_file;
+         
+         // Extract the values from the pipeline result and send them to the frontend
+         success["uuid"] = pipelineResult["uuid"].asString();
+         success["glb_url"] = pipelineResult["glb_url"].asString();
 
          co_return drogon::HttpResponse::newHttpJsonResponse(success);
 
