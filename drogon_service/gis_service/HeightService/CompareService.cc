@@ -62,20 +62,21 @@ std::vector<float> CompareService::extractGeneratedMatrix(const GDALDatasetPtr& 
                                                           int width, 
                                                           int height) 
 {
-    GDALRasterBand* band = hGeneratedDS->GetRasterBand(1);
+     GDALRasterBand* band = hGeneratedDS->GetRasterBand(1);
     
-    int hasNoData = 0;
-    double noDataValue = band->GetNoDataValue(&hasNoData);
+     int hasNoData = 0;
+     double noDataValue = band->GetNoDataValue(&hasNoData);
 
-    std::vector<float> matrix(width * height);
+     std::vector<float> matrix(width * height);
 
-    CPLErr err = band->RasterIO(GF_Read, 0, 0, width, height, 
+     CPLErr err = band->RasterIO(GF_Read, 0, 0, width, height, 
                                 matrix.data(), width, height, 
                                 GDT_Float32, 0, 0);
     
-    if (err != CE_None) {
-        throw std::runtime_error("CompareService: Failed to read Generated DEM pixels.");
-    }
+     if (err != CE_None) 
+     {
+         throw std::runtime_error("CompareService: Failed to read Generated DEM pixels.");
+     }
 
     // NoData masking: Convert to NaN to ensure they are ignored in math
     if (hasNoData) {
@@ -84,11 +85,13 @@ std::vector<float> CompareService::extractGeneratedMatrix(const GDALDatasetPtr& 
         float* ptr = matrix.data();
         size_t total = matrix.size();
 
-        for (size_t i = 0; i < total; ++i) {
-            if (ptr[i] == void_val) {
-                ptr[i] = nan_val;
-            }
-        }
+         for (size_t i = 0; i < total; ++i) 
+         {
+             if (ptr[i] == void_val) 
+             {
+                 ptr[i] = nan_val;
+             }
+         }
     }
 
     return matrix;
