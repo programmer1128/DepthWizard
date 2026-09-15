@@ -683,6 +683,14 @@ export function clearRoute() {
 
     updateRouteUI();
 
+    // Add this block to reset the draw button visually
+    if (dom.drawRouteBtn) {
+        dom.drawRouteBtn.classList.remove('active');
+    }
+
+    if (dom.routeDistance) {
+        dom.routeDistance.textContent = '0.00 m';
+    }
 
     if (dom.routeDistance) {
         dom.routeDistance.textContent =

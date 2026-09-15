@@ -156,6 +156,9 @@ export const dom = {
     // Visualization / lighting
     // --------------------------------------------------------
 
+    heatmapBtn:
+        document.getElementById('heatmapBtn'), // <--- ADD THIS LINE
+        
     lightingBtn:
         document.getElementById('lightingBtn'),
 

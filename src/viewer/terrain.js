@@ -232,6 +232,48 @@ export function loadTerrainGLB(url) {
 
                 model.updateMatrixWorld(true);
 
+                // --------------------------------------------
+                // GENERATE 3D ELEVATION HEAT MAP DATA
+                // --------------------------------------------
+                model.traverse((child) => {
+                    if (child.isMesh && child.geometry) {
+                        
+                        // Calculate min/max height
+                        child.geometry.computeBoundingBox();
+                        const minY = child.geometry.boundingBox.min.y;
+                        const maxY = child.geometry.boundingBox.max.y;
+                        const range = maxY - minY || 1;
+
+                        const positions = child.geometry.attributes.position;
+                        const colors = [];
+                        const color = new THREE.Color();
+
+                        // Map Y height to Blue->Red Hue
+                        for (let i = 0; i < positions.count; i++) {
+                            const y = positions.getY(i);
+                            const normalized = (y - minY) / range;
+                            const hue = (1.0 - normalized) * 0.66; 
+                            color.setHSL(hue, 1.0, 0.5);
+                            colors.push(color.r, color.g, color.b);
+                        }
+
+                        child.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+                        
+                        // Save the original satellite material
+                        child.userData.originalMaterial = child.material;
+                        
+                        // Create a dedicated heatmap material
+                        child.userData.heatmapMaterial = new THREE.MeshStandardMaterial({
+                            vertexColors: true,
+                            roughness: 0.8,
+                            metalness: 0.1
+                        });
+
+                        // Apply based on current state
+                        child.material = state.heatmapEnabled ? child.userData.heatmapMaterial : child.userData.originalMaterial;
+                    }
+                });
+
             // ------------------------------------------------
             // Recalculate bounds
             // after centering
@@ -505,4 +547,22 @@ export function clearTerrain() {
     setFileStatus(
         'No terrain mesh loaded.'
     );
+}
+
+// ============================================================
+// TOGGLE HEATMAP MATERIAL
+// ============================================================
+
+export function updateTerrainHeatmap() {
+    if (!state.terrainModel) {
+        return;
+    }
+
+    state.terrainModel.traverse((child) => {
+        if (child.isMesh && child.userData.originalMaterial && child.userData.heatmapMaterial) {
+            child.material = state.heatmapEnabled 
+                ? child.userData.heatmapMaterial 
+                : child.userData.originalMaterial;
+        }
+    });
 }

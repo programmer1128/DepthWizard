@@ -23,8 +23,14 @@ import {
     toggleGrid
 } from '../viewer/lighting.js';
 
+// ---> ADD THIS IMPORT <---
+import {
+    updateTerrainHeatmap
+} from '../viewer/terrain.js';
+
 import {
     startRouteDrawing,
+    stopRouteDrawing, // <-- Add this
     clearRoute,
     startRouteFlythrough
 } from '../features/route.js';
@@ -89,13 +95,42 @@ function handleLightSlider(event) {
 
 }
 
+function handleHeatmapClick() {
+    // Toggle the state
+    state.heatmapEnabled = !state.heatmapEnabled;
+    
+    // Update the UI button styling and text
+    if (dom.heatmapBtn) {
+        if (state.heatmapEnabled) {
+            dom.heatmapBtn.classList.add('active-green');
+            dom.heatmapBtn.textContent = 'ON';
+        } else {
+            dom.heatmapBtn.classList.remove('active-green');
+            dom.heatmapBtn.textContent = 'OFF';
+        }
+    }
+    
+    // Apply the material swap to the 3D model
+    updateTerrainHeatmap();
+}
+
 
 // ============================================================
 // ROUTE
 // ============================================================
 
 function handleDrawRouteClick() {
-    startRouteDrawing();
+    if (state.isDrawingRoute) {
+        stopRouteDrawing();
+        if (dom.drawRouteBtn) {
+            dom.drawRouteBtn.classList.remove('active');
+        }
+    } else {
+        startRouteDrawing();
+        if (dom.drawRouteBtn) {
+            dom.drawRouteBtn.classList.add('active');
+        }
+    }
 }
 
 
@@ -234,6 +269,14 @@ export function initControlsUI() {
     // --------------------------------------------------------
     // Lighting
     // --------------------------------------------------------
+
+    // ---> ADD THIS EVENT LISTENER <---
+    if (dom.heatmapBtn) {
+        dom.heatmapBtn.addEventListener(
+            'click',
+            handleHeatmapClick
+        );
+    }
 
     if (dom.lightingBtn) {
         dom.lightingBtn.addEventListener(

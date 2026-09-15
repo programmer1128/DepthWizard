@@ -77,8 +77,8 @@ scene.add(
 export const gridHelper = new THREE.GridHelper(
     CONFIG.GRID_SIZE,
     CONFIG.GRID_DIVISIONS,
-    0x38bdf8,
-    0x242d3d
+    0xffffff, // Center line color (Pure White)
+    0x8a9bb2  // Grid line color (Soft Light Blue-Gray)
 );
 
 gridHelper.position.y = 0;

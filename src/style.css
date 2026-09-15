@@ -722,25 +722,24 @@ input:checked + .slider:before {
   min-height: 0; 
   background: linear-gradient(
     to bottom,
-    #79bde8 0%,
-    #b9ddf2 55%,
-    #e8f3f8 100%
-    );
+    #050b14 0%,
+    #0a192f 55%,
+    #112240 100%
+  );
   overflow: hidden; 
-} 
+}
 
 #canvas-container {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
-     background:
-        linear-gradient(
-            180deg,
-            #87CEEB 0%,
-            #BFE8F7 45%,
-            #EAF7FA 100%
-        );
+    background: linear-gradient(
+        180deg,
+        #050b14 0%,
+        #0a192f 55%,
+        #112240 100%
+    );
     overflow: hidden;
 }
 
@@ -1193,7 +1192,23 @@ style.css
    ============================================================ */
 .visual-control { padding: 12px; }
 .visual-control-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; font-size:11px; color:var(--text-primary); }
-.mini-btn { padding:4px 9px; border:1px solid rgba(88,183,255,.35); border-radius:6px; background:rgba(88,183,255,.10); color:var(--accent-cyan); font-size:9px; font-weight:700; cursor:pointer; }
+.mini-btn { 
+  padding:4px 9px; 
+  border:1px solid rgba(88,183,255,.35); 
+  border-radius:6px; 
+  background:rgba(88,183,255,.10); 
+  color:var(--accent-cyan); 
+  font-size:9px; 
+  font-weight:700; 
+  cursor:pointer; 
+}
+/* ADD THIS NEW CLASS FOR THE GREEN 'ON' STATE */
+.mini-btn.active-green {
+  border-color: rgba(16, 185, 129, 0.5);
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--success); /* Uses your existing green success variable */
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.2);
+}
 .slider-label { display:flex; justify-content:space-between; margin-bottom:7px; color:var(--text-muted); font-size:10px; }
 #lightSlider { width:100%; accent-color:var(--accent-cyan); }
 .coordinate-card { padding:10px 12px; }
