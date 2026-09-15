@@ -71,7 +71,16 @@ drogon::Task<std::vector<uint8_t>> ReferenceDemService::fetchReference(
         auto resp = co_await client->sendRequestCoro(req);
         if (resp->statusCode() != 200) 
         {
-            throw std::runtime_error("ISRO Bhuvan WCS Failed with status: " + std::to_string(resp->statusCode()));
+            std::string errorBody(resp->body().data(), resp->body().length());
+            throw std::runtime_error("ISRO Bhuvan WCS Failed with status: " + std::to_string(resp->statusCode()) + " | Reason: " + errorBody);
+        }
+
+        // ADD THIS CHECK:
+        std::string responseString(resp->body().data(), resp->body().length());
+        if (responseString.find("ServiceException") != std::string::npos || 
+            responseString.find("<?xml") != std::string::npos) 
+        {
+            throw std::runtime_error("ISRO Bhuvan WCS returned an XML error instead of a TIFF: " + responseString);
         }
         
         co_return std::vector<uint8_t>(
