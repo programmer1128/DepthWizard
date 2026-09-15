@@ -176,6 +176,132 @@ function setRouteStatus(message) {
 
 }
 
+// Add this at the top of the file (or right above the function) to cache the points
+let routeProfilePoints = [];
+
+// ============================================================
+// DRAW ELEVATION PROFILE CHART (WITH LIVE TRACKING)
+// ============================================================
+function drawElevationProfile(points, currentProgress = null) {
+    const container = document.getElementById('elevationChartContainer');
+    const canvas = document.getElementById('elevationChart');
+    
+    if (!container || !canvas || points.length < 2) {
+        if (container) container.style.display = 'none';
+        return;
+    }
+    
+    routeProfilePoints = points;
+    container.style.display = 'block';
+    
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    ctx.clearRect(0, 0, width, height);
+    
+    // 1. Calculate physical distances for accurate X-axis spacing
+    const distances = [0];
+    let totalDist = 0;
+    for (let i = 1; i < points.length; i++) {
+        totalDist += points[i].distanceTo(points[i - 1]);
+        distances.push(totalDist);
+    }
+    
+    // Find absolute Min and Max heights
+    let minY = Infinity, maxY = -Infinity;
+    points.forEach(p => {
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+    });
+    
+    const rangeY = (maxY - minY) || 1;
+    const padding = 5; 
+    const drawHeight = height - (padding * 2);
+    
+    // Helper to get exact canvas coordinates for any waypoint
+    const getCanvasCoords = (index) => {
+        const x = totalDist === 0 ? 0 : (distances[index] / totalDist) * width;
+        const normalizedY = (points[index].y - minY) / rangeY;
+        const y = height - padding - (normalizedY * drawHeight);
+        return { x, y };
+    };
+
+    // 2. Draw Filled Gradient Polygon
+    ctx.beginPath();
+    ctx.moveTo(0, height);
+    points.forEach((_, i) => {
+        const { x, y } = getCanvasCoords(i);
+        ctx.lineTo(x, y);
+    });
+    ctx.lineTo(width, height);
+    ctx.closePath();
+    
+    const grad = ctx.createLinearGradient(0, 0, 0, height);
+    grad.addColorStop(0, 'rgba(56, 189, 248, 0.4)');
+    grad.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+    ctx.fillStyle = grad;
+    ctx.fill();
+    
+    // 3. Draw Top Crisp Line
+    ctx.beginPath();
+    points.forEach((_, i) => {
+        const { x, y } = getCanvasCoords(i);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // 4. DRAW LIVE TRACKING DOT (Mathematically locked to the line)
+    if (currentProgress !== null) {
+        // Prevent floating point overshoot
+        const targetDist = Math.min(Math.max(currentProgress * totalDist, 0), totalDist);
+        let segIdx = 0;
+
+        // Find which line segment the dot is currently on
+        for (let i = 0; i < distances.length - 1; i++) {
+            if (targetDist >= distances[i] && targetDist <= distances[i + 1]) {
+                segIdx = i;
+                break;
+            }
+        }
+
+        const d1 = distances[segIdx];
+        const d2 = distances[segIdx + 1];
+        const segmentProgress = (d2 === d1) ? 0 : (targetDist - d1) / (d2 - d1);
+
+        const p1 = getCanvasCoords(segIdx);
+        const p2 = getCanvasCoords(segIdx + 1);
+
+        // Interpolate exact 2D canvas coordinates
+        const dotX = p1.x + (p2.x - p1.x) * segmentProgress;
+        const dotY = p1.y + (p2.y - p1.y) * segmentProgress;
+
+        // Draw outer red glow
+        ctx.beginPath();
+        ctx.arc(dotX, dotY, 6, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.4)';
+        ctx.fill();
+
+        // Draw solid red core
+        ctx.beginPath();
+        ctx.arc(dotX, dotY, 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#ef4444';
+        ctx.fill();
+        
+        // Draw vertical tracking line
+        ctx.beginPath();
+        ctx.moveTo(dotX, dotY + 4);
+        ctx.lineTo(dotX, height);
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 2]); // Dotted line
+        ctx.stroke();
+        ctx.setLineDash([]); // Reset
+    }
+}
+
 
 // ============================================================
 // ADD WAYPOINT
@@ -558,6 +684,9 @@ export async function updateRouteLine() {
     }
 
 
+    // Call the chart drawer
+    drawElevationProfile(finalPoints);
+
     setRouteStatus(
         'Route ready'
     );
@@ -710,6 +839,8 @@ export function clearRoute() {
     }
 
 
+    drawElevationProfile([]); // Clears and hides the chart
+
     setReadyStatus(
         'Route cleared'
     );
@@ -824,6 +955,8 @@ export function stopRouteFlythrough() {
             : 'No route'
     );
 
+    // Redraw the chart without the progress parameter to remove the dot
+    drawElevationProfile(routeProfilePoints);
 }
 
 
@@ -896,6 +1029,8 @@ export function updateRouteFlythrough(delta) {
         lookAtPoint.z
     );
 
+    // Update chart with live progress indicator
+    drawElevationProfile(routeProfilePoints, state.flyProgress);
 }
 
 

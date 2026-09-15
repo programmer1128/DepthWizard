@@ -162,13 +162,10 @@
           </button>
         </div>
 
-        <div class="control-grid-2" style="margin-top: 6px;">
-          <button class="tool-btn" id="resetBtn" title="Reset camera to default view">
-            ↻ Reset View
-          </button>
-          <button class="tool-btn active" id="gridBtn" title="Toggle ground reference grid">
-            ▦ Grid On
-          </button>
+        <div class="control-grid-3" style="margin-top: 6px;">
+          <button class="tool-btn" id="resetBtn" title="Reset view">↻ Reset</button>
+          <button class="tool-btn active" id="gridBtn" title="Toggle grid">▦ Grid</button>
+          <button class="tool-btn" id="autoRotateBtn" title="Toggle auto rotation">⟳ Auto</button>
         </div>
       </section>
 
@@ -182,7 +179,7 @@
         <div class="panel-card visual-control-card">
 
           <div class="visual-control-header">
-            <span>Light Intensity</span>
+            <span>Time of Day (Sun)</span>
             <button
               id="lightingBtn"
               class="mini-btn active"
@@ -191,18 +188,18 @@
           </div>
 
           <div class="slider-label">
-            <span>Intensity</span>
-            <span id="lightValue">2.0</span>
+            <span>Time</span>
+            <span id="lightValue">12:00</span>
           </div>
 
           <input
             id="lightSlider"
             type="range"
-            min="0"
-            max="3"
-            step="0.1"
-            value="2"
-            title="Adjust light intensity"
+            min="6"
+            max="18"
+            step="0.25"
+            value="12"
+            title="Adjust sun position (6:00 AM to 6:00 PM)"
           />
 
           <div class="visual-control-header" style="margin-top: 14px;">
@@ -216,11 +213,9 @@
 
           <div class="visual-control-header" style="margin-top: 14px;">
             <span>Elevation Heatmap</span>
-            <button
-              id="heatmapBtn"
-              class="mini-btn"
-              title="Toggle 3D elevation heatmap"
-            >OFF</button>
+            <button class="tool-btn" id="heatmapBtn" style="width: 100%; margin: 15px 0 10px; padding: 10px; font-size: 12px;">
+             🌡️ Toggle Elevation Heatmap
+            </button>
           </div>
 
         </div>
@@ -259,6 +254,12 @@
           <div class="route-stat-row">
             <span class="route-stat-label">Trajectory:</span>
             <span class="route-stat-value" id="routeStatus">Inactive</span>
+          </div>
+
+          <!-- NEW: Elevation Profile Chart -->
+          <div id="elevationChartContainer" style="display: none; margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 12px;">
+             <div style="font-size: 9px; color: var(--text-secondary); font-weight: 700; margin-bottom: 6px; letter-spacing: 0.5px;">ELEVATION PROFILE</div>
+             <canvas id="elevationChart" width="240" height="50" style="width: 100%; height: 50px; background: rgba(0,0,0,0.25); border-radius: 4px; border: 1px solid rgba(255,255,255,0.05);"></canvas>
           </div>
         </div>
       </section>
@@ -327,15 +328,18 @@
         </div>
       </div>
 
-      <!-- COMPASS: RESTORED -->
-      <div
-        id="compass-control"
-        title="Reset orientation"
-        aria-label="Compass. Click to reset orientation."
-      >
+      <!-- COMPASS: PROFESSIONAL GIS -->
+      <div id="compass-control" title="Reset orientation to North" aria-label="Compass">
         <div class="compass-face">
-          <div class="compass-north">N</div>
-          <div class="compass-arrow"></div>
+          <div class="compass-label compass-north">N</div>
+          <div class="compass-label compass-east">E</div>
+          <div class="compass-label compass-south">S</div>
+          <div class="compass-label compass-west">W</div>
+          <div class="compass-center-dot"></div>
+          <!-- NEW: Arrow is now wrapped in a rotating container -->
+          <div class="compass-arrow-container">
+            <div class="compass-arrow"></div>
+          </div>
         </div>
       </div>
 

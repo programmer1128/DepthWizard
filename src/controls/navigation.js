@@ -35,7 +35,7 @@ orbitControls.target.set(0, 0, 0);
 
 // IMPORTANT:
 // Original viewer behavior = Orbit mode automatically rotates.
-orbitControls.autoRotate = true;
+orbitControls.autoRotate = false;
 orbitControls.autoRotateSpeed = 0.8;
 
 
@@ -63,15 +63,12 @@ let interactionTimeout = null;
 // ============================================================
 
 function enableAutoRotateAfterDelay(delay = 2500) {
-
     clearTimeout(interactionTimeout);
-
     interactionTimeout = setTimeout(() => {
-
-        if (!state.flyMode && !state.isFlyingRoute) {
+        // ONLY rotate if the user has the feature enabled
+        if (!state.flyMode && !state.isFlyingRoute && state.autoRotateEnabled) {
             orbitControls.autoRotate = true;
         }
-
     }, delay);
 }
 
@@ -124,7 +121,7 @@ export function setOrbitMode() {
 
     // Original behavior:
     // Orbit mode automatically rotates.
-    orbitControls.autoRotate = true;
+    orbitControls.autoRotate = state.autoRotateEnabled;
 
     setModeStatus('orbit');
 
@@ -277,13 +274,12 @@ export function updateCompass(force = false) {
 
     camera.getWorldDirection(direction);
 
-    const angle = Math.atan2(
-        direction.x,
-        direction.z
-    );
+    // Correct GIS Math: 
+    // North (-Z) = 0deg (Up), East (+X) = 90deg (Right)
+    const angle = Math.atan2(direction.x, -direction.z);
 
-    dom.compassFace.style.transform =
-        `rotate(${angle}rad)`;
+    // Rotate the arrow container, NOT the face
+    dom.compassArrowContainer.style.transform = `rotate(${angle}rad)`;
 }
 
 
@@ -369,7 +365,7 @@ export function initNavigation() {
     state.flyMode = false;
 
     orbitControls.enabled = true;
-    orbitControls.autoRotate = true;
+    orbitControls.autoRotate = false;
 
     flyControls.enabled = false;
 

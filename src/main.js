@@ -41,7 +41,7 @@ import {
 import {
     initLighting,
     setLightingEnabled,
-    setLightIntensity,
+    setTimeOfDay,
     setGridVisible
 } from './viewer/lighting.js';
 
@@ -204,7 +204,7 @@ function initializeApplication() {
     state.gridVisible = true;
 
     setLightingEnabled(true);
-    setLightIntensity(2.0);
+    setTimeOfDay(12);
     setGridVisible(true);
 
     setModeStatus('orbit');

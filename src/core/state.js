@@ -35,8 +35,8 @@ export const state = {
 
     lightingEnabled: true,
     gridVisible: true,
-    heatmapEnabled: false, // <--- ADD THIS LINE
-
+    heatmapEnabled: false,
+    autoRotateEnabled: false,
 
     // ----------------------------------------------------------
     // Route system

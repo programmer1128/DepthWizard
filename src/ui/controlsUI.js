@@ -10,7 +10,8 @@ import {
     toggleNavigationMode,
     setOrbitMode,
     setFlyMode,
-    resetCamera
+    resetCamera,
+    orbitControls
 } from '../controls/navigation.js';
 
 import {
@@ -19,7 +20,7 @@ import {
 
 import {
     toggleLighting,
-    setLightIntensity,
+    setTimeOfDay,
     toggleGrid
 } from '../viewer/lighting.js';
 
@@ -49,6 +50,16 @@ function handleFlyClick() {
     setFlyMode();
 }
 
+function handleAutoRotateClick() {
+    state.autoRotateEnabled = !state.autoRotateEnabled;
+    
+    if (dom.autoRotateBtn) {
+        dom.autoRotateBtn.classList.toggle('active', state.autoRotateEnabled);
+    }
+    
+    // Immediately apply to the camera
+    orbitControls.autoRotate = state.autoRotateEnabled && !state.flyMode && !state.isFlyingRoute;
+}
 
 function handleNavigationToggle() {
     toggleNavigationMode();
@@ -87,15 +98,13 @@ function handleLightingClick() {
 }
 
 
-function handleLightSlider(event) {
-
+function handleLightSlider(event) 
+{
     const value = Number(event.target.value);
-
-    setLightIntensity(value);
-
+    setTimeOfDay(value);
 }
 
-function handleHeatmapClick() {
+/*function handleHeatmapClick() {
     // Toggle the state
     state.heatmapEnabled = !state.heatmapEnabled;
     
@@ -111,6 +120,17 @@ function handleHeatmapClick() {
     }
     
     // Apply the material swap to the 3D model
+    updateTerrainHeatmap();
+}*/
+
+function handleHeatmapClick() {
+    state.heatmapEnabled = !state.heatmapEnabled;
+    
+    // Highlight the big button in cyan when active
+    if (dom.heatmapBtn) {
+        dom.heatmapBtn.classList.toggle('active', state.heatmapEnabled);
+    }
+    
     updateTerrainHeatmap();
 }
 
@@ -204,6 +224,11 @@ export function initControlsUI() {
     // --------------------------------------------------------
     // Navigation
     // --------------------------------------------------------
+
+    if (dom.autoRotateBtn) 
+    {
+        dom.autoRotateBtn.addEventListener('click', handleAutoRotateClick);
+    }
 
     if (dom.orbitBtn) {
         dom.orbitBtn.addEventListener(

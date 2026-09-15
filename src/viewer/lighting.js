@@ -132,29 +132,43 @@ function updateLightValue() {
 
 
 // ============================================================
-// APPLY LIGHT INTENSITY
+// APPLY TIME OF DAY (SUN DYNAMICS)
 // ============================================================
 
-export function setLightIntensity(value) {
+export function setTimeOfDay(hours) {
 
-    const intensity = Math.max(
-        0,
-        Math.min(3, Number(value))
-    );
-
-    if (!Number.isFinite(intensity)) {
-        return;
+    // Clamp between 6.0 (6 AM) and 18.0 (6 PM)
+    const time = Math.max(6, Math.min(18, Number(hours)));
+    
+    // Map 6..18 to an angle from 0 to PI (180 degrees)
+    const angle = ((time - 6) / 12) * Math.PI;
+    
+    // 1. Calculate Sun Position over the terrain
+    const radius = 1000;
+    const sunX = Math.cos(angle) * -radius;
+    const sunY = Math.sin(angle) * radius;
+    const sunZ = Math.cos(angle) * 300; // Slight tilt on Z axis
+    
+    directionalLight.position.set(sunX, sunY, sunZ);
+    
+    // 2. Calculate Brightness (peaks at noon / PI/2)
+    const intensityMultiplier = Math.max(0.1, Math.sin(angle));
+    directionalLight.intensity = intensityMultiplier * 2.8;
+    ambientLight.intensity = 0.6 + (intensityMultiplier * 1.0);
+    
+    // 3. Calculate Color Temperature
+    // Warm orange/yellow at dawn/dusk, crisp white at midday
+    const color = new THREE.Color();
+    const isNoon = Math.sin(angle);
+    color.setHSL(0.1 + (isNoon * 0.05), 1.0 - (isNoon * 0.5), 0.5 + (isNoon * 0.5));
+    directionalLight.color = color;
+    
+    // 4. Update UI Text (HH:MM format)
+    if (dom.lightValue) {
+        const h = Math.floor(time);
+        const m = Math.floor((time - h) * 60).toString().padStart(2, '0');
+        dom.lightValue.textContent = `${h}:${m}`;
     }
-
-    lightIntensity = intensity;
-
-    // IMPORTANT:
-    // The original brightness slider directly controlled
-    // the directional light intensity.
-    directionalLight.intensity = lightIntensity;
-
-    updateLightValue();
-
 }
 
 
@@ -259,17 +273,7 @@ export function initLighting() {
     state.lightingEnabled = true;
     state.gridVisible = true;
 
-    lightIntensity = 2.0;
-
-    // Apply defaults
-    setLightIntensity(lightIntensity);
-
-    setLightingEnabled(
-        state.lightingEnabled
-    );
-
-    setGridVisible(
-        state.gridVisible
-    );
-
+    setTimeOfDay(12); // Start at Noon
+    setLightingEnabled(state.lightingEnabled);
+    setGridVisible(state.gridVisible);
 }

@@ -146,6 +146,9 @@ export const dom = {
     resetBtn:
         document.getElementById('resetBtn'),
 
+    autoRotateBtn:
+        document.getElementById('autoRotateBtn'),
+
     gridBtn:
         document.getElementById('gridBtn'),
 
@@ -221,6 +224,9 @@ export const dom = {
 
     compassControl:
         document.getElementById('compass-control'),
+
+    compassArrowContainer:
+        document.querySelector('.compass-arrow-container'),
 
     compassFace:
         document.querySelector('.compass-face'),
