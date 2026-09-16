@@ -2,7 +2,7 @@
 
 #include <vector>
 #include <cstdint>
-#include "../utils/QuadTreeTypes.h"
+#include "../structures/QuadTreeTypes.h"
 
 class QuadTreeBuilder
 {
