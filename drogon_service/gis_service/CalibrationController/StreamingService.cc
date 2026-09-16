@@ -1,7 +1,7 @@
 #include "StreamingService.h"
 #include "../QuadTreeBuilder/QuadTreeBuilder.h"
 #include "../StreamingGLB/GlbFactory.h"
-#include "OgcIndexer.h"
+#include "../StreamingGLB/OgcIndexer.h"
 #include <iostream>
 #include <stdexcept>
 
