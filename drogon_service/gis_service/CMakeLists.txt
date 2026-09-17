@@ -52,9 +52,7 @@ file(GLOB COMPRESSOR CONFIGURE_DEPENDS "CompressionLib/*.cc" "CompressionLib/*.c
 file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cpp")
 file(GLOB STRUCTURES CONFIGURE_DEPENDS "structures/*.cc" "structures/*.cpp" "structures/*.h")
 file(GLOB_RECURSE IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp")
-file(GLOB STREAMING_GLB CONFIGURE_DEPENDS "StreamingGLB/*.cc" "StreamingGLB/*.cpp")
-file(GLOB QUAD_TREE_BUILDER CONFIGURE_DEPENDS "QuadTreeBuilder/*.cc" "QuadTreeBuilder/*.cpp")
-
+file(GLOB HEIGHT_SERVICE CONFIGURE_DEPENDS "HeightService/*.cc" "HeightService/*.cpp")
 
 #COMPILER OPTIMIZATIONS (Release Mode)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -90,8 +88,7 @@ target_sources(${PROJECT_NAME}
                ${TILING_HANN_ASSEMBLER}
                ${IMAGE_TILER}
                ${STRUCTURES}
-               ${STREAMING_GLB}
-               ${QUAD_TREE_BUILDER})
+               ${HEIGHT_SERVICE})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -115,9 +112,7 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/GraphOrdering
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/HannAssembler
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/TilingOLS
-                           ${CMAKE_CURRENT_SOURCE_DIR}/StreamingGLB
-                           ${CMAKE_CURRENT_SOURCE_DIR}/QuadTreeBuilder
-                           ${OpenCV_INCLUDE_DIRS}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/HeightService
                            ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
 
 

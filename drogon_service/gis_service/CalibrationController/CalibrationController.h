@@ -16,10 +16,14 @@ class CalibrationController : public drogon::HttpController<CalibrationControlle
 
     ADD_METHOD_TO(CalibrationController::processTerrain, "/api/v1/processor", drogon::Post);
 
+    ADD_METHOD_TO(CalibrationController::processNormalImageForTerrain, "/api/v1/processor/normal-image", drogon::Post);
+
     METHOD_LIST_END
     // your declaration of processing function maybe like this:
     // void get(const HttpRequestPtr& req, std::function<void (const HttpResponsePtr &)> &&callback, int p1, std::string p2);
     // void your_method_name(const HttpRequestPtr& req, std::function<void (const HttpResponsePtr &)> &&callback, double p1, int p2) const;
 
     drogon::Task<drogon::HttpResponsePtr>processTerrain(drogon::HttpRequestPtr req);
+
+    drogon::Task<drogon::HttpResponsePtr>processNormalImageForTerrain(drogon::HttpRequestPtr req);
 };

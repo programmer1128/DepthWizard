@@ -1,3 +1,4 @@
 .vscode/
 drogon_service/gis_service/build/
 minio_data/
+test_files/

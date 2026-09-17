@@ -10,67 +10,131 @@
 
 drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(drogon::HttpRequestPtr req)
 {
-     drogon::MultiPartParser fileUpload;
-    
-     if (fileUpload.parse(req) != 0) 
-     {
-         Json::Value error;
-         error["status"] = "error";
-         error["message"] = "Failed to parse multipart request.";
-         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-         resp->setStatusCode(drogon::k400BadRequest);
-         co_return resp; 
-     }
+    drogon::MultiPartParser fileUpload;
 
-     auto files = fileUpload.getFilesMap();
+    if (fileUpload.parse(req) != 0)
+    {
+        Json::Value error;
+        error["status"] = "error";
+        error["message"] = "Failed to parse multipart request.";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k400BadRequest);
+        co_return resp;
+    }
 
-     //Ensure both the image and the test depth matrix were uploaded
-     if (files.find("image") == files.end() || files.find("depth") == files.end()) 
-     {
-         Json::Value error;
-         error["status"] = "error";
-         error["message"] = "Missing files. Please provide both 'image' and 'depth' form fields.";
-         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-         resp->setStatusCode(drogon::k400BadRequest);
-         co_return resp; 
-     }
+    auto files = fileUpload.getFilesMap();
 
-     //Read-only access
-     const auto& imageFile = files.at("image");
-     //const auto& depthFile = files.at("depth");
+    // Ensure both the image and the test depth matrix were uploaded
+    if (files.find("image") == files.end())
+    {
+        Json::Value error;
+        error["status"] = "error";
+        error["message"] = "Missing files. Please provide both 'image' and 'depth' form fields.";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k400BadRequest);
+        co_return resp;
+    }
 
-     try 
-     {
+    // Read-only access
+    const auto &imageFile = files.at("image");
+    // const auto& depthFile = files.at("depth");
+
+    try
+    {
         //  //convert the uploaded depth binary directly into a std::vector<float>
         //  // We calculate how many floats are in the file by dividing byte length by 4 (sizeof float)
         //  size_t floatCount = depthFile.fileLength() / sizeof(float);
         //  std::vector<float> aiDepth(floatCount);
-        
+
         //  // Copy the raw bytes directly into the vector's memory
         //  std::memcpy(aiDepth.data(), depthFile.fileData(), depthFile.fileLength());
-         //Execute the strictly isolated C++ GIS Pipeline
-         std::string saved_file = co_await PipelineService().executeCalibration(
-                 imageFile
-             );
+        // Execute the strictly isolated C++ GIS Pipeline
+        // Execute the strictly isolated C++ GIS Pipeline
+        Json::Value pipelineResult = co_await PipelineService().executeCalibration(
+            imageFile);
 
-         //Return Success
-         Json::Value success;
-         success["status"] = "success";
-         success["message"] = "Pipeline completed successfully.";
-         success["saved_file"] = saved_file;
+        // Return Success
+        Json::Value success;
+        success["status"] = "success";
+        success["message"] = "Pipeline completed successfully.";
 
-         co_return drogon::HttpResponse::newHttpJsonResponse(success);
+        // Extract the values from the pipeline result and send them to the frontend
+        success["uuid"] = pipelineResult["uuid"].asString();
+        success["glb_url"] = pipelineResult["glb_url"].asString();
 
-     } 
-     catch (const std::exception& e) 
-     {
-         Json::Value error;
-         error["status"] = "error";
-         error["message"] = e.what();
-         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-         resp->setStatusCode(drogon::k500InternalServerError);
-         co_return resp;
-     }
+        co_return drogon::HttpResponse::newHttpJsonResponse(success);
+    }
+    catch (const std::exception &e)
+    {
+        Json::Value error;
+        error["status"] = "error";
+        error["message"] = e.what();
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k500InternalServerError);
+        co_return resp;
+    }
+}
+
+drogon::Task<drogon::HttpResponsePtr> CalibrationController::processNormalImageForTerrain(drogon::HttpRequestPtr req)
+{
+    drogon::MultiPartParser fileUpload;
+
+    if (fileUpload.parse(req) != 0)
+    {
+        Json::Value error;
+        error["status"] = "error";
+        error["message"] = "Failed to parse multipart request.";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k400BadRequest);
+        co_return resp;
+    }
+
+    auto files = fileUpload.getFilesMap();
+
+    // Ensure both the image and the test depth matrix were uploaded
+    if (files.find("image") == files.end())
+    {
+        Json::Value error;
+        error["status"] = "error";
+        error["message"] = "Missing files. Please provide image file";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k400BadRequest);
+        co_return resp;
+    }
+
+    // Read-only access
+    const auto &imageFile = files.at("image");
+    // const auto& depthFile = files.at("depth");
+
+    try
+    {
+        //  //convert the uploaded depth binary directly into a std::vector<float>
+        //  // We calculate how many floats are in the file by dividing byte length by 4 (sizeof float)
+        //  size_t floatCount = depthFile.fileLength() / sizeof(float);
+        //  std::vector<float> aiDepth(floatCount);
+
+        //  // Copy the raw bytes directly into the vector's memory
+        //  std::memcpy(aiDepth.data(), depthFile.fileData(), depthFile.fileLength());
+        // Execute the strictly isolated C++ GIS Pipeline
+        std::string saved_file = co_await PipelineService().executeCalibrationNormalImage(imageFile);
+
+        // Return Success
+        Json::Value success;
+        success["status"] = "success";
+        success["message"] = "Pipeline completed successfully.";
+        success["saved_file"] = saved_file;
+
+        co_return drogon::HttpResponse::newHttpJsonResponse(success);
+    }
+    catch (const std::exception &e)
+    {
+        Json::Value error;
+        error["status"] = "error";
+        error["message"] = e.what();
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(drogon::k500InternalServerError);
+        co_return resp;
+    }
 }
 
 // void CalibrationController::processTerrain(const drogon::HttpRequestPtr& req,
@@ -90,7 +154,7 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(drog
 //     }
 
 //     const auto& file = fileUpload.getFiles()[0];
-    
+
 //     // save the uploaded file temporarily to the hard drive
 //     // we generate a UUID so multiple users dont overwrite each other's uploads
 //     std::string temp_file_path = "./temp_upload_" + drogon::utils::getUuid() + ".tif";
@@ -101,7 +165,7 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(drog
 //         // hand over to srtm extractor
 
 //         RasterDatasets datasets = SrtmExtractor::fetchTile(temp_file_path);
-        
+
 //         if (!datasets.hInputDS || !datasets.hDemDS)
 //         {
 //             throw std::runtime_error("Failed to extract datasets from AWS or input image.");
@@ -115,18 +179,18 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(drog
 
 //         std::string output_txt_path = "./final_matrix_" + drogon::utils::getUuid() + ".txt";
 //         std::ofstream outFile(output_txt_path);
-        
+
 //         if (outFile.is_open())
 //         {
 //             outFile << "Final Extracted Float Matrix\n";
 //             outFile << "Total Pixels: " << final_matrix.size() << "\n\n";
-            
+
 //             for (size_t i = 0; i < final_matrix.size(); ++i)
 //             {
 //                 outFile << final_matrix[i] << " ";
 
 //                 // added a line break every 10 numbers to make the text file readable
-//                 if ((i + 1) % 10 == 0) outFile << "\n"; 
+//                 if ((i + 1) % 10 == 0) outFile << "\n";
 //             }
 //             outFile.close();
 //         }
@@ -152,7 +216,7 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(drog
 //         Json::Value error;
 //         error["status"] = "error";
 //         error["message"] = e.what();
-        
+
 //         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
 //         resp->setStatusCode(drogon::k500InternalServerError);
 //         callback(resp);
