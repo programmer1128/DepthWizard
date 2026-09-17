@@ -5,15 +5,8 @@
 #include <drogon/MultiPart.h>
 #include <drogon/drogon.h>
 #include <coroutine>
+#include "../structures/CommonTypes.h"
 
-//data transfer object to hold GDAL spatial context
-struct SpatialMetadata 
-{
-     int width;
-     int height;
-    std::array<double, 6> geoTransform;
-    std::string projectionRef;
-};
 
 class PipelineService 
 {
