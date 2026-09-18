@@ -3,26 +3,49 @@
 #include <optional>
 #include <cstdint>
 
-struct SurfaceBundle 
+// Separated contracts
+struct GeoreferencedSurfaceBundle 
 {
-     RasterGrid<float> DTM;
-     RasterGrid<float> DSM;
-     RasterGrid<float> nDSM;
-     std::optional<RasterGrid<float>> optionalCanopyHeight;
-     RasterGrid<float> surfaceConfidence;
-     RasterGrid<uint8_t> validMask;
-     PipelineMode mode;
-     std::string unitsDatumMetadata;
+    SpatialMetadata spatialMetadata; // One authoritative object
+    RasterGrid<float> dtm;
+    RasterGrid<float> dsm;
+    RasterGrid<float> ndsm;
+    RasterGrid<float> surfaceConfidence;
+    RasterGrid<uint8_t> validMask;
+    ElevationUnit elevationUnit{ElevationUnit::METERS}; 
+    // Mutable isConsistent removed; validation moved to QualityControlService
+};
+
+struct RelativeSurfaceBundle 
+{
+    RasterGrid<float> relativeSurface;
+    RasterGrid<float> normalizedRelativeHeight;
+    RasterGrid<float> surfaceConfidence;
+    RasterGrid<uint8_t> validMask;
 };
 
 struct RasterProductSet 
 {
-     RasterGrid<float> DSM;
-     RasterGrid<float> DTM;
-     RasterGrid<float> nDSM;
-     RasterGrid<float> slope;
-     RasterGrid<float> aspect;
-     RasterGrid<float> hillshade;
-     std::optional<RasterGrid<float>> canopyHeight;
-     RasterGrid<float> confidence;
+    SpatialMetadata spatialMetadata; // Needed for TiffExporter
+    
+    RasterGrid<float> dsm;
+    RasterGrid<float> dtm;
+    RasterGrid<float> ndsm;
+    
+    RasterGrid<float> slope;
+    std::string slopeUnits{"DEGREES"}; // Export semantics
+    
+    RasterGrid<float> aspect;
+    std::string aspectConvention{"CLOCKWISE_FROM_NORTH"}; // Export semantics
+    
+    RasterGrid<float> hillshade;
+    float sunAzimuth{315.0f};     // Export semantics
+    float sunElevation{45.0f};    // Export semantics
+    
+    std::optional<RasterGrid<float>> canopyHeight;
+    RasterGrid<float> confidence;
+    
+    float noDataValue{-9999.0f};  // Explicit NoData representation
+    RasterGrid<uint8_t> validMask;
+    ElevationUnit elevationUnit{ElevationUnit::METERS};
 };
