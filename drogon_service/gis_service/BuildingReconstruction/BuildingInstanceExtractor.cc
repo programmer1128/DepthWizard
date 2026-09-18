@@ -7,10 +7,10 @@
 #include <cstddef>
 
 ComponentExtractionResult BuildingInstanceExtractor::extract(
-    const BuildingMaskResult& maskResult,
-    const SemanticScene& semantics,
-    const SpatialMetadata& metadata,
-    const BuildingReconstructionConfig& config)
+     const BuildingMaskResult& maskResult,
+     const SemanticScene& semantics,
+     const SpatialMetadata& metadata,
+     const BuildingReconstructionConfig& config)
 {
      ComponentExtractionResult result;
 
@@ -83,7 +83,8 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
      }
 
      // Helper to safely allocate the output label raster filled with zeros
-     auto allocateZeroRaster = [&]() {
+     auto allocateZeroRaster = [&]() 
+     {
          result.labelRaster.width = width;
          result.labelRaster.height = height;
          result.labelRaster.data.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);

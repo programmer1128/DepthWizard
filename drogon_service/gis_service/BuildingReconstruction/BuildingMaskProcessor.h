@@ -8,5 +8,5 @@ class BuildingMaskProcessor
      static BuildingMaskResult createCleanMask(
          const SemanticScene& semantics,const RasterGrid<uint8_t>& validMask,
          const SpatialMetadata& metadata,
-        const BuildingReconstructionConfig& config);
+         const BuildingReconstructionConfig& config);
 };

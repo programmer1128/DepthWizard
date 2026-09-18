@@ -14,7 +14,7 @@ struct SceneInput
       int height{0};
       std::vector<uint8_t> rgbTextureBytes;
       std::string textureMimeType; //"image/jpeg" or "image/png"
-      std::optional<SpatialMetadata> spatialMetadata; //optional for non-geo inputs[cite: 8]
+      std::optional<SpatialMetadata> spatialMetadata; //optional for non-geo inputs
       std::string sourceFormat;
 };
 

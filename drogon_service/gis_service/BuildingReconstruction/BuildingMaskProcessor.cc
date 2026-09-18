@@ -4,10 +4,10 @@
 #include <algorithm>
 
 BuildingMaskResult BuildingMaskProcessor::createCleanMask(
-    const SemanticScene& semantics,
-    const RasterGrid<uint8_t>& validMask,
-    const SpatialMetadata& metadata,
-    const BuildingReconstructionConfig& config)
+     const SemanticScene& semantics,
+     const RasterGrid<uint8_t>& validMask,
+     const SpatialMetadata& metadata,
+     const BuildingReconstructionConfig& config)
 {
      BuildingMaskResult result;
 
