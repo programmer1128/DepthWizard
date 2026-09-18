@@ -24,8 +24,8 @@ void MinioClient::initAPI()
     clientConfig.scheme = Aws::Http::Scheme::HTTP;
     clientConfig.region = "us-east-1";
 
-    Aws::Auth::AWSCredentials credentials("9490b5330aebc7f8088a",
-                                          "6z+Xd9fn5ndPHHlNW9jbtK8xF6y9MxfRDW9PQ6ewsrI=");
+    Aws::Auth::AWSCredentials credentials("minioadmin",
+                                          "minioadmin");
 
     // Allocate the client to the global shared pointer
     s_s3Client = Aws::MakeShared<Aws::S3::S3Client>(
