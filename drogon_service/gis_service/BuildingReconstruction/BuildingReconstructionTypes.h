@@ -5,25 +5,10 @@
 #include <cstdint>
 #include <cmath>
 
-struct BuildingReconstructionConfig {
-    float buildingProbabilityThreshold{0.5f};
-    float openingRadiusMetres{2.0f}; 
-    float closingRadiusMetres{3.0f}; 
-    float minBuildingAreaSquareMetres{20.0f}; 
-    int connectivity{4}; 
-    float footprintSimplificationToleranceMetres{0.5f};
 
-    bool validate() const {
-        return std::isfinite(buildingProbabilityThreshold) && buildingProbabilityThreshold >= 0.0f && buildingProbabilityThreshold <= 1.0f &&
-               std::isfinite(openingRadiusMetres) && openingRadiusMetres >= 0.0f &&
-               std::isfinite(closingRadiusMetres) && closingRadiusMetres >= 0.0f &&
-               std::isfinite(minBuildingAreaSquareMetres) && minBuildingAreaSquareMetres >= 0.0f &&
-               std::isfinite(footprintSimplificationToleranceMetres) && footprintSimplificationToleranceMetres >= 0.0f &&
-               (connectivity == 4 || connectivity == 8);
-    }
-};
 
-struct BuildingMaskResult {
+struct BuildingMaskResult 
+{
     bool success{false};
     std::string errorMessage;
     RasterGrid<uint8_t> cleanMask;
@@ -36,14 +21,16 @@ struct BuildingMaskResult {
     std::vector<std::string> warnings;
 };
 
-struct PixelBoundingBox {
+struct PixelBoundingBox 
+{
     int x{0};
     int y{0};
     int width{0};
     int height{0};
 };
 
-struct ComponentStats {
+struct ComponentStats 
+{
     int32_t componentId{0};          // Standardized to int32_t
     int pixelCount{0};                
     PixelBoundingBox pixelBoundingBox;
@@ -55,7 +42,8 @@ struct ComponentStats {
     int32_t _originalLabel{0};       // Standardized to int32_t
 };
 
-struct ComponentExtractionResult {
+struct ComponentExtractionResult 
+{
     bool success{false};
     std::string errorMessage;
     RasterGrid<int32_t> labelRaster; // Standardized to int32_t
@@ -63,4 +51,36 @@ struct ComponentExtractionResult {
     int acceptedComponentCount{0}; 
     int rejectedComponentCount{0}; 
     std::vector<std::string> warnings;
+};
+
+
+// Add to BuildingReconstructionTypes.h
+
+struct FootprintVectorizationResult 
+{
+    bool success{false};
+    std::string errorMessage;
+    
+    FootprintPolygon<PixelPoint> pixelFootprint;
+    FootprintPolygon<ProjectedPoint> projectedFootprint;
+    
+    std::vector<std::string> warnings;
+};
+
+
+
+struct BuildingHeightEstimate 
+{
+     bool success{false};
+     std::string errorMessage;
+     
+     float representativeBaseElevation{0.0f};
+     float heightAboveGround{0.0f};
+     float roofElevation{0.0f};
+    
+     int validRoofSampleCount{0};
+     int validGroundSampleCount{0};
+     float confidence{0.0f};
+     
+     std::vector<std::string> warnings;
 };

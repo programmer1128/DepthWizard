@@ -1,6 +1,7 @@
 #pragma once
 #include "BuildingReconstructionTypes.h"
 #include "../structures/GeographicStructs.h"
+#include "BuildingReconstructionConfig.h"
 
 class BuildingMaskProcessor 
 {

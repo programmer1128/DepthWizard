@@ -1,5 +1,6 @@
 #pragma once
 #include "BuildingReconstructionTypes.h"
+#include "BuildingReconstructionConfig.h"
 #include "../structures/GeographicStructs.h"
 
 class BuildingInstanceExtractor 

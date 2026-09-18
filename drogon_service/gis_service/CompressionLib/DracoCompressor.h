@@ -1,31 +1,36 @@
 #pragma once
-
+#include "../structures/MeshStructs.h"
 #include <vector>
-#include <cstdint>
 #include <string>
+#include <cstdint>
 
-struct DracoCompressionResult 
-{
-     std::vector<uint8_t> compressedBytes;
-     int posAttrId = -1;
-     int uvAttrId = -1;
-     //adding normal attribute to draco compression to eliminate shadows
-     //and smooth vertex normals
-     int normalAttrId = -1;
-     bool success = false;
-     std::string errorMessage;
+struct DracoCompressionConfig {
+    int posQuantization{16};
+    int uvQuantization{12};
+    int normalQuantization{10};
+    int featureIdQuantization{18}; // High enough to losslessly store integer IDs
+    int speed{7};
 };
 
-class DracoCompressor 
-{
-     public:
-     static DracoCompressionResult compressGeometry(
-         const std::vector<float>& positions,
-         const std::vector<uint32_t>& indices,
-         const std::vector<float>& uvs,
-         const std::vector<float>& normals,
-         int posQuantization = 14,
-         int uvQuantization = 12,
-         int normalQuantization = 10,
-         int speed = 5);
+// Represents a single compressed glTF primitive layer
+struct CompressedPrimitive {
+    bool success{false};
+    std::string errorMessage;
+    
+    std::vector<uint8_t> compressedBytes;
+    
+    // Draco Attribute Mapping IDs (needed by the GLTF Packager)
+    int posAttrId{-1};
+    int uvAttrId{-1};
+    int normalAttrId{-1};
+    int featureIdAttrId{-1};
+    
+    MaterialRole materialRole; // Pass through to know what to assign
+};
+
+class DracoCompressor {
+public:
+    static CompressedPrimitive compress(
+        const MeshPrimitive& primitive,
+        const DracoCompressionConfig& config = DracoCompressionConfig());
 };

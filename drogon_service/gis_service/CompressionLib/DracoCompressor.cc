@@ -3,87 +3,107 @@
 #include <draco/mesh/mesh.h>
 #include <draco/attributes/point_attribute.h>
 
-DracoCompressionResult DracoCompressor::compressGeometry(const std::vector<float>& positions,
-     const std::vector<uint32_t>& indices,
-     const std::vector<float>& uvs,
-     const std::vector<float>& normals,
-     int posQuantization,
-     int uvQuantization,int normalQuantization ,
-     int speed)
+CompressedPrimitive DracoCompressor::compress(
+    const MeshPrimitive& primitive,
+    const DracoCompressionConfig& config)
 {
-     DracoCompressionResult result;
-     draco::Mesh dracoMesh;
+    CompressedPrimitive result;
+    result.materialRole = primitive.materialRole;
 
-     size_t numFaces = indices.size() / 3;
-     size_t numPoints = positions.size() / 3;
+    if (!primitive.isValid()) {
+        result.errorMessage = "Invalid MeshPrimitive geometry provided to compressor.";
+        return result;
+    }
+
+    draco::Mesh dracoMesh;
+    size_t numFaces = primitive.indices.size() / 3;
+    size_t numPoints = primitive.positions.size() / 3;
      
-     dracoMesh.SetNumFaces(numFaces);
-     dracoMesh.set_num_points(numPoints); //Explicitly define point capacity
+    dracoMesh.SetNumFaces(numFaces);
+    dracoMesh.set_num_points(numPoints); 
 
-     // Populate Faces
-     for (size_t i = 0; i < numFaces; ++i) 
-     {
-         draco::Mesh::Face face;
-         //Enforce Draco strict PointIndex casting
-         face[0] = draco::PointIndex(indices[i * 3 + 0]);
-         face[1] = draco::PointIndex(indices[i * 3 + 1]);
-         face[2] = draco::PointIndex(indices[i * 3 + 2]);
-         dracoMesh.SetFace(draco::FaceIndex(i), face);
-     }
+    // 1. Populate Faces
+    for (size_t i = 0; i < numFaces; ++i) {
+        draco::Mesh::Face face;
+        face[0] = draco::PointIndex(primitive.indices[i * 3 + 0]);
+        face[1] = draco::PointIndex(primitive.indices[i * 3 + 1]);
+        face[2] = draco::PointIndex(primitive.indices[i * 3 + 2]);
+        dracoMesh.SetFace(draco::FaceIndex(i), face);
+    }
 
-     // Register Position Attribute
-     draco::GeometryAttribute posAttr;
-     posAttr.Init(draco::GeometryAttribute::POSITION, nullptr, 3, draco::DT_FLOAT32, false, sizeof(float) * 3, 0);
-     result.posAttrId = dracoMesh.AddAttribute(posAttr, true, numPoints);
+    // 2. Register Mandatory Attribute: POSITION
+    draco::GeometryAttribute posAttr;
+    posAttr.Init(draco::GeometryAttribute::POSITION, nullptr, 3, draco::DT_FLOAT32, false, sizeof(float) * 3, 0);
+    result.posAttrId = dracoMesh.AddAttribute(posAttr, true, numPoints);
 
-     // Register UV Attribute
-     draco::GeometryAttribute uvAttr;
-     uvAttr.Init(draco::GeometryAttribute::TEX_COORD, nullptr, 2, draco::DT_FLOAT32, false, sizeof(float) * 2, 0);
-     result.uvAttrId = dracoMesh.AddAttribute(uvAttr, true, numPoints); // Simplified using numPoints
+    // 3. Register Optional Attribute: NORMAL
+    if (primitive.normals.has_value()) {
+        draco::GeometryAttribute normalAttr;
+        normalAttr.Init(draco::GeometryAttribute::NORMAL, nullptr, 3, draco::DT_FLOAT32, false, sizeof(float) * 3, 0);
+        result.normalAttrId = dracoMesh.AddAttribute(normalAttr, true, numPoints);
+    }
 
-     // Register Normal Attribute
-     draco::GeometryAttribute normalAttr;
-     // Normals are 3D vectors (X, Y, Z), hence dimension is 3 and stride is sizeof(float) * 3
-     normalAttr.Init(draco::GeometryAttribute::NORMAL, nullptr, 3, draco::DT_FLOAT32, false, sizeof(float) * 3, 0);
-     result.normalAttrId = dracoMesh.AddAttribute(normalAttr, true, numPoints);
+    // 4. Register Optional Attribute: UV (TEXCOORD)
+    if (primitive.uvs.has_value()) {
+        draco::GeometryAttribute uvAttr;
+        uvAttr.Init(draco::GeometryAttribute::TEX_COORD, nullptr, 2, draco::DT_FLOAT32, false, sizeof(float) * 2, 0);
+        result.uvAttrId = dracoMesh.AddAttribute(uvAttr, true, numPoints);
+    }
 
-     // Fill Attribute Values
-     for (size_t i = 0; i < numPoints; ++i) 
-     {
-         dracoMesh.attribute(result.posAttrId)->SetAttributeValue(draco::AttributeValueIndex(i), 
-             &positions[i * 3]);
+    // 5. Register Optional Attribute: FEATURE IDs (GENERIC)
+    if (primitive.featureIds.has_value()) {
+        draco::GeometryAttribute idAttr;
+        // Map as a generic custom attribute. The GLTF packager will map this to _FEATURE_ID_0
+        idAttr.Init(draco::GeometryAttribute::GENERIC, nullptr, 1, draco::DT_UINT32, false, sizeof(uint32_t), 0);
+        result.featureIdAttrId = dracoMesh.AddAttribute(idAttr, true, numPoints);
+    }
+
+    // 6. Fill Attribute Values Safely
+    for (size_t i = 0; i < numPoints; ++i) {
+        dracoMesh.attribute(result.posAttrId)->SetAttributeValue(
+            draco::AttributeValueIndex(i), &primitive.positions[i * 3]);
          
-         //mapping UV values
-         dracoMesh.attribute(result.uvAttrId)->SetAttributeValue(draco::AttributeValueIndex(i), 
-             &uvs[i * 2]);
+        if (primitive.normals.has_value()) {
+            dracoMesh.attribute(result.normalAttrId)->SetAttributeValue(
+                draco::AttributeValueIndex(i), &primitive.normals.value()[i * 3]);
+        }
 
-         //mapping normal values
-         dracoMesh.attribute(result.normalAttrId)->SetAttributeValue
-             (draco::AttributeValueIndex(i), &normals[i * 3]);
+        if (primitive.uvs.has_value()) {
+            dracoMesh.attribute(result.uvAttrId)->SetAttributeValue(
+                draco::AttributeValueIndex(i), &primitive.uvs.value()[i * 2]);
+        }
 
-     }
+        if (primitive.featureIds.has_value()) {
+            dracoMesh.attribute(result.featureIdAttrId)->SetAttributeValue(
+                draco::AttributeValueIndex(i), &primitive.featureIds.value()[i]);
+        }
+    }
 
-     // Configure & Run Encoder
-     draco::Encoder encoder;
-     encoder.SetSpeedOptions(speed, speed);
-     encoder.SetAttributeQuantization(draco::GeometryAttribute::POSITION, posQuantization);
-     encoder.SetAttributeQuantization(draco::GeometryAttribute::TEX_COORD, uvQuantization);
+    // 7. Configure & Run Encoder
+    draco::Encoder encoder;
+    encoder.SetSpeedOptions(config.speed, config.speed);
+    encoder.SetAttributeQuantization(draco::GeometryAttribute::POSITION, config.posQuantization);
+    
+    if (primitive.uvs.has_value()) {
+        encoder.SetAttributeQuantization(draco::GeometryAttribute::TEX_COORD, config.uvQuantization);
+    }
+    if (primitive.normals.has_value()) {
+        encoder.SetAttributeQuantization(draco::GeometryAttribute::NORMAL, config.normalQuantization);
+    }
+    if (primitive.featureIds.has_value()) {
+        encoder.SetAttributeQuantization(draco::GeometryAttribute::GENERIC, config.featureIdQuantization);
+    }
 
-     //adding quantization for normals
-     encoder.SetAttributeQuantization(draco::GeometryAttribute::NORMAL, normalQuantization);
+    draco::EncoderBuffer dracoBuffer;
+    draco::Status status = encoder.EncodeMeshToBuffer(dracoMesh, &dracoBuffer);
 
-     draco::EncoderBuffer dracoBuffer;
-     draco::Status status = encoder.EncodeMeshToBuffer(dracoMesh, &dracoBuffer);
+    if (!status.ok()) {
+        result.success = false;
+        result.errorMessage = status.error_msg_string();
+        return result;
+    }
 
-     if (!status.ok()) 
-     {
-         result.success = false;
-         result.errorMessage = status.error_msg_string();
-         return result;
-     }
-
-     // Copy bitstream out
-     result.compressedBytes.assign(dracoBuffer.data(), dracoBuffer.data() + dracoBuffer.size());
-     result.success = true;
-     return result;
+    result.compressedBytes.assign(dracoBuffer.data(), dracoBuffer.data() + dracoBuffer.size());
+    result.success = true;
+    return result;
 }
