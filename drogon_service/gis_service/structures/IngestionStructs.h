@@ -3,18 +3,19 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <optional>
 
 struct SceneInput 
 {
-     std::string jobId;
-     std::string inputPath;
-     PipelineMode inputMode;
-     int width;
-     int height;
-     std::vector<uint8_t> rgbTextureBytes;
-     SpatialMetadata spatialMetadata;
-     std::string sourceFormat;
-     std::string originalFileMetadata;
+      std::string jobId;
+      std::string inputPath;
+      PipelineMode inputMode{PipelineMode::GEOREFERENCED};
+      int width{0};
+      int height{0};
+      std::vector<uint8_t> rgbTextureBytes;
+      std::string textureMimeType; //"image/jpeg" or "image/png"
+      std::optional<SpatialMetadata> spatialMetadata; //optional for non-geo inputs
+      std::string sourceFormat;
 };
 
 
