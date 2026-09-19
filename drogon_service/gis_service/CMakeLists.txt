@@ -133,3 +133,6 @@ endif ()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/CMakeLists.txt")
     add_subdirectory(test)
 endif()
+
+# automatically searches at root gis_service folder to grab the .env file
+file(COPY ${CMAKE_SOURCE_DIR}/.env DESTINATION ${CMAKE_BINARY_DIR})

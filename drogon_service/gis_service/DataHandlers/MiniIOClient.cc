@@ -5,16 +5,87 @@
 #include <aws/core/auth/AWSCredentialsProvider.h>
 #include <iostream>
 #include <memory>
-#include <stdlib.h> // Required for setenv
+#include <stdlib.h> // Required for setenv and getenv
+#include <fstream>  // Required for reading .env file
+#include <string>   // Required for string manipulation
 
 // Global SDK instances
 static Aws::SDKOptions awsOptions;
 static std::shared_ptr<Aws::S3::S3Client> s_s3Client;
 
+// Helper function to safely trim whitespace, quotes, and \r
+static std::string trim(const std::string &str)
+{
+    size_t first = str.find_first_not_of(" \t\r\n\"");
+    if (first == std::string::npos)
+        return "";
+    size_t last = str.find_last_not_of(" \t\r\n\"");
+    return str.substr(first, (last - first + 1));
+}
+
+// Cross-platform environment variable setter
+static void setEnvVar(const std::string &key, const std::string &value)
+{
+#ifdef _WIN32
+    _putenv_s(key.c_str(), value.c_str());
+#else
+    setenv(key.c_str(), value.c_str(), 1);
+#endif
+}
+
+// Helper function to load .env variables
+static void loadEnv(const std::string &filename)
+{
+    std::ifstream file(filename);
+    if (!file.is_open())
+    {
+        std::cerr << "[Warning] Could not open " << filename << ". Relying on existing system environment variables." << std::endl;
+        return;
+    }
+
+    std::string line;
+    while (std::getline(file, line))
+    {
+        std::string trimmedLine = trim(line);
+
+        // skipping empty lines and comments
+        if (trimmedLine.empty() || trimmedLine[0] == '#')
+            continue;
+
+        auto delimiterPos = trimmedLine.find('=');
+        if (delimiterPos != std::string::npos)
+        {
+            std::string key = trim(trimmedLine.substr(0, delimiterPos));
+            std::string value = trim(trimmedLine.substr(delimiterPos + 1));
+            setEnvVar(key, value);
+        }
+    }
+}
+
 void MinioClient::initAPI()
 {
+    // credentials loaded from .env file
+    loadEnv(".env");
+
+    // retrieving credentials using getenv
+    const char *accessKeyEnv = std::getenv("MINIO_ACCESS_KEY");
+    const char *secretKeyEnv = std::getenv("MINIO_SECRET_KEY");
+
+    // fallback handling if variables are missing
+    Aws::String minioAccessKey = accessKeyEnv ? accessKeyEnv : "";
+    Aws::String minioSecretKey = secretKeyEnv ? secretKeyEnv : "";
+
+    if (minioAccessKey.empty() || minioSecretKey.empty())
+    {
+        std::cerr << "[Error] MINIO_ACCESS_KEY or MINIO_SECRET_KEY not found in .env!" << std::endl;
+        return;
+    }
+
+    // 1. cross-platform helper to completely disable the 4-second IMDS black-hole timeout
+    setEnvVar("AWS_EC2_METADATA_DISABLED", "true");
+
     // 1. HARD BYPASS: Completely disable the 4-second IMDS black-hole timeout
-    setenv("AWS_EC2_METADATA_DISABLED", "true", 1);
+    // setenv("AWS_EC2_METADATA_DISABLED", "true", 1);
 
     Aws::InitAPI(awsOptions);
 
@@ -24,8 +95,9 @@ void MinioClient::initAPI()
     clientConfig.scheme = Aws::Http::Scheme::HTTP;
     clientConfig.region = "us-east-1";
 
-    Aws::Auth::AWSCredentials credentials("minioadmin",
-                                          "minioadmin");
+    // Passing the retrieved environment variables to AWSCredentials
+    Aws::Auth::AWSCredentials credentials(minioAccessKey,
+                                          minioSecretKey);
 
     // Allocate the client to the global shared pointer
     s_s3Client = Aws::MakeShared<Aws::S3::S3Client>(
