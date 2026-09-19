@@ -52,6 +52,7 @@ file(GLOB_RECURSE IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "Image
 file(GLOB HEIGHT_SERVICE CONFIGURE_DEPENDS "HeightService/*.cc" "HeightService/*.cpp")
 file(GLOB SURFACE_FUSION CONFIGURE_DEPENDS "SurfaceFusion/*.cc" "SurfaceFusion/*.cpp")
 file(GLOB REFERENCE_TERRAIN CONFIGURE_DEPENDS "ReferenceTerrainService/*.cc" "ReferenceTerrainService/*.cpp")
+file(GLOB SEMANTIC_CONTEXT CONFIGURE_DEPENDS "SemanticContext/*.cc" "SemanticContext/*.cpp")
 
 #COMPILER OPTIMIZATIONS (Release Mode)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -88,7 +89,8 @@ target_sources(${PROJECT_NAME}
                ${STRUCTURES}
                ${HEIGHT_SERVICE}
                ${SURFACE_FUSION}
-               ${REFERENCE_TERRAIN})
+               ${REFERENCE_TERRAIN}
+               ${SEMANTIC_CONTEXT})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -108,14 +110,13 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/CompressionLib
                            ${CMAKE_CURRENT_SOURCE_DIR}/DataHandlers
                            ${CMAKE_CURRENT_SOURCE_DIR}/structures
-                           ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/GraphOrdering
-                           ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/HannAssembler
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/Tiling
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/InferenceProtocol
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/OutputStitching
                            ${CMAKE_CURRENT_SOURCE_DIR}/HeightService
                            ${CMAKE_CURRENT_SOURCE_DIR}/SurfaceFusion
                            ${CMAKE_CURRENT_SOURCE_DIR}/ReferenceTerrainService
+                           ${CMAKE_CURRENT_SOURCE_DIR}/SemanticContext
                            ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
 
 
