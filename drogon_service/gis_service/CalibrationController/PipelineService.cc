@@ -1,3 +1,4 @@
+/*
 #include "PipelineService.h"
 #include "../SrtmExtractor/SrtmExtractor.h"
 #include "../RasterProcessor/RasterProcessor.h"
@@ -534,3 +535,5 @@ inline std::vector<uint8_t> PipelineService::extractTextureFromNormalImage(const
 
     return jpegBuffer;
 }
+
+*/

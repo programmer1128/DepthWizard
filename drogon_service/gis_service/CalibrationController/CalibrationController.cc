@@ -1,3 +1,5 @@
+/*
+
 #include "CalibrationController.h"
 #include "../SrtmExtractor/SrtmExtractor.h"
 #include "../RasterProcessor/RasterProcessor.h"
@@ -229,3 +231,5 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::processNormalImageF
 //         callback(resp);
 //     }
 // }
+
+*/

@@ -1,67 +1,30 @@
+// triggers the TileDispatcher
+
 #include "TilingService.h"
-#include "TilingOLS/TileDispatcher.h"
-#include "GraphOrdering/kruskal.h"
-#include "GraphOrdering/GlobalScaling.h"
-#include "HannAssembler/HannAssembler.h"
+#include <trantor/utils/Logger.h>
 #include <stdexcept>
 
-drogon::Task<std::vector<float>> TilingService::generateStitchedDepth(
-     const std::string& vsi_path, 
-     int globalWidth, 
-     int globalHeight) 
+drogon::Task<InferenceBundle> TilingService::generateStitchedMetricInference(
+    const SceneInput& scene, 
+    const ImageQualityResult& quality) 
 {
-     //Dispatch tiles and wait for the AI inference payload
-     std::string local_gpu_ip = "http://127.0.0.1:8000";
-     LOG_INFO << "[Trace] Starting processGeoTiff...";
-     GraphPayload payload = co_await TileDispatcher::processGeoTiff(vsi_path);
-    
-     if (payload.all_tiles.empty()) 
-     {
-         throw std::runtime_error("Tiling extraction failed or returned 0 tiles");
-     }
+    LOG_INFO << "TilingService: Starting Multi-Threaded AI Dispatch...";
 
-     //Build the Minimum Spanning Tree (MST) using Kruskal
-     LOG_INFO << "[Trace] Building MST via Kruskal with " << payload.graph_edges.size() << " edges...";
-     Kruskal kruskal;
-     MST_TileGraph mst = kruskal.findMST_Kruskal(payload.graph_edges, payload.max_tile_id);
+    // dispatch the 518x518 windows and wait for them to process
+    TiledInferencePayload payload = co_await TileDispatcher::processMetricRaster(scene, quality);
 
-     //Resolve the Global Scale (s) & Shift (t) using Breadth-First Search
-     GlobalScaler scaler;
-     std::vector<GlobalTransformations> transforms = scaler.findGlobalTransformation(
-         mst, payload.max_tile_id, payload.root_anchor_id);
+    if (payload.allTiles.empty()) 
+    {
+        throw std::runtime_error("TilingService: AI Dispatcher returned 0 processed tiles");
+    }
 
-     //Initialize the Hann Assembler with the absolute bounds of the target matrix[cite: 3]
-     HannAssembler assembler(globalWidth, globalHeight);
-    
-     // Convert TileMetadata into the TileWindow struct required by the Assembler[cite: 3]
-     LOG_INFO << "[Trace] Initializing Hann Assembler...";
-     std::vector<TileWindow> blueprints;
-     blueprints.reserve(payload.all_tiles.size());
-    
-     for (const auto& tile : payload.all_tiles) 
-     {
-         blueprints.push_back({
-             .id = static_cast<int>(tile.tile_id),
-             .x_off = tile.x_offset,
-             .y_off = tile.y_offset,
-             .x_size = tile.width,
-             .y_size = tile.height
-         });
-     }
-     assembler.loadTileBlueprints(blueprints);
+    LOG_INFO << "TilingService: Successfully received " << payload.allTiles.size() << " tiles. Commencing Stitching...";
 
-     //Execute the Halide JIT pipeline to process and accumulate each tile[cite: 3]
-     LOG_INFO << "[Trace] Processing and Accumulating " << payload.all_tiles.size() << " tiles...";
-     for (size_t i = 0; i < payload.all_tiles.size(); ++i) 
-     {
-         assembler.processAndAccumulateTile(
-             blueprints[i], 
-             *payload.all_tiles[i].depth_matrix, // Dereferencing the shared_ptr[cite: 3]
-             transforms[payload.all_tiles[i].tile_id]
-         );
-     }
+    // hand the tiles over to the MetricOutputStitcher for Hann blending
+    InferenceBundle globalBundle = MetricOutputStitcher::stitch(payload);
 
-     //Divide accumulated depths by weights and return the final matrix[cite: 3]
-     LOG_INFO << "[Trace] Finalizing Matrix...";
-     co_return assembler.finalizeMatrix();
+    LOG_INFO << "TilingService: Global Metric Surface successfully stitched.";
+
+    // return the fully assembled map to the PipelineService
+    co_return globalBundle;
 }

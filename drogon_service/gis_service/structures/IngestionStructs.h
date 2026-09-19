@@ -14,19 +14,17 @@ struct SceneInput
       int height{0};
       std::vector<uint8_t> rgbTextureBytes;
       std::string textureMimeType; //"image/jpeg" or "image/png"
-      std::optional<SpatialMetadata> spatialMetadata; //optional for non-geo inputs
+      std::optional<SpatialMetadata> spatialMetadata; //optional for non-geo inputs[cite: 8]
       std::string sourceFormat;
 };
 
-
 struct ImageQualityResult 
 {
-     //3 channels (RGB) flattened specific tensor format
-     std::vector<float> normalizedRgbRaster; 
-     RasterGrid<uint8_t> validPixelMask;
-     RasterGrid<uint8_t> cloudMask;
-     RasterGrid<uint8_t> shadowMask;
-     RasterGrid<uint8_t> saturationMask;
-     float qualityScore;
-     std::vector<std::string> warnings;
+      ImageTensor normalizedRgbTensor; //img tensor instead of raw vector
+      RasterGrid<uint8_t> validPixelMask;
+      RasterGrid<uint8_t> cloudMask;
+      RasterGrid<uint8_t> shadowMask;
+      RasterGrid<uint8_t> saturationMask;
+      float qualityScore{1.0f};
+      std::vector<std::string> warnings;
 };

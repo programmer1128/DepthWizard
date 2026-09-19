@@ -3,6 +3,7 @@
 #include <memory>
 #include <cstdint>
 #include "../structures/TileGraph.h"
+#include "../structures/InferenceStructs.h"
 
 // stores the zero copy AI output
 // stores the details of each tile
@@ -32,19 +33,34 @@ struct TileMetadata
 };
 
 
-// this struct is the payload for the graph portion of the service
+// struct containing every single processed tile for the whole image
+// to send to Hann assembler for stitching
 
-struct GraphPayload 
+struct TiledInferencePayload 
 {
-    // dynamic list containing every tile processed
-    std::vector<TileMetadata> all_tiles;     
+    int globalWidth;
+    int globalHeight;
+    std::vector<TileInferenceResult> allTiles;
+};
+
+
+// struct to hold one 518x518 square of the image ready to be sent to the model
+
+struct TileRequest 
+{
+    uint32_t tileId;       // unique number for this square
+    int xOffset;           // distance from the left edge of the main image
+    int yOffset;           // distance from the top edge of the main image
+    int width;             // always 518
+    int height;            // always 518
+
+    // we must track the valid area so the stitcher knows what to ignore
+    int validWidth;        
+    int validHeight;
     
-    // dynamic list containing every OLS alignment connection: edge
-    std::vector<OverlapEdge> graph_edges;    
+    // normalized colors (RGB) for the model
+    std::vector<float> normalizedRgbBytes;
     
-    // tile id that had the highest variance 
-    uint32_t root_anchor_id;                 
-    
-    // highest tile ID generated during extraction loop 
-    uint32_t max_tile_id;                    
+    // the black-and-white safety map (1 = safe, 0 = cloud/shadow)
+    std::vector<uint8_t> validMaskBytes;
 };
