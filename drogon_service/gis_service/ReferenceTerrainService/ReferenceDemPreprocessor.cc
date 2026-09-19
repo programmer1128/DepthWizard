@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <limits>
 #include <iostream>
+#include <stdexcept> // required for std::invalid_argument
 #include <omp.h> // for multi-threading
 
 float ReferenceDemPreprocessor::computeGsd(const SpatialMetadata& metadata)
@@ -276,9 +277,23 @@ RasterGrid<float> ReferenceDemPreprocessor::computeTerrainConfidence(
                 continue;
             }
 
+            // fix: Retrieve neighbors for Central Difference gradient
+            float right = dtmGrid.data[y * w + (x + 1)];
+            float left  = dtmGrid.data[y * w + (x - 1)];
+            float down  = dtmGrid.data[(y + 1) * w + x];
+            float up    = dtmGrid.data[(y - 1) * w + x];
+
+            // fix: If the surrounding stencil contains NaN voids, the gradient calculation will collapse to NaN
+            // we explicitly catch this and yield zero confidence
+            if (std::isnan(right) || std::isnan(left) || std::isnan(down) || std::isnan(up)) 
+            {
+                confidence.data[idx] = 0.0f;
+                continue;
+            }
+
             // estimate local slope via central differences (calculating the steepness)
-            float dz_dx = (dtmGrid.data[y * w + (x + 1)] - dtmGrid.data[y * w + (x - 1)]) * 0.5f;
-            float dz_dy = (dtmGrid.data[(y + 1) * w + x] - dtmGrid.data[(y - 1) * w + x]) * 0.5f;
+            float dz_dx = (right - left) * 0.5f;
+            float dz_dy = (down - up) * 0.5f;
             float gradient = std::sqrt(dz_dx * dz_dx + dz_dy * dz_dy);
 
             // confidence Model: 
@@ -300,6 +315,22 @@ ReferenceTerrainBundle ReferenceDemPreprocessor::process(
     const SceneInput& scene,
     const std::string& demSource)
 {
+    // fix: Strict boundary validations to prevent segmentation faults and logic breaks
+    if (warpedDem.width <= 0 || warpedDem.height <= 0 || warpedDem.data.empty()) 
+    {
+        throw std::invalid_argument("ReferenceDemPreprocessor: Warped DEM raster is empty.");
+    }
+    
+    if (warpedDem.width != scene.width || warpedDem.height != scene.height) 
+    {
+        throw std::invalid_argument("ReferenceDemPreprocessor: Severe dimension mismatch between Optical Scene and Warped DEM.");
+    }
+    
+    if (!scene.spatialMetadata.has_value()) 
+    {
+        throw std::invalid_argument("ReferenceDemPreprocessor: Cannot process terrain. SceneInput is missing SpatialMetadata.");
+    }
+
     ReferenceTerrainBundle bundle;
     bundle.rawWarpedDem = warpedDem;
     bundle.demSource = demSource;
