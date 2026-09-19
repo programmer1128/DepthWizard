@@ -40,11 +40,12 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
     };
 
     // initialising core structural grids
-    initGridFloat(bundle.globalNdsm);
-    initGridFloat(bundle.globalNdsmConfidence);
-    initGridUint8(bundle.globalValidMask);
+    initGridFloat(bundle.globalNdsm);           // final blended physical height of above-ground structures in meters
+    initGridFloat(bundle.globalNdsmConfidence); // normalized statistical probability of how much the model trusts its own elevation prediction for that specific pixel -> [0.0, 1.0]
+    initGridUint8(bundle.globalValidMask);      // boolean flags -> to identify whether the pixel contains clear data or clouds/deep shadows
 
     // initialising continuous semantic logit grids
+    // they contain  raw, continuous mathematical probability scores directly from the neural network -> strictly unnormalized logits, not percentages
     initGridFloat(bundle.globalSemanticLogits.groundLogits);
     initGridFloat(bundle.globalSemanticLogits.buildingLogits);
     initGridFloat(bundle.globalSemanticLogits.roadLogits);
@@ -56,7 +57,7 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
     bundle.globalSemanticLogits.classCount = numClasses;
     bundle.globalSemanticLogits.layout = TensorLayout::CHW; // Channel-Height-Width
 
-    // weight accum for denominator of blending equation : sum(val*wts)/sum(wts)
+    // weight accum for denominator of blending equation (weighted avg) : sum(pred_val*wts)/sum(wts)
     std::vector<float> globalWeights(globalPixels, 0.0f);
 
     // raw pointers for fast OpenMP array access
@@ -75,7 +76,7 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
     LOG_INFO << "[MetricOutputStitcher] Initiating Hann-blending for " << payload.allTiles.size() << " tiles.";
 
     // accum for numerators and weights
-    for (const auto &tile : payload.allTiles)
+    for (const auto &tile : payload.allTiles) // itr through input vector
     {
         // dimensions
         const int tw = tile.placement.paddedWidth;
