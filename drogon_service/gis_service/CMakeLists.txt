@@ -48,7 +48,7 @@ file(GLOB UV_MAPPING CONFIGURE_DEPENDS "UVMapping/*.cc" "UVMapping/*.cpp")
 file(GLOB COMPRESSOR CONFIGURE_DEPENDS "CompressionLib/*.cc" "CompressionLib/*.cpp")
 file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cpp")
 file(GLOB STRUCTURES CONFIGURE_DEPENDS "structures/*.cc" "structures/*.cpp" "structures/*.h")
-file(GLOB_RECURSE IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp")
+file(GLOB_RECURSE IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp" "ImageTilingService/OutputStitching/*.cc")
 file(GLOB HEIGHT_SERVICE CONFIGURE_DEPENDS "HeightService/*.cc" "HeightService/*.cpp")
 
 #COMPILER OPTIMIZATIONS (Release Mode)
