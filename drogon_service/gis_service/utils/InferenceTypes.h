@@ -1,6 +1,6 @@
 #pragma once
 #include <vector>
-#include <InferenceStructs.h>
+#include "../structures/InferenceStructs.h"
 
 struct TiledInferencePayload
 {
