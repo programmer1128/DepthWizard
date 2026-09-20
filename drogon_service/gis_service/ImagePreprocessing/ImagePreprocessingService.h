@@ -4,12 +4,8 @@
 class ImagePreprocessingService
 {
 public:
-    /**
-     * @brief Normalizes the input optical RGB imagery for GAMUS Depth2Elevation
-     *        and evaluates rule-based photometric quality masks.
-     * @param scene Ingested SceneInput metadata containing the remote /vsicurl/ path.
-     * @return ImageQualityResult Normalized tensor and boolean masks.
-     */
+    // normalizes the input optical RGB imagery for GAMUS Depth2Elevation and evaluates rule-based photometric quality masks
+    // Input : Ingested SceneInput metadata containing the remote /vsicurl/ path, Output : ImageQualityResult Normalized tensor and boolean masks
     static ImageQualityResult process(const SceneInput &scene);
 
 private:

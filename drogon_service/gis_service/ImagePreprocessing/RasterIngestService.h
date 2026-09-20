@@ -6,7 +6,7 @@
 class RasterIngestService
 {
 public:
-    // validates geospatial metadata, computes GSD, extracts the unadulterated optical RGB pixels into a JPEG buffer to ensure the final 3D GLB mesh retains its true colors, and uploads the GeoTIFF to MinIO
+    // mounts GeoTIFF to RAM, validates geospatial metadata, computes GSD, extracts optical RGB pixels, into a JPEG buffer to ensure the final 3D GLB mesh retains its true colors, and uploads an archival copy to MinIO without blocking local processing
     // Input : jobId -> unique identifier for the pipeline execution job, imageFile -> uploaded HTTP multipart GeoTIFF file.
     // Output : SceneInput -> validated geospatial payload containing the remote /vsicurl/ path
     static SceneInput ingestGeoTiff(

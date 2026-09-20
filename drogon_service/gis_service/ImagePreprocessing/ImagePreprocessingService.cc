@@ -8,17 +8,18 @@
 
 ImageQualityResult ImagePreprocessingService::process(const SceneInput &scene)
 {
-    // GDAL seamlessly streams the imagery via the MinIO /vsicurl/ pre-signed URL
+    // Opens instantly from the RAM disk mounted by RasterIngestService
     GDALDataset *poDS = static_cast<GDALDataset *>(GDALOpen(scene.inputPath.c_str(), GA_ReadOnly));
     if (!poDS)
     {
-        throw std::runtime_error("ImagePreprocessingService: Failed to access remote raster from MinIO.");
+        throw std::runtime_error("ImagePreprocessingService: Failed to access RAM raster.");
     }
 
     const int width = scene.width;
     const int height = scene.height;
     const size_t totalPixels = static_cast<size_t>(width) * height;
     const int numBands = poDS->GetRasterCount();
+    const bool isGrayscale = (numBands == 1);
 
     std::vector<uint8_t> rawR(totalPixels), rawG(totalPixels), rawB(totalPixels);
     poDS->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height, rawR.data(), width, height, GDT_Byte, 0, 0);
@@ -28,14 +29,12 @@ ImageQualityResult ImagePreprocessingService::process(const SceneInput &scene)
 
     ImageQualityResult result;
 
-    // Setup 3-channel Normalized Tensor
     result.normalizedRgbTensor.width = width;
     result.normalizedRgbTensor.height = height;
     result.normalizedRgbTensor.channels = 3;
     result.normalizedRgbTensor.layout = TensorLayout::CHW;
     result.normalizedRgbTensor.data.assign(totalPixels * 3, 0.0f);
 
-    // CORRECTED: Manually assign grid properties instead of using resize()
     result.validPixelMask.width = width;
     result.validPixelMask.height = height;
     result.validPixelMask.data.assign(totalPixels, 1);
@@ -70,19 +69,19 @@ ImageQualityResult ImagePreprocessingService::process(const SceneInput &scene)
         const float g = static_cast<float>(rawG[i]);
         const float b = static_cast<float>(rawB[i]);
 
-        // 1. Z-Score Normalization for AI (Inorm = (I - μ) / σ)
+        // Z-Score Normalization for AI
         normR[i] = ((r / 255.0f) - MEAN_R) / STD_R;
         normG[i] = ((g / 255.0f) - MEAN_G) / STD_G;
         normB[i] = ((b / 255.0f) - MEAN_B) / STD_B;
 
-        // 2. Saturation Mask (Clipping limits)
+        // Saturation Mask
         if (r >= 254.0f || g >= 254.0f || b >= 254.0f || r <= 1.0f || g <= 1.0f || b <= 1.0f)
         {
             pSat[i] = 1;
             satCount++;
         }
 
-        // 3. Photometric Analysis (Clouds and Shadows)
+        // Photometric Analysis
         const float maxCh = std::max({r, g, b});
         const float minCh = std::min({r, g, b});
         const float luminance = 0.299f * r + 0.587f * g + 0.114f * b;
@@ -90,7 +89,17 @@ ImageQualityResult ImagePreprocessingService::process(const SceneInput &scene)
         const float blueRatio = b / (r + g + b + 1e-4f);
 
         bool isCloud = (luminance > 200.0f && saturation < 0.18f);
-        bool isShadow = (luminance < 40.0f && blueRatio > 0.38f);
+
+        // Grayscale Immunity -> pure luminance if blue ratio is deadlocked
+        bool isShadow = false;
+        if (isGrayscale)
+        {
+            isShadow = (luminance < 40.0f);
+        }
+        else
+        {
+            isShadow = (luminance < 40.0f && blueRatio > 0.38f);
+        }
 
         if (isCloud)
         {
@@ -103,7 +112,9 @@ ImageQualityResult ImagePreprocessingService::process(const SceneInput &scene)
             shadowCount++;
         }
 
-        // 4. Determine Master Valid Pixel State
+        bool isBorderPadding = (r == 0.0f && g == 0.0f && b == 0.0f); // detecting artificial black border padding used in GeoTIFFs
+
+        // Master Valid Pixel Gate
         if (isCloud || isShadow || pSat[i] == 1)
         {
             pValid[i] = 0;
