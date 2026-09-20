@@ -28,7 +28,6 @@ BuildingMaskResult BuildingMaskProcessor::createCleanMask(
         validMask.height != height || !semantics.buildingProbability.isValid() ||
         !validMask.isValid())
     {
-
         result.errorMessage = "Grid dimension mismatch or invalid memory buffers.";
         return result;
     }
@@ -44,18 +43,16 @@ BuildingMaskResult BuildingMaskProcessor::createCleanMask(
     }
 
     // Affine-Aware Metric Calculations
-    // Area = |GT1 * GT5 - GT2 * GT4|
     double pixelArea = std::abs(metadata.geoTransform[1] * metadata.geoTransform[5] -
                                 metadata.geoTransform[2] * metadata.geoTransform[4]);
 
-    // Rectangular pixel resolutions
     double colRes = std::sqrt(metadata.geoTransform[1] * metadata.geoTransform[1] +
                               metadata.geoTransform[4] * metadata.geoTransform[4]);
     double rowRes = std::sqrt(metadata.geoTransform[2] * metadata.geoTransform[2] +
                               metadata.geoTransform[5] * metadata.geoTransform[5]);
 
-    // FIX : Rejecting geographic coordinates (degrees) early to prevent micro-resolution scaling
-    if (pixelArea < 0.01 || colRes < 0.01 || rowRes < 0.01 ||
+    // FIX: Lowered threshold to 1e-10 to safely allow 1mm GSD imagery without blocking
+    if (pixelArea < 1e-10 || colRes < 1e-5 || rowRes < 1e-5 ||
         (metadata.isGeoreferenced && metadata.projectionRef.find("PROJCS") == std::string::npos))
     {
         result.errorMessage = "Invalid or zero spatial resolution in metadata. Metric operations cannot proceed.";
@@ -75,17 +72,14 @@ BuildingMaskResult BuildingMaskProcessor::createCleanMask(
     cv::bitwise_and(binaryMask, validMat255, binaryMask);
 
     // Affine-Aware Morphology
-    // std::ceil to prevent truncation, generating independent width/height for rectangular pixels
     auto calcKernelDim = [](float radius, double res) -> int
     {
         if (radius <= 0.0f)
             return 1;
         int pixels = static_cast<int>(std::ceil(radius / res));
-
-        // FIX : Hardware safety cap -> Prevent kernels from exceeding 101x101 pixels, ensures the server never hangs on corrupted affine inputs
+        // Hardware safety cap -> Prevent kernels from exceeding 101x101 pixels
         if (pixels > 50)
             pixels = 50;
-
         return std::max(1, (pixels * 2) + 1);
     };
 
@@ -97,29 +91,24 @@ BuildingMaskResult BuildingMaskProcessor::createCleanMask(
     // Opening (Erosion -> Dilation)
     if (result.openingKernelWidth >= 3 || result.openingKernelHeight >= 3)
     {
-        cv::Mat openKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE,
+        cv::Mat openKernel = cv::getStructuringElement(cv::MORPH_RECT,
                                                        cv::Size(result.openingKernelWidth, result.openingKernelHeight));
         cv::morphologyEx(binaryMask, binaryMask, cv::MORPH_OPEN, openKernel);
-
-        // Dilation can push building pixels into cloud/NoData regions. Re-apply mask.
         cv::bitwise_and(binaryMask, validMat255, binaryMask);
     }
 
     // Closing (Dilation -> Erosion)
     if (result.closingKernelWidth >= 3 || result.closingKernelHeight >= 3)
     {
-        cv::Mat closeKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE,
+        cv::Mat closeKernel = cv::getStructuringElement(cv::MORPH_RECT,
                                                         cv::Size(result.closingKernelWidth, result.closingKernelHeight));
         cv::morphologyEx(binaryMask, binaryMask, cv::MORPH_CLOSE, closeKernel);
-
-        // Dilation can push building pixels into cloud/NoData regions. Re-apply mask.
         cv::bitwise_and(binaryMask, validMat255, binaryMask);
     }
 
     // Connected Components (Small Region Rejection)
     cv::Mat labels, stats, centroids;
     int numLabels = cv::connectedComponentsWithStats(binaryMask, labels, stats, centroids, config.connectivity, CV_32S);
-
     std::vector<uint8_t> labelToKeep(numLabels, 0);
 
     // Evaluate physics (start at 1 to skip background)
@@ -127,8 +116,8 @@ BuildingMaskResult BuildingMaskProcessor::createCleanMask(
     {
         int pixelCount = stats.at<int>(i, cv::CC_STAT_AREA);
         double areaSquareMetres = pixelCount * pixelArea;
-
-        if (areaSquareMetres >= config.minBuildingAreaSquareMetres)
+        // FIX: Strict floating-point boundary (reject exactly equal values)
+        if (areaSquareMetres > config.minBuildingAreaSquareMetres)
         {
             labelToKeep[i] = 1;
         }
@@ -141,12 +130,9 @@ BuildingMaskResult BuildingMaskProcessor::createCleanMask(
     // Safe Output Matrix Generation
     result.cleanMask.width = width;
     result.cleanMask.height = height;
-
-    // Cast to size_t to prevent overflow on massive grids
     std::size_t totalPixels = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
     result.cleanMask.data.resize(totalPixels, 0);
 
-    // Iterate using row pointers to guarantee safety even if memory is not perfectly continuous
     for (int r = 0; r < height; ++r)
     {
         const int *labelRow = labels.ptr<int>(r);

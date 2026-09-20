@@ -51,7 +51,7 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
         return result;
     }
 
-    // validate Probabilities AND Confidences
+    // Validate Probabilities AND Confidences to prevent silent NaN/Infinity poisoning in OpenCV
     for (float p : semantics.buildingProbability.data)
     {
         if (!std::isfinite(p) || p < 0.0f || p > 1.0f)
@@ -70,12 +70,13 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
         }
     }
 
-    // validate Projected Metric CRS
+    // Validate Projected Metric CRS
     double pixelArea = std::abs(metadata.geoTransform[1] * metadata.geoTransform[5] -
                                 metadata.geoTransform[2] * metadata.geoTransform[4]);
 
-    // Degrees have tiny areas (e.g., 0.000001). A hard limit of 0.01 rejects geographic CRSs securely.
-    if (!std::isfinite(pixelArea) || pixelArea < 0.01 ||
+    // ARCHITECTURAL GATE: A hard limit of 1e-10 allows ultra-high-res millimeter drone imagery
+    // while safely rejecting unprojected Geographic CRSs (degrees)
+    if (!std::isfinite(pixelArea) || pixelArea < 1e-10 ||
         (metadata.isGeoreferenced && metadata.projectionRef.find("PROJCS") == std::string::npos))
     {
         result.errorMessage = "Invalid affine determinant or unprojected CRS. Requires projected metric CRS.";
@@ -90,20 +91,23 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
         result.labelRaster.data.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);
     };
 
-    // FIX : Converting 0/1 mask to 0/255 for OpenCV mathematical operations
+    // Converting 0/1 boolean mask to 0/255 for OpenCV mathematical operations
     cv::Mat rawMask(height, width, CV_8UC1, const_cast<uint8_t *>(maskResult.cleanMask.data.data()));
     cv::Mat binaryMask = rawMask * 255;
 
-    // FIX 1: Pad the binary mask by 1 pixel of black. This guarantees distanceTransform
-    // doesn't fail on buildings touching the absolute edge of the map.
+    // TOPOLOGICAL BASELINE: Count the true physical building clusters before any splitting occurs.
+    cv::Mat initialLabels;
+    int numClusters = cv::connectedComponents(binaryMask, initialLabels, config.connectivity, CV_32S);
+
+    // PROTECTION 1: Pad the binary mask by 1 pixel of black. This guarantees distanceTransform
+    // doesn't fail/underflow on buildings touching the absolute edge of the map.
     cv::Mat paddedMask;
     cv::copyMakeBorder(binaryMask, paddedMask, 1, 1, 1, 1, cv::BORDER_CONSTANT, cv::Scalar(0));
 
-    // WATERSHED SPLITTING (Severing connected urban blocks/bridges)
+    // WATERSHED PREP
     cv::Mat distTransform;
     cv::distanceTransform(paddedMask, distTransform, cv::DIST_L2, 5);
 
-    // Calculate dynamic peak threshold based on physical meters
     double gsd = std::sqrt(pixelArea);
     double distThreshPixels = std::max(1.0, 1.2 / gsd);
 
@@ -112,16 +116,15 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
     sureFg.convertTo(sureFg, CV_8U);
 
     cv::Mat markers;
-    // FIX 4: Force 8-connectivity for foreground peaks to prevent diagonal ridges
-    // from splitting into multiple markers and generating internal amputations.
-    int fgComponents = cv::connectedComponents(sureFg, markers, 8, CV_32S);
+    // PROTECTION 2: Force 8-connectivity for foreground peaks to prevent diagonal ridges fragmenting
+    int numPeaks = cv::connectedComponents(sureFg, markers, 8, CV_32S);
 
     cv::Mat splitMask = binaryMask.clone();
 
-    // OPTIMIZATION & PROTECTION: If there are 0 or 1 building peaks (fgComponents <= 2),
-    // there are no connected buildings to split. Bypass Watershed entirely to save massive
-    // CPU overhead and protect perfect square geometries from gradient-clipping.
-    if (fgComponents > 2)
+    // OPTIMIZATION & PROTECTION 3: The Topological Bypass
+    // If the number of peaks equals the number of clusters, no buildings are touching.
+    // By bypassing Watershed, we mathematically preserve 100% of the building's outer perimeter.
+    if (numPeaks > numClusters)
     {
         cv::Mat sureBg;
         cv::dilate(paddedMask, sureBg, cv::Mat(), cv::Point(-1, -1), 2);
@@ -130,21 +133,20 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
         markers = markers + 1;            // Background = 1
         markers.setTo(0, unknown == 255); // Unknown boundaries = 0
 
-        // FIX 2: Explicitly pin the padded 1-pixel border as Background (Label 1).
+        // Explicitly pin the padded 1-pixel border as Background (Label 1).
         cv::rectangle(markers, cv::Point(0, 0), cv::Point(markers.cols - 1, markers.rows - 1), cv::Scalar(1), 1);
 
         cv::Mat dummyRgb;
         cv::cvtColor(paddedMask, dummyRgb, cv::COLOR_GRAY2BGR);
         cv::watershed(dummyRgb, markers);
 
-        // Crop the markers back to original size before constructing splitMask
         cv::Mat croppedMarkers = markers(cv::Rect(1, 1, width, height));
 
-        // FIX 3: ONLY erase the 1-pixel boundaries (-1) drawn by Watershed.
+        // Erase ONLY the collision boundaries (-1) drawn by Watershed to sever the bridge.
         splitMask.setTo(0, croppedMarkers == -1);
     }
 
-    // apply open cv connected components on mask
+    // Apply OpenCV connected components on the finalized, severed mask
     cv::Mat labels, stats, centroids;
     int numLabels = cv::connectedComponentsWithStats(splitMask, labels, stats, centroids, config.connectivity, CV_32S);
 
@@ -187,7 +189,7 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
         }
     }
 
-    // stats Compilation & Area Filtering
+    // Stats Compilation & Area Filtering
     std::vector<ComponentStats> validComponents;
     validComponents.reserve(numLabels);
 
@@ -196,7 +198,8 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
         int pixelCount = stats.at<int>(i, cv::CC_STAT_AREA);
         double physicalArea = pixelCount * pixelArea;
 
-        if (physicalArea >= config.minBuildingAreaSquareMetres)
+        //
+        if (physicalArea > config.minBuildingAreaSquareMetres)
         {
             ComponentStats comp;
             comp._originalLabel = static_cast<int32_t>(i);
@@ -240,7 +243,7 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
         nextId++;
     }
 
-    // Generate Final Output Raster
+    // Generate Final Output Raster safely
     allocateZeroRaster();
     for (int r = 0; r < height; ++r)
     {

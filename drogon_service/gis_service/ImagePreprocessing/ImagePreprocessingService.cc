@@ -22,9 +22,9 @@ ImageQualityResult ImagePreprocessingService::process(const SceneInput &scene)
     const bool isGrayscale = (numBands == 1);
 
     std::vector<uint8_t> rawR(totalPixels), rawG(totalPixels), rawB(totalPixels);
-    poDS->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height, rawR.data(), width, height, GDT_Byte, 0, 0);
-    poDS->GetRasterBand(numBands >= 2 ? 2 : 1)->RasterIO(GF_Read, 0, 0, width, height, rawG.data(), width, height, GDT_Byte, 0, 0);
-    poDS->GetRasterBand(numBands >= 3 ? 3 : 1)->RasterIO(GF_Read, 0, 0, width, height, rawB.data(), width, height, GDT_Byte, 0, 0);
+    (void)poDS->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height, rawR.data(), width, height, GDT_Byte, 0, 0);
+    (void)poDS->GetRasterBand(numBands >= 2 ? 2 : 1)->RasterIO(GF_Read, 0, 0, width, height, rawG.data(), width, height, GDT_Byte, 0, 0);
+    (void)poDS->GetRasterBand(numBands >= 3 ? 3 : 1)->RasterIO(GF_Read, 0, 0, width, height, rawB.data(), width, height, GDT_Byte, 0, 0);
     GDALClose(poDS);
 
     ImageQualityResult result;
