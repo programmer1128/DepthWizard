@@ -22,13 +22,14 @@ ImageQualityResult ImagePreprocessingService::process(const SceneInput &scene)
     const bool isGrayscale = (numBands == 1);
 
     std::vector<uint8_t> rawR(totalPixels), rawG(totalPixels), rawB(totalPixels);
-    poDS->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height, rawR.data(), width, height, GDT_Byte, 0, 0);
-    poDS->GetRasterBand(numBands >= 2 ? 2 : 1)->RasterIO(GF_Read, 0, 0, width, height, rawG.data(), width, height, GDT_Byte, 0, 0);
-    poDS->GetRasterBand(numBands >= 3 ? 3 : 1)->RasterIO(GF_Read, 0, 0, width, height, rawB.data(), width, height, GDT_Byte, 0, 0);
+
+    (void)poDS->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height, rawR.data(), width, height, GDT_Byte, 0, 0);
+    (void)poDS->GetRasterBand(numBands >= 2 ? 2 : 1)->RasterIO(GF_Read, 0, 0, width, height, rawG.data(), width, height, GDT_Byte, 0, 0);
+    (void)poDS->GetRasterBand(numBands >= 3 ? 3 : 1)->RasterIO(GF_Read, 0, 0, width, height, rawB.data(), width, height, GDT_Byte, 0, 0);
+
     GDALClose(poDS);
 
     ImageQualityResult result;
-
     result.normalizedRgbTensor.width = width;
     result.normalizedRgbTensor.height = height;
     result.normalizedRgbTensor.channels = 3;
@@ -115,7 +116,7 @@ ImageQualityResult ImagePreprocessingService::process(const SceneInput &scene)
         bool isBorderPadding = (r == 0.0f && g == 0.0f && b == 0.0f); // detecting artificial black border padding used in GeoTIFFs
 
         // Master Valid Pixel Gate
-        if (isCloud || isShadow || pSat[i] == 1)
+        if (isCloud || isShadow || pSat[i] == 1 || isBorderPadding)
         {
             pValid[i] = 0;
         }
@@ -127,5 +128,6 @@ ImageQualityResult ImagePreprocessingService::process(const SceneInput &scene)
 
     result.qualityScore = static_cast<float>(validCount) / static_cast<float>(totalPixels);
     LOG_INFO << "[ImagePreprocessingService] Quality Score: " << (result.qualityScore * 100.0f) << "%";
+
     return result;
 }

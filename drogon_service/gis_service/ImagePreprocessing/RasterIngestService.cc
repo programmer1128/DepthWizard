@@ -103,7 +103,7 @@ SceneInput RasterIngestService::ingestGeoTiff(const std::string &jobId, const dr
     {
         int srcBandIdx = (b <= numBands) ? b : 1;
         GDALRasterBand *poBand = poDS->GetRasterBand(srcBandIdx);
-        poBand->RasterIO(GF_Read, 0, 0, width, height, bandBuffer.data(), width, height, GDT_Byte, 0, 0);
+        (void)poBand->RasterIO(GF_Read, 0, 0, width, height, bandBuffer.data(), width, height, GDT_Byte, 0, 0);
 
 #pragma omp parallel for schedule(static)
         for (size_t i = 0; i < totalPixels; ++i)
@@ -116,6 +116,7 @@ SceneInput RasterIngestService::ingestGeoTiff(const std::string &jobId, const dr
     // 6. Encoding preserved optical RGB to baseline JPEG for GLTF PBR texture mapping
     std::vector<uint8_t> compressedJpeg;
     compressedJpeg.reserve(totalPixels / 4);
+
     if (!stbi_write_jpg_to_func(stbJpegVectorWriter, &compressedJpeg, width, height, 3, interleavedRgb.data(), 92))
     {
         VSIUnlink(vsiPath.c_str()); // erase RAM file before throwing
@@ -135,5 +136,6 @@ SceneInput RasterIngestService::ingestGeoTiff(const std::string &jobId, const dr
     scene.sourceFormat = "GTiff";
 
     LOG_INFO << "[RasterIngestService] Ingested GeoTIFF " << width << "x" << height << " with physical GSD: " << gsd << " m/px.";
+
     return scene;
 }
