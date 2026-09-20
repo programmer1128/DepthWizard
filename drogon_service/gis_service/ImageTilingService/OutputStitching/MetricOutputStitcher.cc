@@ -188,21 +188,31 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
             pVeg[i] /= w_sum;
             pWater[i] /= w_sum;
             pUnknown[i] /= w_sum;
-        }
-        else
-        {
-            pNdsm[i] = 0.0f; // failsafe for unweighted NoData regions
-        }
 
-        // FIX 6 : Exact weighted average for model confidence
-        float h_sum = pHannWeight[i];
-        if (h_sum >= 1e-7f)
-        {
-            pConf[i] = std::min(pConf[i] / h_sum, 1.0f);
+            // FIX 6 : Exact weighted average for model confidence
+            // only compute confidence if the pixel as a whole contains valid predictions
+            float h_sum = pHannWeight[i];
+            if (h_sum >= 1e-7f)
+            {
+                pConf[i] = std::min(pConf[i] / h_sum, 1.0f);
+            }
+            else
+            {
+                pConf[i] = 0.0f;
+            }
         }
         else
         {
+            // failsafe for unweighted NoData regions
+            pNdsm[i] = 0.0f;
             pConf[i] = 0.0f;
+
+            pGround[i] = 0.0f;
+            pBldg[i] = 0.0f;
+            pRoad[i] = 0.0f;
+            pVeg[i] = 0.0f;
+            pWater[i] = 0.0f;
+            pUnknown[i] = 0.0f;
         }
 
         // // in a standard stride, a pixel is covered by max 4 overlapping tiles -> strict statistical probability between 0.0 and 1.0 (0% to 100%)

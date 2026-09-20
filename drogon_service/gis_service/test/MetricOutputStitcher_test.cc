@@ -405,3 +405,120 @@ TEST_F(MetricOutputStitcherTest, SemanticLogitsScaleSymmetricallyWithoutBleed)
         EXPECT_FLOAT_EQ(result.globalSemanticLogits.waterLogits.data[idx], 0.0f);
     }
 }
+
+TEST_F(MetricOutputStitcherTest, SimdCheckerboardMaskMaintainsLaneIntegrity)
+{
+    TiledInferencePayload payload;
+    payload.globalWidth = 4;
+    payload.globalHeight = 4;
+
+    TileInferenceResult tile = createMockTile(4, 4, 10.0f);
+    // Create an alternating 0/1 checkerboard mask
+    for (size_t i = 0; i < 16; ++i)
+    {
+        tile.validMask.data[i] = (i % 2 == 0) ? 1 : 0;
+    }
+    payload.allTiles.push_back(tile);
+
+    InferenceBundle result = MetricOutputStitcher::stitch(payload);
+
+    for (size_t i = 0; i < 16; ++i)
+    {
+        if (i % 2 == 0)
+        {
+            EXPECT_FLOAT_EQ(result.globalNdsm.data[i], 10.0f);
+            EXPECT_FLOAT_EQ(result.globalNdsmConfidence.data[i], 1.0f);
+        }
+        else
+        {
+            EXPECT_FLOAT_EQ(result.globalNdsm.data[i], 0.0f);
+            EXPECT_FLOAT_EQ(result.globalNdsmConfidence.data[i], 0.0f);
+        }
+    }
+}
+
+TEST_F(MetricOutputStitcherTest, RejectsTilesCompletelyOutsideGlobalBounds)
+{
+    TiledInferencePayload payload;
+    payload.globalWidth = 4;
+    payload.globalHeight = 4;
+
+    TileInferenceResult tile = createMockTile(4, 4, 99.0f);
+
+    // Push the tile entirely off the map to the right
+    tile.placement.sourceX = 10;
+    tile.placement.sourceY = 0;
+    payload.allTiles.push_back(tile);
+
+    // Execute stitch
+    InferenceBundle result = MetricOutputStitcher::stitch(payload);
+
+    // The entire global map must remain exactly 0.0f (no memory leaks/overwrites)
+    for (size_t i = 0; i < 16; ++i)
+    {
+        EXPECT_FLOAT_EQ(result.globalNdsm.data[i], 0.0f);
+    }
+}
+
+TEST_F(MetricOutputStitcherTest, DisjointCornersPreventRowStrideWrapping)
+{
+    TiledInferencePayload payload;
+    payload.globalWidth = 10;
+    payload.globalHeight = 10;
+
+    // Top-Left (0,0)
+    TileInferenceResult tl = createMockTile(1, 1, 1.0f);
+    tl.placement.sourceX = 0;
+    tl.placement.sourceY = 0;
+
+    // Top-Right (9,0)
+    TileInferenceResult tr = createMockTile(1, 1, 2.0f);
+    tr.placement.sourceX = 9;
+    tr.placement.sourceY = 0;
+
+    // Bottom-Left (0,9)
+    TileInferenceResult bl = createMockTile(1, 1, 3.0f);
+    bl.placement.sourceX = 0;
+    bl.placement.sourceY = 9;
+
+    // Bottom-Right (9,9)
+    TileInferenceResult br = createMockTile(1, 1, 4.0f);
+    br.placement.sourceX = 9;
+    br.placement.sourceY = 9;
+
+    payload.allTiles = {tl, tr, bl, br};
+    InferenceBundle result = MetricOutputStitcher::stitch(payload);
+
+    // Validate the 4 corners
+    EXPECT_FLOAT_EQ(result.globalNdsm.data[0], 1.0f);          // TL
+    EXPECT_FLOAT_EQ(result.globalNdsm.data[9], 2.0f);          // TR
+    EXPECT_FLOAT_EQ(result.globalNdsm.data[9 * 10 + 0], 3.0f); // BL
+    EXPECT_FLOAT_EQ(result.globalNdsm.data[9 * 10 + 9], 4.0f); // BR
+
+    // Check pixels immediately adjacent to the Top-Right corner to ensure it
+    // didn't wrap around to the left edge of the next row (Index 10)
+    EXPECT_FLOAT_EQ(result.globalNdsm.data[10], 0.0f);
+}
+
+TEST_F(MetricOutputStitcherTest, Pure1DVectorSliversComputeIndependently)
+{
+    // Test 1: Horizontal Sliver (10x1)
+    TiledInferencePayload payloadH;
+    payloadH.globalWidth = 10;
+    payloadH.globalHeight = 1;
+    payloadH.allTiles.push_back(createMockTile(10, 1, 55.0f));
+
+    InferenceBundle resultH = MetricOutputStitcher::stitch(payloadH);
+    EXPECT_FLOAT_EQ(resultH.globalNdsm.data[0], 55.0f);
+    EXPECT_FLOAT_EQ(resultH.globalNdsm.data[9], 55.0f);
+
+    // Test 2: Vertical Sliver (1x10)
+    TiledInferencePayload payloadV;
+    payloadV.globalWidth = 1;
+    payloadV.globalHeight = 10;
+    payloadV.allTiles.push_back(createMockTile(1, 10, 77.0f));
+
+    InferenceBundle resultV = MetricOutputStitcher::stitch(payloadV);
+    EXPECT_FLOAT_EQ(resultV.globalNdsm.data[0], 77.0f);
+    EXPECT_FLOAT_EQ(resultV.globalNdsm.data[9], 77.0f);
+}
