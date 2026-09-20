@@ -1,258 +1,240 @@
 #include "QualityControlService.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <queue>
 #include <stdexcept>
-#include <algorithm>
+#include <vector>
 
+namespace
+{
+    constexpr int kNeighbourCount = 4;
+
+    constexpr int kRowOffsets[kNeighbourCount] =
+    {
+        -1, 1, 0, 0
+    };
+
+    constexpr int kColOffsets[kNeighbourCount] =
+    {
+        0, 0, -1, 1
+    };
+
+    bool dimensionsMatch(
+        const RasterGrid<float>& a,
+        const RasterGrid<float>& b
+    )
+    {
+        return a.width == b.width &&
+               a.height == b.height &&
+               a.isValid() &&
+               b.isValid();
+    }
+
+    bool dimensionsMatch(
+        const RasterGrid<uint8_t>& mask,
+        const RasterGrid<float>& raster
+    )
+    {
+        return mask.width == raster.width &&
+               mask.height == raster.height &&
+               mask.isValid() &&
+               raster.isValid();
+    }
+
+    bool validElevation(float value)
+    {
+        return std::isfinite(value);
+    }
+}
 
 QualityControlService::QualityControlService(Config config)
     : config_(config)
 {
-    if (!std::isfinite(config_.surfaceIdentityToleranceMeters) ||
-        config_.surfaceIdentityToleranceMeters < 0.0)
+    if (config_.surfaceIdentityToleranceMeters <= 0.0)
     {
         throw std::invalid_argument(
-            "QualityControlService: surface identity tolerance "
-            "must be finite and non-negative."
+            "Surface identity tolerance must be positive."
         );
     }
 
-    if (!std::isfinite(config_.maximumBuildingHeightMeters) ||
-        config_.maximumBuildingHeightMeters <= 0.0)
+    if (config_.minimumBuildingHeightMeters < 0.0)
     {
         throw std::invalid_argument(
-            "QualityControlService: maximum building height "
-            "must be finite and greater than zero."
+            "Minimum building height cannot be negative."
         );
     }
 
-    if (!std::isfinite(config_.minimumBuildingHeightMeters) ||
-        config_.minimumBuildingHeightMeters < 0.0)
+    if (config_.maximumBuildingHeightMeters <=
+        config_.minimumBuildingHeightMeters)
     {
         throw std::invalid_argument(
-            "QualityControlService: minimum building height "
-            "must be finite and non-negative."
+            "Maximum building height must exceed minimum building height."
         );
     }
 
-    if (!std::isfinite(config_.waterProbabilityThreshold) ||
-        config_.waterProbabilityThreshold < 0.0f ||
+    if (config_.waterProbabilityThreshold < 0.0f ||
         config_.waterProbabilityThreshold > 1.0f)
     {
         throw std::invalid_argument(
-            "QualityControlService: water probability threshold "
-            "must lie in [0, 1]."
+            "Water probability threshold must be in [0,1]."
         );
     }
 
     if (config_.minimumWaterComponentPixels == 0)
     {
         throw std::invalid_argument(
-            "QualityControlService: minimum water component size "
-            "must be greater than zero."
+            "Minimum water component size must be greater than zero."
         );
     }
 
-    if (!std::isfinite(config_.waterLevelToleranceMeters) ||
-        config_.waterLevelToleranceMeters < 0.0)
+    if (config_.waterLevelToleranceMeters <= 0.0)
     {
         throw std::invalid_argument(
-            "QualityControlService: water level tolerance "
-            "must be finite and non-negative."
+            "Water level tolerance must be positive."
         );
     }
 }
 
-
-// ============================================================
-// Helper: check one surface pixel
-// ============================================================
-
-bool QualityControlService::isValidPixel(
-    const SurfaceBundle& surface,
-    std::size_t index
-) const
-{
-    if (surface.validMask.has_value())
-    {
-        const auto& mask = *surface.validMask;
-
-        if (index >= mask.data.size())
-            return false;
-
-        if (mask.data[index] == 0)
-            return false;
-    }
-
-    if (index >= surface.DTM.data.size() ||
-        index >= surface.DSM.data.size() ||
-        index >= surface.nDSM.data.size())
-    {
-        return false;
-    }
-
-    const float dtm = surface.DTM.data[index];
-    const float dsm = surface.DSM.data[index];
-    const float ndsm = surface.nDSM.data[index];
-
-    return surface.DTM.isValidValue(dtm) &&
-           surface.DSM.isValidValue(dsm) &&
-           surface.nDSM.isValidValue(ndsm);
-}
-
-
-// ============================================================
-// CORE CHECK
-//
-// Verifies:
-//
-//     DSM = DTM + nDSM
-//
-// within tolerance.
-// ============================================================
-
 QualityReport QualityControlService::validateSurfaceIdentity(
-    const SurfaceBundle& surface
+    const GeoreferencedSurfaceBundle& surface
 ) const
 {
     QualityReport report;
 
-    // --------------------------------------------------------
-    // 1. Raster dimension/storage consistency
-    // --------------------------------------------------------
+    report.status = QualityStatus::PASS;
+    report.safeForAbsoluteOutput = true;
 
-    const bool dimensionsMatch =
-        surface.DTM.width == surface.DSM.width &&
-        surface.DTM.width == surface.nDSM.width &&
-        surface.DTM.height == surface.DSM.height &&
-        surface.DTM.height == surface.nDSM.height;
-
-    const bool storageMatches =
-        surface.DTM.hasExpectedSize() &&
-        surface.DSM.hasExpectedSize() &&
-        surface.nDSM.hasExpectedSize();
-
-    report.rasterDimensionsPassed =
-        dimensionsMatch && storageMatches;
-
-    if (!report.rasterDimensionsPassed)
+    if (!surface.dtm.isValid() ||
+        !surface.dsm.isValid() ||
+        !surface.ndsm.isValid())
     {
-        report.errors.push_back(
-            "DTM, DSM and nDSM dimensions or storage sizes do not match."
-        );
+        report.status = QualityStatus::FAIL;
+        report.safeForAbsoluteOutput = false;
 
-        report.surfaceIdentityPassed = false;
-        report.passed = false;
+        report.violations.push_back(
+            "DTM, DSM, and nDSM must all be valid rasters."
+        );
 
         return report;
     }
 
-    // --------------------------------------------------------
-    // 2. Pixel-wise validation
-    // --------------------------------------------------------
+    if (!dimensionsMatch(surface.dtm, surface.dsm) ||
+        !dimensionsMatch(surface.dtm, surface.ndsm) ||
+        !dimensionsMatch(surface.validMask, surface.dtm))
+    {
+        report.status = QualityStatus::FAIL;
+        report.safeForAbsoluteOutput = false;
 
-    const std::size_t totalPixels =
-        surface.DTM.data.size();
+        report.violations.push_back(
+            "DTM, DSM, nDSM, and valid mask dimensions do not match."
+        );
+
+        return report;
+    }
 
     double sumAbsoluteError = 0.0;
-    double maxAbsoluteError = 0.0;
+    std::size_t validPixelCount = 0;
 
-    std::uint64_t validCount = 0;
+    double maximumError = 0.0;
 
-    for (std::size_t i = 0; i < totalPixels; ++i)
+    for (int row = 0; row < surface.dtm.height; ++row)
     {
-        if (!isValidPixel(surface, i))
-            continue;
+        for (int col = 0; col < surface.dtm.width; ++col)
+        {
+            const std::size_t index =
+                static_cast<std::size_t>(row) *
+                    static_cast<std::size_t>(surface.dtm.width)
+                + static_cast<std::size_t>(col);
 
-        const double dtm =
-            static_cast<double>(surface.DTM.data[i]);
+            if (surface.validMask.data[index] == 0)
+            {
+                continue;
+            }
 
-        const double dsm =
-            static_cast<double>(surface.DSM.data[i]);
+            const float dtm =
+                surface.dtm.data[index];
 
-        const double ndsm =
-            static_cast<double>(surface.nDSM.data[i]);
+            const float dsm =
+                surface.dsm.data[index];
 
-        const double residual =
-            (dsm - dtm) - ndsm;
+            const float ndsm =
+                surface.ndsm.data[index];
 
-        const double absoluteError =
-            std::abs(residual);
+            if (!validElevation(dtm) ||
+                !validElevation(dsm) ||
+                !validElevation(ndsm))
+            {
+                continue;
+            }
 
-        sumAbsoluteError += absoluteError;
+            const double residual =
+                (static_cast<double>(dsm) -
+                 static_cast<double>(dtm)) -
+                 static_cast<double>(ndsm);
 
-        maxAbsoluteError =
-            std::max(maxAbsoluteError, absoluteError);
+            const double absoluteError =
+                std::abs(residual);
 
-        ++validCount;
+            maximumError =
+                std::max(maximumError, absoluteError);
+
+            sumAbsoluteError += absoluteError;
+
+            ++validPixelCount;
+        }
     }
 
-    report.validPixels = validCount;
-
-    // --------------------------------------------------------
-    // 3. No usable pixels
-    // --------------------------------------------------------
-
-    if (validCount == 0)
+    if (validPixelCount == 0)
     {
-        report.surfaceIdentityPassed = false;
-        report.passed = false;
+        report.status = QualityStatus::FAIL;
+        report.safeForAbsoluteOutput = false;
 
-        report.errors.push_back(
-            "No valid pixels were available for surface identity QC."
+        report.violations.push_back(
+            "No valid pixels were available for the DSM/DTM/nDSM identity check."
         );
 
         return report;
     }
 
-    // --------------------------------------------------------
-    // 4. Statistics
-    // --------------------------------------------------------
-
-    report.maxSurfaceIdentityError =
-        maxAbsoluteError;
-
-    report.meanSurfaceIdentityError =
+    const double meanAbsoluteError =
         sumAbsoluteError /
-        static_cast<double>(validCount);
+        static_cast<double>(validPixelCount);
 
-    // --------------------------------------------------------
-    // 5. Tolerance check
-    // --------------------------------------------------------
+    /*
+     * The core scientific identity required by Module 7 is:
 
-    report.surfaceIdentityPassed =
-        maxAbsoluteError <=
-        config_.surfaceIdentityToleranceMeters;
+         abs((DSM - DTM) - nDSM) < tolerance
 
-    if (!report.surfaceIdentityPassed)
+     * We reject the surface when the worst valid pixel exceeds
+     * the configured tolerance.
+     */
+    if (maximumError > config_.surfaceIdentityToleranceMeters)
     {
-        report.errors.push_back(
-            "Surface identity failed: "
-            "|(DSM - DTM) - nDSM| exceeds the configured tolerance."
+        report.status = QualityStatus::FAIL;
+        report.safeForAbsoluteOutput = false;
+
+        report.violations.push_back(
+            "Surface identity check failed: "
+            "abs((DSM - DTM) - nDSM) exceeds tolerance."
         );
     }
 
-    report.passed =
-        report.rasterDimensionsPassed &&
-        report.surfaceIdentityPassed;
+    report.userWarnings.push_back(
+        "Surface identity mean absolute residual: " +
+        std::to_string(meanAbsoluteError) +
+        " m."
+    );
+
+    report.userWarnings.push_back(
+        "Surface identity maximum absolute residual: " +
+        std::to_string(maximumError) +
+        " m."
+    );
 
     return report;
 }
-
-
-// ============================================================
-// BUILDING CHECK
-//
-// Verifies:
-//
-//     roofElevation > baseElevation
-//
-// and:
-//
-//     plausible building height
-// ============================================================
 
 QualityReport QualityControlService::validateBuildings(
     const BuildingCollection& buildings
@@ -260,362 +242,293 @@ QualityReport QualityControlService::validateBuildings(
 {
     QualityReport report;
 
-    report.buildingHeightsPassed = true;
-    report.checkedBuildings =
-        buildings.buildings.size();
+    report.status = QualityStatus::PASS;
+    report.safeForAbsoluteOutput = true;
 
-    // No building objects is not itself a failure.
-    // Module 6 may legitimately produce an empty collection
-    // for rural scenes.
-    if (buildings.buildings.empty())
+    for (const BuildingInstance& building :
+         buildings.buildings)
     {
-        report.warnings.push_back(
-            "Building QC skipped: no buildings were supplied."
-        );
+        const float base =
+            building.representativeBaseElevation;
 
-        report.passed = true;
-        return report;
-    }
+        const float roof =
+            building.roofElevation;
 
-    for (const auto& building : buildings.buildings)
-    {
-        bool buildingValid = true;
-
-        const double base =
-            static_cast<double>(building.baseElevation);
-
-        const double roof =
-            static_cast<double>(building.roofElevation);
-
-        const double derivedHeight =
-            roof - base;
-
-        // ----------------------------------------------------
-        // 1. Numeric sanity
-        // ----------------------------------------------------
+        const float height =
+            building.heightAboveGround;
 
         if (!std::isfinite(base) ||
-            !std::isfinite(roof))
+            !std::isfinite(roof) ||
+            !std::isfinite(height))
         {
-            buildingValid = false;
+            report.status = QualityStatus::FAIL;
+            report.safeForAbsoluteOutput = false;
 
-            report.errors.push_back(
+            report.violations.push_back(
                 "Building " +
                 std::to_string(building.buildingId) +
-                " contains non-finite base or roof elevation."
+                " contains non-finite elevation values."
+            );
+
+            continue;
+        }
+
+        if (building.projectedFootprint.outerRing.size() < 3)
+        {
+            report.status = QualityStatus::FAIL;
+            report.safeForAbsoluteOutput = false;
+
+            report.violations.push_back(
+                "Building " +
+                std::to_string(building.buildingId) +
+                " has an invalid footprint."
             );
         }
 
-        // ----------------------------------------------------
-        // 2. Roof must be above the base
-        // ----------------------------------------------------
-
-        if (buildingValid &&
-            derivedHeight <=
-            config_.minimumBuildingHeightMeters)
+        if (height <= config_.minimumBuildingHeightMeters)
         {
-            buildingValid = false;
+            report.status = QualityStatus::FAIL;
+            report.safeForAbsoluteOutput = false;
 
-            report.errors.push_back(
+            report.violations.push_back(
                 "Building " +
                 std::to_string(building.buildingId) +
-                " has roof elevation at or below its base elevation."
+                " does not have a strictly positive height above its base."
             );
         }
 
-        // ----------------------------------------------------
-        // 3. Plausible height guardrail
-        // ----------------------------------------------------
-
-        if (buildingValid &&
-            derivedHeight >
-            config_.maximumBuildingHeightMeters)
+        if (height > config_.maximumBuildingHeightMeters)
         {
-            buildingValid = false;
+            report.status = QualityStatus::FAIL;
+            report.safeForAbsoluteOutput = false;
 
-            report.errors.push_back(
+            report.violations.push_back(
                 "Building " +
                 std::to_string(building.buildingId) +
-                " has an implausibly large height of " +
-                std::to_string(derivedHeight) +
-                " meters."
+                " exceeds the configured maximum plausible height."
             );
         }
 
-        // ----------------------------------------------------
-        // 4. Footprint sanity
-        //
-        // A polygon requires at least 3 vertices.
-        // ----------------------------------------------------
+        const double reconstructedRoof =
+            static_cast<double>(base) +
+            static_cast<double>(height);
 
-        if (building.footprintPolygon.size() < 3)
+        if (std::abs(
+                reconstructedRoof -
+                static_cast<double>(roof)
+            ) > config_.surfaceIdentityToleranceMeters)
         {
-            buildingValid = false;
+            report.status = QualityStatus::FAIL;
+            report.safeForAbsoluteOutput = false;
 
-            report.errors.push_back(
+            report.violations.push_back(
                 "Building " +
                 std::to_string(building.buildingId) +
-                " has an invalid footprint polygon."
+                " has inconsistent base + height and roof elevation."
             );
         }
 
-        if (!buildingValid)
+        /*
+         * Preserve non-fatal geometry warnings generated by Module 6.
+         */
+        for (const std::string& warning :
+             building.geometryWarnings)
         {
-            ++report.invalidBuildings;
+            report.userWarnings.push_back(
+                "Building " +
+                std::to_string(building.buildingId) +
+                ": " +
+                warning
+            );
         }
     }
-
-    report.buildingHeightsPassed =
-        (report.invalidBuildings == 0);
 
     return report;
 }
 
-
-// ============================================================
-// WATER CHECK
-//
-// Semantic water probability -> connected components ->
-// elevation range inside each component.
-//
-// This is a first implementation of the architecture's
-// "water bodies are approximately level" check.
-// ============================================================
-
 QualityReport QualityControlService::validateWaterBodies(
-    const SurfaceBundle& surface,
-    const SemanticScene& semanticScene
+    const GeoreferencedSurfaceBundle& surface,
+    const SemanticScene& semantics
 ) const
 {
     QualityReport report;
 
-    report.waterLevelPassed = true;
+    report.status = QualityStatus::PASS;
+    report.safeForAbsoluteOutput = true;
 
-    // --------------------------------------------------------
-    // No semantic water layer
-    // --------------------------------------------------------
-
-    if (!semanticScene.waterProbability.has_value())
+    if (!surface.dsm.isValid() ||
+        !surface.validMask.isValid() ||
+        !semantics.waterProbability.isValid())
     {
-        report.warnings.push_back(
-            "Water-level QC skipped: no water probability raster was supplied."
-        );
+        report.status = QualityStatus::FAIL;
+        report.safeForAbsoluteOutput = false;
 
-        report.passed = true;
-        return report;
-    }
-
-    const auto& water =
-        *semanticScene.waterProbability;
-
-    // --------------------------------------------------------
-    // Dimension check
-    // --------------------------------------------------------
-
-    if (water.width != surface.DSM.width ||
-        water.height != surface.DSM.height ||
-        !water.hasExpectedSize())
-    {
-        report.waterLevelPassed = false;
-        report.passed = false;
-
-        report.errors.push_back(
-            "Water probability raster dimensions do not match the surface raster."
+        report.violations.push_back(
+            "Water QC cannot run because required rasters are invalid."
         );
 
         return report;
     }
 
-    const std::size_t totalPixels =
-        water.data.size();
-
-    std::vector<std::uint8_t> visited(totalPixels, 0);
-
-    // 4-connected neighbourhood.
-    const int rowOffsets[4] = {-1, 1, 0, 0};
-    const int colOffsets[4] = {0, 0, -1, 1};
-
-    // --------------------------------------------------------
-    // Scan for water components
-    // --------------------------------------------------------
-
-    for (int row = 0;
-         row < water.height;
-         ++row)
+    if (!dimensionsMatch(
+            semantics.waterProbability,
+            surface.dsm
+        ))
     {
-        for (int col = 0;
-             col < water.width;
-             ++col)
+        report.status = QualityStatus::FAIL;
+        report.safeForAbsoluteOutput = false;
+
+        report.violations.push_back(
+            "Water probability raster does not match the surface grid."
+        );
+
+        return report;
+    }
+
+    const int width = surface.dsm.width;
+    const int height = surface.dsm.height;
+
+    std::vector<uint8_t> visited(
+        static_cast<std::size_t>(width) *
+        static_cast<std::size_t>(height),
+        0
+    );
+
+    for (int row = 0; row < height; ++row)
+    {
+        for (int col = 0; col < width; ++col)
         {
             const std::size_t startIndex =
                 static_cast<std::size_t>(row) *
-                static_cast<std::size_t>(water.width) +
-                static_cast<std::size_t>(col);
+                    static_cast<std::size_t>(width)
+                + static_cast<std::size_t>(col);
 
-            if (visited[startIndex])
+            if (visited[startIndex] != 0)
+            {
                 continue;
+            }
 
-            const float probability =
-                water.data[startIndex];
-
-            if (!water.isValidValue(probability) ||
-                probability < config_.waterProbabilityThreshold)
+            if (surface.validMask.data[startIndex] == 0)
             {
                 visited[startIndex] = 1;
                 continue;
             }
 
-            // ------------------------------------------------
-            // BFS connected component
-            // ------------------------------------------------
+            if (semantics.waterProbability.data[startIndex] <
+                config_.waterProbabilityThreshold)
+            {
+                visited[startIndex] = 1;
+                continue;
+            }
 
-            std::queue<std::pair<int, int>> pending;
+            /*
+             * BFS for one connected water component.
+             */
+            std::queue<std::pair<int, int>> queue;
 
-            pending.push({row, col});
+            queue.push({row, col});
             visited[startIndex] = 1;
 
-            std::size_t componentSize = 0;
+            std::vector<float> elevations;
 
-            double minElevation =
-                std::numeric_limits<double>::infinity();
-
-            double maxElevation =
-                -std::numeric_limits<double>::infinity();
-
-            while (!pending.empty())
+            while (!queue.empty())
             {
                 const auto [currentRow, currentCol] =
-                    pending.front();
+                    queue.front();
 
-                pending.pop();
+                queue.pop();
 
                 const std::size_t index =
                     static_cast<std::size_t>(currentRow) *
-                    static_cast<std::size_t>(water.width) +
-                    static_cast<std::size_t>(currentCol);
+                        static_cast<std::size_t>(width)
+                    + static_cast<std::size_t>(currentCol);
 
-                const float currentProbability =
-                    water.data[index];
+                const float elevation =
+                    surface.dsm.data[index];
 
-                if (!water.isValidValue(currentProbability) ||
-                    currentProbability <
-                        config_.waterProbabilityThreshold)
+                if (validElevation(elevation))
                 {
-                    continue;
+                    elevations.push_back(elevation);
                 }
 
-                ++componentSize;
-
-                // ------------------------------------------------
-                // Use DSM as the water-surface elevation.
-                // This is an implementation choice for the first
-                // version of the QC service.
-                // ------------------------------------------------
-
-                if (index < surface.DSM.data.size())
-                {
-                    const float elevation =
-                        surface.DSM.data[index];
-
-                    if (surface.DSM.isValidValue(elevation))
-                    {
-                        minElevation =
-                            std::min(
-                                minElevation,
-                                static_cast<double>(elevation)
-                            );
-
-                        maxElevation =
-                            std::max(
-                                maxElevation,
-                                static_cast<double>(elevation)
-                            );
-                    }
-                }
-
-                // ------------------------------------------------
-                // Visit neighbouring pixels
-                // ------------------------------------------------
-
-                for (int n = 0; n < 4; ++n)
+                for (int neighbour = 0;
+                     neighbour < kNeighbourCount;
+                     ++neighbour)
                 {
                     const int nextRow =
-                        currentRow + rowOffsets[n];
+                        currentRow +
+                        kRowOffsets[neighbour];
 
                     const int nextCol =
-                        currentCol + colOffsets[n];
+                        currentCol +
+                        kColOffsets[neighbour];
 
                     if (nextRow < 0 ||
-                        nextRow >= water.height ||
+                        nextRow >= height ||
                         nextCol < 0 ||
-                        nextCol >= water.width)
+                        nextCol >= width)
                     {
                         continue;
                     }
 
                     const std::size_t nextIndex =
                         static_cast<std::size_t>(nextRow) *
-                        static_cast<std::size_t>(water.width) +
-                        static_cast<std::size_t>(nextCol);
+                            static_cast<std::size_t>(width)
+                        + static_cast<std::size_t>(nextCol);
 
-                    if (visited[nextIndex])
+                    if (visited[nextIndex] != 0)
+                    {
                         continue;
+                    }
+
+                    if (surface.validMask.data[nextIndex] == 0)
+                    {
+                        visited[nextIndex] = 1;
+                        continue;
+                    }
+
+                    if (semantics.waterProbability.data[nextIndex] <
+                        config_.waterProbabilityThreshold)
+                    {
+                        visited[nextIndex] = 1;
+                        continue;
+                    }
 
                     visited[nextIndex] = 1;
-
-                    const float nextProbability =
-                        water.data[nextIndex];
-
-                    if (water.isValidValue(nextProbability) &&
-                        nextProbability >=
-                            config_.waterProbabilityThreshold)
-                    {
-                        pending.push({
-                            nextRow,
-                            nextCol
-                        });
-                    }
+                    queue.push({nextRow, nextCol});
                 }
             }
 
-            // ----------------------------------------------------
-            // Ignore tiny isolated noise components.
-            // ----------------------------------------------------
-
-            if (componentSize <
+            /*
+             * Ignore tiny components because they are more likely
+             * to represent isolated classification noise than a
+             * meaningful water body.
+             */
+            if (elevations.size() <
                 config_.minimumWaterComponentPixels)
             {
                 continue;
             }
 
-            // No valid elevations in this component.
-            if (!std::isfinite(minElevation) ||
-                !std::isfinite(maxElevation))
-            {
-                report.warnings.push_back(
-                    "A water component had no valid elevation values."
+            const auto [minimumIt, maximumIt] =
+                std::minmax_element(
+                    elevations.begin(),
+                    elevations.end()
                 );
 
-                continue;
-            }
-
             const double elevationRange =
-                maxElevation - minElevation;
-
-            // ----------------------------------------------------
-            // Levelness check
-            // ----------------------------------------------------
+                static_cast<double>(*maximumIt) -
+                static_cast<double>(*minimumIt);
 
             if (elevationRange >
                 config_.waterLevelToleranceMeters)
             {
-                report.waterLevelPassed = false;
+                report.status = QualityStatus::FAIL;
+                report.safeForAbsoluteOutput = false;
 
-                report.errors.push_back(
-                    "A water body failed the levelness check. "
-                    "Observed elevation range = " +
-                    std::to_string(elevationRange) +
-                    " meters."
+                report.violations.push_back(
+                    "A water-body component has an elevation "
+                    "range greater than the configured level tolerance."
                 );
             }
         }
@@ -624,146 +537,120 @@ QualityReport QualityControlService::validateWaterBodies(
     return report;
 }
 
-
-// ============================================================
-// Merge individual reports
-// ============================================================
-
-void QualityControlService::mergeReport(
-    QualityReport& destination,
-    const QualityReport& source
+float QualityControlService::calculateOverallConfidence(
+    const GeoreferencedSurfaceBundle& surface
 ) const
 {
-    destination.rasterDimensionsPassed =
-        destination.rasterDimensionsPassed &&
-        source.rasterDimensionsPassed;
+    if (!surface.surfaceConfidence.isValid() ||
+        !surface.validMask.isValid())
+    {
+        return 0.0f;
+    }
 
-    destination.surfaceIdentityPassed =
-        destination.surfaceIdentityPassed &&
-        source.surfaceIdentityPassed;
+    double sum = 0.0;
+    std::size_t count = 0;
 
-    destination.buildingHeightsPassed =
-        destination.buildingHeightsPassed &&
-        source.buildingHeightsPassed;
+    for (std::size_t i = 0;
+         i < surface.surfaceConfidence.data.size();
+         ++i)
+    {
+        if (surface.validMask.data[i] == 0)
+        {
+            continue;
+        }
 
-    destination.waterLevelPassed =
-        destination.waterLevelPassed &&
-        source.waterLevelPassed;
+        const float confidence =
+            surface.surfaceConfidence.data[i];
 
-    destination.checkedPixels +=
-        source.checkedPixels;
+        if (!std::isfinite(confidence))
+        {
+            continue;
+        }
 
-    destination.validPixels +=
-        source.validPixels;
-
-    destination.maxSurfaceIdentityError =
-        std::max(
-            destination.maxSurfaceIdentityError,
-            source.maxSurfaceIdentityError
+        sum += static_cast<double>(
+            std::clamp(confidence, 0.0f, 1.0f)
         );
 
-    destination.meanSurfaceIdentityError =
-        std::max(
-            destination.meanSurfaceIdentityError,
-            source.meanSurfaceIdentityError
-        );
+        ++count;
+    }
 
-    destination.checkedBuildings +=
-        source.checkedBuildings;
+    if (count == 0)
+    {
+        return 0.0f;
+    }
 
-    destination.invalidBuildings +=
-        source.invalidBuildings;
-
-    destination.warnings.insert(
-        destination.warnings.end(),
-        source.warnings.begin(),
-        source.warnings.end()
-    );
-
-    destination.errors.insert(
-        destination.errors.end(),
-        source.errors.begin(),
-        source.errors.end()
+    return static_cast<float>(
+        sum / static_cast<double>(count)
     );
 }
 
-
-// ============================================================
-// FULL MODULE 7 QC
-// ============================================================
-
 QualityReport QualityControlService::validate(
-    const SurfaceBundle& surface,
+    const GeoreferencedSurfaceBundle& surface,
     const BuildingCollection& buildings,
-    const SemanticScene* semanticScene
+    const SemanticScene& semantics
 ) const
 {
-    QualityReport report;
+    QualityReport finalReport;
 
-    // Start with the individual checks as "passing".
-    // Individual checks will turn them false if necessary.
-    report.rasterDimensionsPassed = true;
-    report.surfaceIdentityPassed = true;
-    report.buildingHeightsPassed = true;
-    report.waterLevelPassed = true;
-
-    // --------------------------------------------------------
-    // 1. Surface identity
-    // --------------------------------------------------------
+    finalReport.status = QualityStatus::PASS;
+    finalReport.safeForAbsoluteOutput = true;
 
     const QualityReport surfaceReport =
         validateSurfaceIdentity(surface);
 
-    mergeReport(
-        report,
-        surfaceReport
-    );
-
-    // --------------------------------------------------------
-    // 2. Buildings
-    // --------------------------------------------------------
-
     const QualityReport buildingReport =
         validateBuildings(buildings);
 
-    mergeReport(
-        report,
-        buildingReport
-    );
+    const QualityReport waterReport =
+        validateWaterBodies(surface, semantics);
 
-    // --------------------------------------------------------
-    // 3. Water
-    // --------------------------------------------------------
+    const auto merge =
+        [&finalReport](const QualityReport& report)
+        {
+            if (report.status == QualityStatus::FAIL)
+            {
+                finalReport.status = QualityStatus::FAIL;
+                finalReport.safeForAbsoluteOutput = false;
+            }
+            else if (report.status == QualityStatus::WARN &&
+                     finalReport.status == QualityStatus::PASS)
+            {
+                finalReport.status = QualityStatus::WARN;
+            }
 
-    if (semanticScene != nullptr)
-    {
-        const QualityReport waterReport =
-            validateWaterBodies(
-                surface,
-                *semanticScene
+            finalReport.violations.insert(
+                finalReport.violations.end(),
+                report.violations.begin(),
+                report.violations.end()
             );
 
-        mergeReport(
-            report,
-            waterReport
-        );
-    }
-    else
+            finalReport.userWarnings.insert(
+                finalReport.userWarnings.end(),
+                report.userWarnings.begin(),
+                report.userWarnings.end()
+            );
+        };
+
+    merge(surfaceReport);
+    merge(buildingReport);
+    merge(waterReport);
+
+    finalReport.overallConfidence =
+        calculateOverallConfidence(surface);
+
+    /*
+     * Even with a technically passing QC result, a low model
+     * confidence should remain visible to downstream consumers.
+     */
+    if (finalReport.overallConfidence < 0.50f &&
+        finalReport.status == QualityStatus::PASS)
     {
-        report.warnings.push_back(
-            "Water-level QC skipped: no SemanticScene was supplied."
+        finalReport.status = QualityStatus::WARN;
+
+        finalReport.userWarnings.push_back(
+            "Overall surface confidence is below 0.50."
         );
     }
 
-    // --------------------------------------------------------
-    // 4. Final gate
-    // --------------------------------------------------------
-
-    report.passed =
-        report.rasterDimensionsPassed &&
-        report.surfaceIdentityPassed &&
-        report.buildingHeightsPassed &&
-        report.waterLevelPassed;
-
-    return report;
+    return finalReport;
 }

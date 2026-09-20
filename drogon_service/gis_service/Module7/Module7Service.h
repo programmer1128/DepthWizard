@@ -2,7 +2,9 @@
 
 #include "../QualityControl/QualityControlService.h"
 #include "../RasterDerivatives/RasterDerivativeService.h"
-#include "../structures/Module7Types.h"
+#include "../structures/ExportStructs.h"
+#include "../structures/InferenceStructs.h"
+#include "../structures/SurfaceStructs.h"
 
 #include <optional>
 #include <string>
@@ -10,6 +12,7 @@
 class Module7Service
 {
 public:
+
     struct Config
     {
         QualityControlService::Config qualityControl;
@@ -18,28 +21,37 @@ public:
 
     struct Result
     {
-        bool succeeded = false;
+        /*
+         * true means Module 7 completed successfully.
+         *
+         * A QC WARN does not stop derivative generation.
+         * A QC FAIL does.
+         */
+        bool succeeded{false};
 
         QualityReport qualityReport;
 
         /*
-         * Products only exist when QC passes and derivative
-         * generation succeeds.
+         * Present only when QC did not fail and derivative
+         * generation completed.
          */
         std::optional<RasterProductSet> products;
 
         std::string failureReason;
     };
 
-    explicit Module7Service(Config config = Config{});
+    explicit Module7Service(
+        Config config = Config{}
+    );
 
     Result execute(
-        const SurfaceBundle& surface,
+        const GeoreferencedSurfaceBundle& surface,
         const BuildingCollection& buildings,
-        const SemanticScene* semanticScene = nullptr
+        const SemanticScene& semantics
     ) const;
 
 private:
+
     QualityControlService qualityControlService_;
     RasterDerivativeService rasterDerivativeService_;
 };

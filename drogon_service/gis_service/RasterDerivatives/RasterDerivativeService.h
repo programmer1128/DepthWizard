@@ -1,38 +1,75 @@
 #pragma once
 
-#include "../structures/Module7Types.h"
+#include "../structures/CommonTypes.h"
+#include "../structures/SurfaceStructs.h"
 
 #include <stdexcept>
 
 class RasterDerivativeService
 {
 public:
+
     struct Config
     {
-        // Default sun geometry for hillshade.
-        double hillshadeAltitudeDegrees = 45.0;
-        double hillshadeAzimuthDegrees = 315.0;
+        /*
+         * Hillshade sun geometry.
+         *
+         * Azimuth:
+         *   0   = North
+         *   90  = East
+         *   180 = South
+         *   270 = West
+         *
+         * These are export/display semantics and can be configured
+         * later if the frontend wants different illumination.
+         */
+        float hillshadeSunAzimuth = 315.0f;
+        float hillshadeSunElevation = 45.0f;
 
-        // Prevent division by extremely small pixel spacing.
-        double minimumPixelSpacingMeters = 1e-6;
+        /*
+         * Prevent invalid or near-zero pixel dimensions from
+         * entering the gradient calculation.
+         */
+        double minimumPixelSize = 1e-6;
     };
 
-    explicit RasterDerivativeService(Config config = Config{});
+    explicit RasterDerivativeService(
+        Config config = Config{}
+    );
 
-    // Generate the complete Module 7 raster product set.
-    RasterProductSet generate(const SurfaceBundle& surface) const;
+    /*
+     * Generate the complete GIS product set from the already-fused
+     * georeferenced surface.
+     *
+     * Important:
+     * - DTM/DSM/nDSM are preserved, not recomputed.
+     * - slope/aspect/hillshade are derived from DTM.
+     * - canopy/confidence are carried forward from upstream data.
+     */
+    RasterProductSet generate(
+        const GeoreferencedSurfaceBundle& surface
+    ) const;
 
 private:
+
     Config config_;
 
-    double resolvePixelSpacingX(const RasterMetadata& metadata) const;
-    double resolvePixelSpacingY(const RasterMetadata& metadata) const;
+    double resolvePixelSizeX(
+        const SpatialMetadata& metadata
+    ) const;
 
-    bool isValidCenterAndNeighbors(
+    double resolvePixelSizeY(
+        const SpatialMetadata& metadata
+    ) const;
+
+    bool validNeighborhood(
         const RasterGrid<float>& raster,
         int row,
         int col
     ) const;
 
-    float noDataValue() const;
+    RasterGrid<float> createNoDataRaster(
+        int width,
+        int height
+    ) const;
 };

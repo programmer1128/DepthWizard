@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include <sstream>
 #include <stdexcept>
 
 namespace
@@ -15,279 +14,359 @@ namespace
         return degrees * kPi / 180.0;
     }
 
-    float clampFloat(float value, float minimum, float maximum)
+    float clampValue(float value, float minimum, float maximum)
     {
         return std::max(minimum, std::min(value, maximum));
-    }
-
-    RasterGrid<float> createNoDataRaster(int width, int height)
-    {
-        RasterGrid<float> raster;
-
-        raster.width = width;
-        raster.height = height;
-
-        const float noData = std::numeric_limits<float>::quiet_NaN();
-
-        raster.data.assign(
-            static_cast<std::size_t>(width) *
-            static_cast<std::size_t>(height),
-            noData
-        );
-
-        raster.noData = noData;
-
-        return raster;
     }
 }
 
 RasterDerivativeService::RasterDerivativeService(Config config)
-    : config_(std::move(config))
+    : config_(config)
 {
-    if (config_.minimumPixelSpacingMeters <= 0.0)
+    if (config_.minimumPixelSize <= 0.0)
     {
         throw std::invalid_argument(
-            "RasterDerivativeService: minimum pixel spacing must be positive."
+            "RasterDerivativeService: minimum pixel size must be positive."
         );
     }
 
-    if (config_.hillshadeAltitudeDegrees < 0.0 ||
-        config_.hillshadeAltitudeDegrees > 90.0)
-    {
-        throw std::invalid_argument(
-            "RasterDerivativeService: hillshade altitude must be in [0, 90]."
-        );
-    }
-
-    if (config_.hillshadeAzimuthDegrees < 0.0 ||
-        config_.hillshadeAzimuthDegrees >= 360.0)
+    if (config_.hillshadeSunAzimuth < 0.0f ||
+        config_.hillshadeSunAzimuth >= 360.0f)
     {
         throw std::invalid_argument(
             "RasterDerivativeService: hillshade azimuth must be in [0, 360)."
         );
     }
-}
 
-float RasterDerivativeService::noDataValue() const
-{
-    return std::numeric_limits<float>::quiet_NaN();
-}
-
-double RasterDerivativeService::resolvePixelSpacingX(
-    const RasterMetadata& metadata
-) const
-{
-    // Prefer explicit GSD when available.
-    if (metadata.gsd > config_.minimumPixelSpacingMeters)
-    {
-        return metadata.gsd;
-    }
-
-    // Otherwise use the GeoTransform pixel width.
-    const double dx = std::abs(metadata.geoTransform[1]);
-
-    if (dx <= config_.minimumPixelSpacingMeters)
+    if (config_.hillshadeSunElevation < 0.0f ||
+        config_.hillshadeSunElevation > 90.0f)
     {
         throw std::invalid_argument(
-            "RasterDerivativeService: unable to determine X pixel spacing."
+            "RasterDerivativeService: hillshade elevation must be in [0, 90]."
+        );
+    }
+}
+
+double RasterDerivativeService::resolvePixelSizeX(
+    const SpatialMetadata& metadata
+) const
+{
+    if (metadata.pixelSizeX <= config_.minimumPixelSize)
+    {
+        throw std::invalid_argument(
+            "RasterDerivativeService: invalid X pixel size."
         );
     }
 
-    return dx;
+    return metadata.pixelSizeX;
 }
 
-double RasterDerivativeService::resolvePixelSpacingY(
-    const RasterMetadata& metadata
+double RasterDerivativeService::resolvePixelSizeY(
+    const SpatialMetadata& metadata
 ) const
 {
-    // Prefer explicit GSD when available.
-    if (metadata.gsd > config_.minimumPixelSpacingMeters)
-    {
-        return metadata.gsd;
-    }
-
-    // GeoTransform[5] is normally negative for north-up rasters,
-    // hence abs().
-    const double dy = std::abs(metadata.geoTransform[5]);
-
-    if (dy <= config_.minimumPixelSpacingMeters)
+    if (metadata.pixelSizeY <= config_.minimumPixelSize)
     {
         throw std::invalid_argument(
-            "RasterDerivativeService: unable to determine Y pixel spacing."
+            "RasterDerivativeService: invalid Y pixel size."
         );
     }
 
-    return dy;
+    return metadata.pixelSizeY;
 }
 
-bool RasterDerivativeService::isValidCenterAndNeighbors(
+RasterGrid<float> RasterDerivativeService::createNoDataRaster(
+    int width,
+    int height
+) const
+{
+    RasterGrid<float> raster;
+
+    raster.width = width;
+    raster.height = height;
+
+    raster.data.assign(
+        static_cast<std::size_t>(width) *
+        static_cast<std::size_t>(height),
+        std::numeric_limits<float>::quiet_NaN()
+    );
+
+    return raster;
+}
+
+bool RasterDerivativeService::validNeighborhood(
     const RasterGrid<float>& raster,
     int row,
     int col
 ) const
 {
-    const int width = raster.width;
-    const int height = raster.height;
-
-    if (row <= 0 ||
-        col <= 0 ||
-        row >= height - 1 ||
-        col >= width - 1)
+    if (!raster.isValid())
     {
         return false;
     }
 
-    const float nw = raster.at(row - 1, col - 1);
-    const float n  = raster.at(row - 1, col);
-    const float ne = raster.at(row - 1, col + 1);
+    if (row <= 0 ||
+        col <= 0 ||
+        row >= raster.height - 1 ||
+        col >= raster.width - 1)
+    {
+        return false;
+    }
 
-    const float w  = raster.at(row, col - 1);
-    const float c  = raster.at(row, col);
-    const float e  = raster.at(row, col + 1);
+    for (int rowOffset = -1; rowOffset <= 1; ++rowOffset)
+    {
+        for (int colOffset = -1; colOffset <= 1; ++colOffset)
+        {
+            const float value =
+                raster.data[
+                    static_cast<std::size_t>(row + rowOffset) *
+                        static_cast<std::size_t>(raster.width)
+                    + static_cast<std::size_t>(col + colOffset)
+                ];
 
-    const float sw = raster.at(row + 1, col - 1);
-    const float s  = raster.at(row + 1, col);
-    const float se = raster.at(row + 1, col + 1);
+            if (!std::isfinite(value))
+            {
+                return false;
+            }
+        }
+    }
 
-    return raster.isValidValue(nw) &&
-           raster.isValidValue(n) &&
-           raster.isValidValue(ne) &&
-           raster.isValidValue(w) &&
-           raster.isValidValue(c) &&
-           raster.isValidValue(e) &&
-           raster.isValidValue(sw) &&
-           raster.isValidValue(s) &&
-           raster.isValidValue(se);
+    return true;
 }
 
 RasterProductSet RasterDerivativeService::generate(
-    const SurfaceBundle& surface
+    const GeoreferencedSurfaceBundle& surface
 ) const
 {
-    const int width = surface.DTM.width;
-    const int height = surface.DTM.height;
-
-    if (width <= 0 || height <= 0)
+    /*
+     * ------------------------------------------------------------
+     * 1. Validate input surfaces
+     * ------------------------------------------------------------
+     */
+    if (!surface.dtm.isValid() ||
+        !surface.dsm.isValid() ||
+        !surface.ndsm.isValid() ||
+        !surface.surfaceConfidence.isValid() ||
+        !surface.validMask.isValid())
     {
         throw std::invalid_argument(
-            "RasterDerivativeService: DTM has invalid dimensions."
+            "RasterDerivativeService: one or more surface rasters are invalid."
         );
     }
 
-    const std::size_t expectedSize =
-        static_cast<std::size_t>(width) *
-        static_cast<std::size_t>(height);
+    const int width = surface.dtm.width;
+    const int height = surface.dtm.height;
 
-    if (surface.DTM.data.size() != expectedSize ||
-        surface.DSM.data.size() != expectedSize ||
-        surface.nDSM.data.size() != expectedSize)
+    if (surface.dsm.width != width ||
+        surface.dsm.height != height ||
+        surface.ndsm.width != width ||
+        surface.ndsm.height != height ||
+        surface.surfaceConfidence.width != width ||
+        surface.surfaceConfidence.height != height ||
+        surface.validMask.width != width ||
+        surface.validMask.height != height)
     {
         throw std::invalid_argument(
-            "RasterDerivativeService: DTM, DSM and nDSM dimensions/storage "
-            "do not match."
+            "RasterDerivativeService: surface raster dimensions do not match."
         );
     }
 
-    const double dx = resolvePixelSpacingX(surface.metadata);
-    const double dy = resolvePixelSpacingY(surface.metadata);
+    /*
+     * The derivative formulas require physical pixel spacing.
+     *
+     * These values are supplied by the authoritative SpatialMetadata.
+     */
+    const double pixelSizeX =
+        resolvePixelSizeX(surface.spatialMetadata);
 
+    const double pixelSizeY =
+        resolvePixelSizeY(surface.spatialMetadata);
+
+    /*
+     * ------------------------------------------------------------
+     * 2. Allocate output object
+     * ------------------------------------------------------------
+     */
     RasterProductSet products;
 
     /*
-     * ------------------------------------------------------------
-     * 1. Preserve authoritative base surfaces
-     * ------------------------------------------------------------
-     *
-     * Module 7 is not responsible for rebuilding these surfaces.
+     * Preserve the authoritative spatial metadata.
      */
-    products.DTM = surface.DTM;
-    products.DSM = surface.DSM;
-    products.nDSM = surface.nDSM;
+    products.spatialMetadata =
+        surface.spatialMetadata;
 
-    products.metadata = surface.metadata;
+    products.elevationUnit =
+        surface.elevationUnit;
 
     /*
      * ------------------------------------------------------------
-     * 2. Allocate derivative rasters
+     * 3. Preserve the fused surfaces
      * ------------------------------------------------------------
+     *
+     * Module 7 does NOT recompute them.
      */
-    products.slope = createNoDataRaster(width, height);
-    products.aspect = createNoDataRaster(width, height);
-    products.hillshade = createNoDataRaster(width, height);
+    products.dtm = surface.dtm;
+    products.dsm = surface.dsm;
+    products.ndsm = surface.ndsm;
+
+    /*
+     * Preserve the validity mask and explicit NoData convention.
+     */
+    products.validMask =
+        surface.validMask;
 
     /*
      * ------------------------------------------------------------
-     * 3. Generate slope, aspect and hillshade from DTM
+     * 4. Allocate derivative layers
      * ------------------------------------------------------------
-     *
-     * We use a 3x3 Horn-style neighborhood.
+     */
+    products.slope =
+        createNoDataRaster(width, height);
+
+    products.aspect =
+        createNoDataRaster(width, height);
+
+    products.hillshade =
+        createNoDataRaster(width, height);
+
+    /*
+     * ------------------------------------------------------------
+     * 5. Slope / aspect / hillshade
+     * ------------------------------------------------------------
      *
      * IMPORTANT:
-     * DTM is used here intentionally.
-     * DSM is NOT used for terrain derivatives.
+     *
+     * These are calculated from DTM only.
+     *
+     * We intentionally do NOT use DSM here because buildings and
+     * other elevated structures would introduce artificial terrain
+     * slopes.
      */
-    const double sunAltitudeRad =
-        degreesToRadians(config_.hillshadeAltitudeDegrees);
-
     const double sunAzimuthRad =
-        degreesToRadians(config_.hillshadeAzimuthDegrees);
+        degreesToRadians(
+            static_cast<double>(
+                config_.hillshadeSunAzimuth
+            )
+        );
 
-    const double sinSunAltitude = std::sin(sunAltitudeRad);
-    const double cosSunAltitude = std::cos(sunAltitudeRad);
+    const double sunElevationRad =
+        degreesToRadians(
+            static_cast<double>(
+                config_.hillshadeSunElevation
+            )
+        );
 
-    const float nodata = noDataValue();
+    const double sinSunElevation =
+        std::sin(sunElevationRad);
+
+    const double cosSunElevation =
+        std::cos(sunElevationRad);
 
     for (int row = 1; row < height - 1; ++row)
     {
         for (int col = 1; col < width - 1; ++col)
         {
-            if (!isValidCenterAndNeighbors(surface.DTM, row, col))
+            /*
+             * If the 3x3 DTM neighborhood contains NoData,
+             * we cannot safely calculate a local derivative.
+             */
+            if (!validNeighborhood(
+                    surface.dtm,
+                    row,
+                    col))
             {
-                products.slope.at(row, col) = nodata;
-                products.aspect.at(row, col) = nodata;
-                products.hillshade.at(row, col) = nodata;
                 continue;
             }
 
-            const double zNW = surface.DTM.at(row - 1, col - 1);
-            const double zN  = surface.DTM.at(row - 1, col);
-            const double zNE = surface.DTM.at(row - 1, col + 1);
+            const std::size_t nwIndex =
+                static_cast<std::size_t>(row - 1) *
+                    static_cast<std::size_t>(width)
+                + static_cast<std::size_t>(col - 1);
 
-            const double zW  = surface.DTM.at(row, col - 1);
-            const double zE  = surface.DTM.at(row, col + 1);
+            const std::size_t nIndex =
+                static_cast<std::size_t>(row - 1) *
+                    static_cast<std::size_t>(width)
+                + static_cast<std::size_t>(col);
 
-            const double zSW = surface.DTM.at(row + 1, col - 1);
-            const double zS  = surface.DTM.at(row + 1, col);
-            const double zSE = surface.DTM.at(row + 1, col + 1);
+            const std::size_t neIndex =
+                static_cast<std::size_t>(row - 1) *
+                    static_cast<std::size_t>(width)
+                + static_cast<std::size_t>(col + 1);
+
+            const std::size_t wIndex =
+                static_cast<std::size_t>(row) *
+                    static_cast<std::size_t>(width)
+                + static_cast<std::size_t>(col - 1);
+
+            const std::size_t eIndex =
+                static_cast<std::size_t>(row) *
+                    static_cast<std::size_t>(width)
+                + static_cast<std::size_t>(col + 1);
+
+            const std::size_t swIndex =
+                static_cast<std::size_t>(row + 1) *
+                    static_cast<std::size_t>(width)
+                + static_cast<std::size_t>(col - 1);
+
+            const std::size_t sIndex =
+                static_cast<std::size_t>(row + 1) *
+                    static_cast<std::size_t>(width)
+                + static_cast<std::size_t>(col);
+
+            const std::size_t seIndex =
+                static_cast<std::size_t>(row + 1) *
+                    static_cast<std::size_t>(width)
+                + static_cast<std::size_t>(col + 1);
+
+            const double zNW =
+                surface.dtm.data[nwIndex];
+
+            const double zN =
+                surface.dtm.data[nIndex];
+
+            const double zNE =
+                surface.dtm.data[neIndex];
+
+            const double zW =
+                surface.dtm.data[wIndex];
+
+            const double zE =
+                surface.dtm.data[eIndex];
+
+            const double zSW =
+                surface.dtm.data[swIndex];
+
+            const double zS =
+                surface.dtm.data[sIndex];
+
+            const double zSE =
+                surface.dtm.data[seIndex];
 
             /*
-             * East-west gradient.
+             * Horn-style 3x3 finite difference.
              *
-             * Positive dzdx means elevation increases toward east.
+             * dzdx:
+             *   east-west terrain gradient
+             *
+             * dzdyNorth:
+             *   north-south terrain gradient
              */
             const double dzdx =
                 (
                     (zNE + 2.0 * zE + zSE) -
                     (zNW + 2.0 * zW + zSW)
-                ) / (8.0 * dx);
+                ) / (8.0 * pixelSizeX);
 
-            /*
-             * North-south gradient.
-             *
-             * Positive dzdyNorth means elevation increases toward north.
-             */
             const double dzdyNorth =
                 (
                     (zNW + 2.0 * zN + zNE) -
                     (zSW + 2.0 * zS + zSE)
-                ) / (8.0 * dy);
+                ) / (8.0 * pixelSizeY);
 
             /*
              * ----------------------------------------------------
              * SLOPE
              * ----------------------------------------------------
-             *
-             * slope = atan(horizontal gradient magnitude)
              */
             const double gradientMagnitude =
                 std::sqrt(
@@ -295,140 +374,173 @@ RasterProductSet RasterDerivativeService::generate(
                     dzdyNorth * dzdyNorth
                 );
 
-            const double slopeRad =
+            const double slopeRadians =
                 std::atan(gradientMagnitude);
 
-            const double slopeDeg =
-                slopeRad * 180.0 / kPi;
+            const double slopeDegrees =
+                slopeRadians * 180.0 / kPi;
 
-            products.slope.at(row, col) =
-                static_cast<float>(slopeDeg);
+            products.slope.data[
+                static_cast<std::size_t>(row) *
+                    static_cast<std::size_t>(width)
+                + static_cast<std::size_t>(col)
+            ] =
+                static_cast<float>(slopeDegrees);
 
             /*
              * ----------------------------------------------------
              * ASPECT
              * ----------------------------------------------------
              *
-             * Aspect is the downslope direction:
+             * Compass convention:
              *
-             *   0   = North
-             *   90  = East
-             *   180 = South
-             *   270 = West
+             *   0°   North
+             *   90°  East
+             *   180° South
+             *   270° West
+             *
+             * Aspect is the downslope direction, so we use the
+             * negative gradient.
              */
-            double aspectDeg;
-
-            if (gradientMagnitude <= 1e-12)
+            if (gradientMagnitude > 1e-12)
             {
-                // Flat terrain has no defined aspect.
-                products.aspect.at(row, col) = nodata;
+                double aspectDegrees =
+                    std::atan2(
+                        -dzdx,
+                        -dzdyNorth
+                    ) * 180.0 / kPi;
+
+                if (aspectDegrees < 0.0)
+                {
+                    aspectDegrees += 360.0;
+                }
+
+                products.aspect.data[
+                    static_cast<std::size_t>(row) *
+                        static_cast<std::size_t>(width)
+                    + static_cast<std::size_t>(col)
+                ] =
+                    static_cast<float>(aspectDegrees);
 
                 /*
-                 * Hillshade of a flat surface is independent
-                 * of direction.
+                 * ------------------------------------------------
+                 * HILLSHADE
+                 * ------------------------------------------------
                  */
-                const double hillshade =
-                    255.0 * cosSunAltitude;
+                const double aspectRadians =
+                    degreesToRadians(
+                        aspectDegrees
+                    );
 
-                products.hillshade.at(row, col) =
-                    clampFloat(
+                const double hillshade =
+                    255.0 *
+                    (
+                        cosSunElevation *
+                            std::cos(slopeRadians)
+                        +
+                        sinSunElevation *
+                            std::sin(slopeRadians) *
+                            std::cos(
+                                sunAzimuthRad -
+                                aspectRadians
+                            )
+                    );
+
+                products.hillshade.data[
+                    static_cast<std::size_t>(row) *
+                        static_cast<std::size_t>(width)
+                    + static_cast<std::size_t>(col)
+                ] =
+                    clampValue(
                         static_cast<float>(hillshade),
                         0.0f,
                         255.0f
                     );
-
-                continue;
             }
-
-            aspectDeg =
-                std::atan2(
-                    -dzdx,
-                    -dzdyNorth
-                ) * 180.0 / kPi;
-
-            if (aspectDeg < 0.0)
+            else
             {
-                aspectDeg += 360.0;
+                /*
+                 * Flat terrain has no meaningful aspect.
+                 *
+                 * We leave aspect as NoData, but the flat-surface
+                 * hillshade remains valid.
+                 */
+                const double hillshade =
+                    255.0 * cosSunElevation;
+
+                products.hillshade.data[
+                    static_cast<std::size_t>(row) *
+                        static_cast<std::size_t>(width)
+                    + static_cast<std::size_t>(col)
+                ] =
+                    clampValue(
+                        static_cast<float>(hillshade),
+                        0.0f,
+                        255.0f
+                    );
             }
-
-            products.aspect.at(row, col) =
-                static_cast<float>(aspectDeg);
-
-            /*
-             * ----------------------------------------------------
-             * HILLSHADE
-             * ----------------------------------------------------
-             *
-             * Illumination based on:
-             * - sun altitude
-             * - sun azimuth
-             * - terrain slope
-             * - terrain aspect
-             */
-            const double aspectRad =
-                degreesToRadians(aspectDeg);
-
-            const double hillshade =
-                255.0 *
-                (
-                    cosSunAltitude * std::cos(slopeRad) +
-                    sinSunAltitude *
-                    std::sin(slopeRad) *
-                    std::cos(
-                        sunAzimuthRad - aspectRad
-                    )
-                );
-
-            products.hillshade.at(row, col) =
-                clampFloat(
-                    static_cast<float>(hillshade),
-                    0.0f,
-                    255.0f
-                );
         }
     }
 
     /*
      * ------------------------------------------------------------
-     * 4. Canopy height
+     * 6. Product semantics
      * ------------------------------------------------------------
-     *
-     * Do NOT invent a canopy model here.
-     *
-     * If upstream Module 6 already supplied canopy height,
-     * preserve it.
      */
-    if (surface.canopyHeight.has_value())
-    {
-        products.canopyHeight = surface.canopyHeight;
-    }
-    else
-    {
-        products.canopyHeight = std::nullopt;
-    }
+    products.slopeUnits =
+        "DEGREES";
+
+    products.aspectConvention =
+        "CLOCKWISE_FROM_NORTH";
+
+    products.hillshade =
+        products.hillshade;
+
+    products.sunAzimuth =
+        config_.hillshadeSunAzimuth;
+
+    products.sunElevation =
+        config_.hillshadeSunElevation;
 
     /*
      * ------------------------------------------------------------
-     * 5. Confidence
+     * 7. Canopy height
      * ------------------------------------------------------------
      *
-     * Preserve upstream confidence.
-     *
-     * For the current interim Module7Types contract,
-     * RasterProductSet::confidence is required, so a missing
-     * upstream confidence raster becomes an all-NoData raster.
-     *
-     * We deliberately do NOT fabricate a numerical confidence
-     * value.
+     * Canopy isolation belongs to the upstream canopy-processing
+     * stage. Module 7 should not reinterpret arbitrary nDSM pixels
+     * as vegetation.
      */
-    if (surface.confidence.has_value())
-    {
-        products.confidence = *surface.confidence;
-    }
-    else
-    {
-        products.confidence = createNoDataRaster(width, height);
-    }
+    products.canopyHeight =
+        std::nullopt;
+
+    /*
+     * There is currently no canopy raster inside
+     * GeoreferencedSurfaceBundle.
+     *
+     * Therefore the optional product stays empty until the
+     * upstream contract is extended to provide it.
+     */
+
+    /*
+     * ------------------------------------------------------------
+     * 8. Confidence
+     * ------------------------------------------------------------
+     *
+     * Preserve the upstream surface confidence directly.
+     */
+    products.confidence =
+        surface.surfaceConfidence;
+
+    /*
+     * Explicit serialization NoData value.
+     *
+     * Actual internal invalid pixels remain represented by NaN
+     * inside the RasterGrid. TiffExporter later converts them to
+     * the canonical numeric NoData value.
+     */
+    products.noDataValue =
+        -9999.0f;
 
     return products;
 }

@@ -49,10 +49,11 @@ file(GLOB COMPRESSOR CONFIGURE_DEPENDS "CompressionLib/*.cc" "CompressionLib/*.c
 file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cpp")
 file(GLOB STRUCTURES CONFIGURE_DEPENDS "structures/*.cc" "structures/*.cpp" "structures/*.h")
 file(GLOB_RECURSE IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp")
+
 file(GLOB QUALITY_CONTROL_SRC
      CONFIGURE_DEPENDS
      "QualityControl/*.cc"
-     "QualityControl/*.cpp") // for module qc
+     "QualityControl/*.cpp")
 
 file(GLOB RASTER_DERIVATIVES_SRC
      CONFIGURE_DEPENDS
