@@ -2,6 +2,8 @@
 #include "../ImagePreprocessing/ImagePreprocessingService.h"
 #include <gdal_priv.h>
 #include <cpl_vsi.h>
+#include "../ImagePreprocessing/RasterIngestService.h"
+#include <ogr_spatialref.h>
 
 class ImagePreprocessingTest : public ::testing::Test
 {
@@ -29,6 +31,67 @@ protected:
         scene.width = 1;
         scene.height = 1;
         return scene;
+    }
+};
+
+class RasterIngestTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        GDALAllRegister();
+    }
+
+    // Helper to generate a valid GeoTIFF in memory and return its bytes
+    std::vector<uint8_t> createValidGeoTiffBytes(bool isGeographic, double pixelWidth, double pixelHeight)
+    {
+        std::string path = "/vsimem/temp_gen.tif";
+        GDALDriver *driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+        GDALDataset *ds = driver->Create(path.c_str(), 10, 10, 3, GDT_Byte, nullptr);
+
+        double geoTransform[6] = {0.0, pixelWidth, 0.0, 0.0, 0.0, -pixelHeight};
+        ds->SetGeoTransform(geoTransform);
+
+        OGRSpatialReference srs;
+        if (isGeographic)
+        {
+            srs.SetWellKnownGeogCS("WGS84");
+        }
+        else
+        {
+            srs.importFromEPSG(32633); // UTM Zone 33N
+        }
+
+        char *wkt = nullptr;
+        srs.exportToWkt(&wkt);
+        ds->SetProjection(wkt);
+        CPLFree(wkt);
+        GDALClose(ds);
+
+        vsi_l_offset length;
+        GByte *data = VSIGetMemFileBuffer(path.c_str(), &length, FALSE);
+        std::vector<uint8_t> bytes(data, data + length);
+        VSIUnlink(path.c_str());
+
+        return bytes;
+    }
+
+    // Workaround to create a Drogon HttpFile since its constructor is private
+    drogon::HttpFile mockHttpFile(const std::vector<uint8_t> &bytes)
+    {
+        std::string body = "--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.tif\"\r\n\r\n";
+        body.append(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+        body += "\r\n--boundary--\r\n";
+
+        auto req = drogon::HttpRequest::newHttpRequest();
+        req->setMethod(drogon::Post);
+        req->setContentTypeCode(drogon::CT_MULTIPART_FORM_DATA);
+        req->addHeader("Content-Type", "multipart/form-data; boundary=boundary");
+        req->setBody(body);
+
+        drogon::MultiPartParser parser;
+        parser.parse(req);
+        return parser.getFiles()[0];
     }
 };
 
@@ -394,4 +457,97 @@ TEST_F(ImagePreprocessingTest, ExtremeAsymmetricSliverProcessing)
     EXPECT_EQ(result.validPixelMask.data[5000], 1);
 
     VSIUnlink(path.c_str());
+}
+
+TEST_F(RasterIngestTest, CleansUpVirtualRamDiskOnCorruptData)
+{
+    // If a user uploads a corrupted file or a random text file, GDALOpen will fail.
+    // We MUST ensure the virtual RAM disk file (/vsimem/raw_job123.tif) is completely
+    // erased, otherwise the server will leak RAM on every bad request.
+
+    std::string jobId = "leak_test";
+    std::vector<uint8_t> badBytes = {0x00, 0xFF, 0x12, 0x45}; // Junk data
+
+    EXPECT_THROW({ RasterIngestService::ingestGeoTiff(jobId, mockHttpFile(badBytes)); }, std::runtime_error);
+
+    // RIGOROUS CHECK: Ensure the file was unlinked from RAM
+    VSIStatBufL stat;
+    std::string expectedPath = "/vsimem/raw_" + jobId + ".tif";
+    EXPECT_NE(VSIStatL(expectedPath.c_str(), &stat), 0); // VSIStatL returns 0 if file exists
+}
+
+TEST_F(RasterIngestTest, SafelyHandlesGeographicCoordinateScaling)
+{
+    // If the image is in WGS84 (Degrees), the pixels might be 0.00027 degrees wide.
+    // The service must mathematically detect this and multiply by 111320.0 to convert to meters.
+
+    std::string jobId = "geo_test";
+    double degreeSize = 0.0001;
+    std::vector<uint8_t> tiffBytes = createValidGeoTiffBytes(true, degreeSize, degreeSize);
+
+    SceneInput result = RasterIngestService::ingestGeoTiff(jobId, mockHttpFile(tiffBytes));
+
+    // 0.0001 degrees * 111320.0 meters/degree = 11.132 meters
+    EXPECT_TRUE(result.spatialMetadata.has_value()); // Assert it's not empty first
+    EXPECT_NEAR(result.spatialMetadata->gsd, 11.132, 0.001);
+    EXPECT_TRUE(result.spatialMetadata->isGeoreferenced);
+
+    VSIUnlink(result.inputPath.c_str());
+}
+
+TEST_F(RasterIngestTest, ValidatesAsymmetricPixelGsd)
+{
+    // In projected metric systems (e.g., UTM), the X and Y pixel sizes might be slightly different
+    // due to sensor warping (e.g., 2.0m width, 3.0m height).
+    // The GSD should be the geometric mean: sqrt(2.0 * 3.0) = 2.44949.
+
+    std::string jobId = "asym_test";
+    std::vector<uint8_t> tiffBytes = createValidGeoTiffBytes(false, 2.0, 3.0);
+
+    SceneInput result = RasterIngestService::ingestGeoTiff(jobId, mockHttpFile(tiffBytes));
+
+    EXPECT_TRUE(result.spatialMetadata.has_value()); // Assert it's not empty first
+    EXPECT_NEAR(result.spatialMetadata->gsd, 2.44949, 0.001);
+
+    VSIUnlink(result.inputPath.c_str());
+}
+
+TEST_F(RasterIngestTest, ThrowsExceptionOnMissingSpatialMetadata)
+{
+    // If a user uploads a normal PNG renamed to .tif, it won't have a GeoTransform or CRS.
+    // The service must reject it immediately rather than passing an unanchored map to the AI.
+
+    std::string path = "/vsimem/no_spatial.tif";
+    GDALDriver *driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    GDALDataset *ds = driver->Create(path.c_str(), 10, 10, 3, GDT_Byte, nullptr);
+    // Explicitly NOT setting GeoTransform or CRS
+    GDALClose(ds);
+
+    vsi_l_offset length;
+    GByte *data = VSIGetMemFileBuffer(path.c_str(), &length, FALSE);
+    std::vector<uint8_t> badTiff(data, data + length);
+    VSIUnlink(path.c_str());
+
+    EXPECT_THROW({ RasterIngestService::ingestGeoTiff("missing_spatial", mockHttpFile(badTiff)); }, std::runtime_error);
+}
+
+TEST_F(RasterIngestTest, GeneratesValidJpegMagicBytes)
+{
+    // The service extracts raw TIFF bands, interleaves them, and encodes them to JPEG in RAM.
+    // This test proves the resulting buffer is actually a valid JPEG by checking its Magic Header.
+
+    std::string jobId = "jpeg_test";
+    std::vector<uint8_t> tiffBytes = createValidGeoTiffBytes(false, 1.0, 1.0);
+
+    SceneInput result = RasterIngestService::ingestGeoTiff(jobId, mockHttpFile(tiffBytes));
+
+    // JPEG files must strictly begin with 0xFF 0xD8 0xFF
+    ASSERT_GE(result.rgbTextureBytes.size(), 3);
+    EXPECT_EQ(result.rgbTextureBytes[0], 0xFF);
+    EXPECT_EQ(result.rgbTextureBytes[1], 0xD8);
+    EXPECT_EQ(result.rgbTextureBytes[2], 0xFF);
+
+    EXPECT_EQ(result.textureMimeType, "image/jpeg");
+
+    VSIUnlink(result.inputPath.c_str());
 }

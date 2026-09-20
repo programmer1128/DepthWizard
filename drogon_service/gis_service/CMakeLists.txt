@@ -50,6 +50,7 @@ file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cp
 file(GLOB STRUCTURES CONFIGURE_DEPENDS "structures/*.cc" "structures/*.cpp" "structures/*.h")
 file(GLOB_RECURSE IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp" "ImageTilingService/OutputStitching/*.cc")
 file(GLOB HEIGHT_SERVICE CONFIGURE_DEPENDS "HeightService/*.cc" "HeightService/*.cpp")
+file(GLOB PREPROCESSING_SRC CONFIGURE_DEPENDS "ImagePreprocessing/*.cc" "ImagePreprocessing/*.cpp")
 
 #COMPILER OPTIMIZATIONS (Release Mode)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -84,7 +85,8 @@ target_sources(${PROJECT_NAME}
                ${DATA_HANDLERS}
                ${IMAGE_TILER}
                ${STRUCTURES}
-               ${HEIGHT_SERVICE})
+               ${HEIGHT_SERVICE}
+               ${PREPROCESSING_SRC})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -108,6 +110,7 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/HannAssembler
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/TilingOLS
                            ${CMAKE_CURRENT_SOURCE_DIR}/HeightService
+                           ${CMAKE_CURRENT_SOURCE_DIR}/ImagePreprocessing
                            ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
 
 
