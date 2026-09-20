@@ -1,5 +1,9 @@
+<<<<<<< HEAD
 # Bumped to 3.10 to remove the CMake deprecation warning you saw
 cmake_minimum_required(VERSION 3.10) 
+=======
+cmake_minimum_required(VERSION 3.10)
+>>>>>>> test/image_preprocessing_avishikta
 project(gis_service_test CXX)
 
 # 1. Existing Drogon API Tests
@@ -7,6 +11,7 @@ add_executable(${PROJECT_NAME} test_main.cc)
 target_link_libraries(${PROJECT_NAME} PRIVATE Drogon::Drogon)
 ParseAndAddDrogonTests(${PROJECT_NAME})
 
+<<<<<<< HEAD
 # 2. Metric Stitcher Google Test Binary
 find_package(GTest REQUIRED)
 find_package(OpenMP REQUIRED)
@@ -56,4 +61,30 @@ target_link_libraries(building_reconstruction_test
     GTest::gtest 
     GTest::gtest_main 
     ${OpenCV_LIBS}
+=======
+# 2. Find Dependencies
+find_package(GTest REQUIRED)
+find_package(GDAL REQUIRED)
+find_package(OpenMP REQUIRED)
+
+# 3. Image Preprocessing Tests (Module 1)
+add_executable(image_preprocessing_test
+    ImagePreprocessing_test.cc
+    ../ImagePreprocessing/ImagePreprocessingService.cc
+)
+
+# Tell the test binary where to find the headers
+target_include_directories(image_preprocessing_test PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${GDAL_INCLUDE_DIRS}
+)
+
+# Link Drogon, GTest, GDAL, and OpenMP multithreading
+target_link_libraries(image_preprocessing_test PRIVATE 
+    Drogon::Drogon
+    GTest::gtest 
+    GTest::gtest_main
+    ${GDAL_LIBRARIES} 
+    OpenMP::OpenMP_CXX
+>>>>>>> test/image_preprocessing_avishikta
 )
