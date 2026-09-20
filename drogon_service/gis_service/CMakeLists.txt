@@ -31,9 +31,6 @@ find_package(Halide REQUIRED)
 #Eigen library dependency
 find_package(Eigen3 REQUIRED)
 
-# OpenCV library dependency for Building Reconstruction
-find_package(OpenCV REQUIRED COMPONENTS core imgproc)
-
 #SOURCE FILE DISCOVERY (Package-by-Feature Architecture)
 # Explicitly grab sources from each dedicated service folder
 
@@ -53,8 +50,6 @@ file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cp
 file(GLOB STRUCTURES CONFIGURE_DEPENDS "structures/*.cc" "structures/*.cpp" "structures/*.h")
 file(GLOB_RECURSE IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp" "ImageTilingService/OutputStitching/*.cc")
 file(GLOB HEIGHT_SERVICE CONFIGURE_DEPENDS "HeightService/*.cc" "HeightService/*.cpp")
-file(GLOB IMAGE_PREPROCESSING_SRC CONFIGURE_DEPENDS "ImagePreprocessing/*.cc" "ImagePreprocessing/*.cpp")
-file(GLOB BUILDING_RECONSTRUCTION_SRC CONFIGURE_DEPENDS "BuildingReconstruction/*.cc" "BuildingReconstruction/*.cpp")
 
 #COMPILER OPTIMIZATIONS (Release Mode)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -89,9 +84,7 @@ target_sources(${PROJECT_NAME}
                ${DATA_HANDLERS}
                ${IMAGE_TILER}
                ${STRUCTURES}
-               ${HEIGHT_SERVICE}
-               ${IMAGE_PREPROCESSING_SRC}
-               ${BUILDING_RECONSTRUCTION_SRC})
+               ${HEIGHT_SERVICE})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -115,10 +108,7 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/HannAssembler
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/TilingOLS
                            ${CMAKE_CURRENT_SOURCE_DIR}/HeightService
-                           ${CMAKE_CURRENT_SOURCE_DIR}/ImagePreprocessing
-                           ${CMAKE_CURRENT_SOURCE_DIR}/BuildingReconstruction
-                           ${GDAL_INCLUDE_DIRS}
-                           ${OpenCV_INCLUDE_DIRS}) # Bind GDAL headers
+                           ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
 
 
 #LINK LIBRARIES TO THE TARGET
@@ -131,7 +121,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     OpenMP::OpenMP_CXX #OpenMp Multi threading 
     Halide
     Eigen3::Eigen
-    ${OpenCV_LIBS} # Bind OpenCV for Morphology and Watershed
 )
 
 if (CMAKE_CXX_STANDARD LESS 20)

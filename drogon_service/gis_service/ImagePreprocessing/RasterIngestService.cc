@@ -103,7 +103,7 @@ SceneInput RasterIngestService::ingestGeoTiff(const std::string &jobId, const dr
     {
         int srcBandIdx = (b <= numBands) ? b : 1;
         GDALRasterBand *poBand = poDS->GetRasterBand(srcBandIdx);
-        (void)poBand->RasterIO(GF_Read, 0, 0, width, height, bandBuffer.data(), width, height, GDT_Byte, 0, 0);
+        poBand->RasterIO(GF_Read, 0, 0, width, height, bandBuffer.data(), width, height, GDT_Byte, 0, 0);
 
 #pragma omp parallel for schedule(static)
         for (size_t i = 0; i < totalPixels; ++i)

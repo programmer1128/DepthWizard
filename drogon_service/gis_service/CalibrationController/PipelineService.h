@@ -43,9 +43,9 @@ private:
         const std::vector<float> &relativeDsm, int width, int height,
         const std::vector<uint8_t> &textureBytes) const;
 
-    // inline std::vector<uint8_t> extractJpegTexture(
-    //     const std::string &vsi_path,
-    //     const drogon::HttpFile &imageFile) const;
+    inline std::vector<uint8_t> extractJpegTexture(
+        const std::string &vsi_path,
+        const drogon::HttpFile &imageFile) const;
 
     inline std::vector<uint8_t> extractTextureFromNormalImage(const drogon::HttpFile &imageFile);
 };
