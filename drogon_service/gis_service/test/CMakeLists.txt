@@ -32,3 +32,28 @@ target_link_libraries(metric_output_stitcher_test
     GTest::gtest_main
     OpenMP::OpenMP_CXX
 )
+
+# 3. NEW: Building Reconstruction OpenCV Tests
+find_package(OpenCV REQUIRED COMPONENTS core imgproc)
+
+add_executable(building_reconstruction_test
+    BuildingReconstruction_test.cc
+    ../BuildingReconstruction/BuildingMaskProcessor.cc
+    ../BuildingReconstruction/BuildingInstanceExtractor.cc
+)
+
+# Tell the test binary where to find the headers and OpenCV
+target_include_directories(building_reconstruction_test PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_CURRENT_SOURCE_DIR}/../structures
+    ${OpenCV_INCLUDE_DIRS}
+)
+
+# Link Drogon, GTest, and OpenCV
+target_link_libraries(building_reconstruction_test 
+    PRIVATE 
+    Drogon::Drogon 
+    GTest::gtest 
+    GTest::gtest_main 
+    ${OpenCV_LIBS}
+)
