@@ -22,6 +22,20 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
 
     const int numClasses = payload.allTiles[0].semanticLogits.classCount; // number of semantic categories (6 for GAMUS)
 
+    // FIX 1 : Strict Validation Pass
+    for (const auto &tile : payload.allTiles)
+    {
+        size_t expected_size = static_cast<size_t>(tile.placement.paddedWidth) * tile.placement.paddedHeight;
+        if (tile.metricNdsm.data.size() != expected_size)
+        {
+            throw std::invalid_argument("MetricOutputStitcher: Tile grid dimensions mismatch.");
+        }
+        if (tile.semanticLogits.classCount != numClasses)
+        {
+            throw std::invalid_argument("MetricOutputStitcher: Inconsistent semantic class count.");
+        }
+    }
+
     InferenceBundle bundle; // 9 raster grids -> nDSM, confidence, valid mask, 6 semantic logit channels
 
     // lambdas to initialize the existing RasterGrid struct safely
@@ -58,13 +72,15 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
     bundle.globalSemanticLogits.layout = TensorLayout::CHW; // Channel-Height-Width
 
     // weight accum for denominator of blending equation (weighted avg) : sum(pred_val*wts)/sum(wts)
-    std::vector<float> globalWeights(globalPixels, 0.0f);
+    std::vector<float> globalWeights(globalPixels, 0.0f); // for nDSM and Logits (w_hann*conf)
+    std::vector<float> hannWeights(globalPixels, 0.0f);   // for precise confidence averaging (w_hann)
 
     // raw pointers for fast OpenMP array access
     float *pNdsm = bundle.globalNdsm.data.data();
     float *pConf = bundle.globalNdsmConfidence.data.data();
     uint8_t *pMask = bundle.globalValidMask.data.data();
     float *pWeight = globalWeights.data();
+    float *pHannWeight = hannWeights.data();
 
     float *pGround = bundle.globalSemanticLogits.groundLogits.data.data();
     float *pBldg = bundle.globalSemanticLogits.buildingLogits.data.data();
@@ -85,17 +101,21 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
         const int tx = tile.placement.sourceX;
         const int ty = tile.placement.sourceY;
 
+        // FIX 2 : Prevention of division-by-zero on 1x1 tiles
+        float div_w = (tw > 1) ? static_cast<float>(tw - 1) : 1.0f;
+        float div_h = (th > 1) ? static_cast<float>(th - 1) : 1.0f;
+
         // precomputing the Hann window curves to eliminate extreme no. of std::cos() calls
         std::vector<float> hann_x_cache(tw);
         for (int c = 0; c < tw; ++c)
         {
-            hann_x_cache[c] = 0.5f * (1.0f - std::cos((2.0f * M_PI * c) / (tw - 1.0f)));
+            hann_x_cache[c] = 0.5f * (1.0f - std::cos((2.0f * M_PI * c) / div_w));
         }
 
         std::vector<float> hann_y_cache(th);
         for (int r = 0; r < th; ++r)
         {
-            hann_y_cache[r] = 0.5f * (1.0f - std::cos((2.0f * M_PI * r) / (th - 1.0f)));
+            hann_y_cache[r] = 0.5f * (1.0f - std::cos((2.0f * M_PI * r) / div_h));
         }
 
 // parallel row operations within curr tile -> as we process tiles sequentially, no two threads will ever write to the same global pixel at the same time
@@ -110,9 +130,6 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
 
             for (int c = 0; c < tw; ++c)
             {
-                float hann_x = hann_x_cache[c];                  // read from cache
-                float w_hann = std::max(hann_x * hann_y, 1e-6f); // 2D Hann Window
-
                 int global_c = tx + c;
                 if (global_c < 0 || global_c >= gw)
                     continue;
@@ -120,13 +137,26 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
                 int localIdx = r * tw + c;
                 size_t globalIdx = static_cast<size_t>(global_r) * gw + global_c;
 
+                // FIX 3 : Strict Valid Mask Gating
+                uint8_t isValid = tile.validMask.data[localIdx];
+                if (isValid == 0)
+                    continue;
+
+                float hann_x = hann_x_cache[c];                  // read from cache
+                float w_hann = std::max(hann_x * hann_y, 1e-6f); // 2D Hann Window
+
                 float conf = tile.ndsmConfidence.data[localIdx];
                 float active_weight = w_hann * conf;
 
                 // structural data accumulation
                 pNdsm[globalIdx] += (tile.metricNdsm.data[localIdx] * active_weight);
                 pWeight[globalIdx] += active_weight;
-                pConf[globalIdx] += conf; // to be averaged by overlap count later
+
+                // FIX 4 : Confidence and Hann weights accum
+                pConf[globalIdx] += (conf * w_hann);
+                pHannWeight[globalIdx] += w_hann;
+
+                // pConf[globalIdx] += conf; // to be averaged by overlap count later
 
                 if (tile.validMask.data[localIdx] == 1)
                 {
@@ -149,7 +179,7 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
     for (size_t i = 0; i < globalPixels; ++i)
     {
         float w_sum = pWeight[i];
-        if (w_sum > 1e-6f)
+        if (w_sum >= 1e-7f) // FIX 5 : Lowered tolerance to rescue extreme edge pixels
         {
             pNdsm[i] /= w_sum;
             pGround[i] /= w_sum;
@@ -164,8 +194,19 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
             pNdsm[i] = 0.0f; // failsafe for unweighted NoData regions
         }
 
-        // in a standard stride, a pixel is covered by max 4 overlapping tiles -> strict statistical probability between 0.0 and 1.0 (0% to 100%)
-        pConf[i] = std::min(pConf[i] / 4.0f, 1.0f);
+        // FIX 6 : Exact weighted average for model confidence
+        float h_sum = pHannWeight[i];
+        if (h_sum >= 1e-7f)
+        {
+            pConf[i] = std::min(pConf[i] / h_sum, 1.0f);
+        }
+        else
+        {
+            pConf[i] = 0.0f;
+        }
+
+        // // in a standard stride, a pixel is covered by max 4 overlapping tiles -> strict statistical probability between 0.0 and 1.0 (0% to 100%)
+        // pConf[i] = std::min(pConf[i] / 4.0f, 1.0f);
     }
 
     // the model metadata is hardcoded for the InferenceBundle -> since it was removed from the individual tiles to save memory
