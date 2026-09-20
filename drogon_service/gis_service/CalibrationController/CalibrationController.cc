@@ -1,5 +1,3 @@
-/*
-
 #include "CalibrationController.h"
 #include "../SrtmExtractor/SrtmExtractor.h"
 #include "../RasterProcessor/RasterProcessor.h"
@@ -9,6 +7,8 @@
 #include <fstream>
 #include <filesystem> // For deleting the temporary file
 #include <cstring>
+
+/*
 
 drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(drogon::HttpRequestPtr req)
 {
@@ -144,92 +144,63 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::processNormalImageF
      }
 }
 
-
-
-// void CalibrationController::processTerrain(const drogon::HttpRequestPtr& req,
-//                                            std::function<void (const drogon::HttpResponsePtr &)> &&callback)
-// {
-//     // parse the uploaded file from the HTTP request
-//     drogon::MultiPartParser fileUpload;
-//     if (fileUpload.parse(req) != 0 || fileUpload.getFiles().empty())
-//     {
-//         Json::Value error;
-//         error["status"] = "error";
-//         error["message"] = "No file uploaded. Please attach a GeoTIFF.";
-//         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-//         resp->setStatusCode(drogon::k400BadRequest);
-//         callback(resp);
-//         return;
-//     }
-
-//     const auto& file = fileUpload.getFiles()[0];
-    
-//     // save the uploaded file temporarily to the hard drive
-//     // we generate a UUID so multiple users dont overwrite each other's uploads
-//     std::string temp_file_path = "./temp_upload_" + drogon::utils::getUuid() + ".tif";
-//     file.saveAs(temp_file_path);
-
-//     try
-//     {
-//         // hand over to srtm extractor
-
-//         RasterDatasets datasets = SrtmExtractor::fetchTile(temp_file_path);
-        
-//         if (!datasets.hInputDS || !datasets.hDemDS)
-//         {
-//             throw std::runtime_error("Failed to extract datasets from AWS or input image.");
-//         }
-
-//         // hand over to raster processor
-
-//         std::vector<float> final_matrix = RasterProcessor::processor(std::move(datasets.hInputDS), std::move(datasets.hDemDS));
-
-//         // write matrix to a text file
-
-//         std::string output_txt_path = "./final_matrix_" + drogon::utils::getUuid() + ".txt";
-//         std::ofstream outFile(output_txt_path);
-        
-//         if (outFile.is_open())
-//         {
-//             outFile << "Final Extracted Float Matrix\n";
-//             outFile << "Total Pixels: " << final_matrix.size() << "\n\n";
-            
-//             for (size_t i = 0; i < final_matrix.size(); ++i)
-//             {
-//                 outFile << final_matrix[i] << " ";
-
-//                 // added a line break every 10 numbers to make the text file readable
-//                 if ((i + 1) % 10 == 0) outFile << "\n"; 
-//             }
-//             outFile.close();
-//         }
-
-//         // Delete the temporary uploaded file from the SSD
-//         std::filesystem::remove(temp_file_path);
-
-//         // return success message
-//         Json::Value success;
-//         success["status"] = "success";
-//         success["message"] = "Pipeline completed successfully.";
-//         success["matrix_size"] = static_cast<Json::Value::UInt64>(final_matrix.size());
-//         success["saved_file"] = output_txt_path;
-
-//         auto resp = drogon::HttpResponse::newHttpJsonResponse(success);
-//         callback(resp);
-//     }
-//     catch (const std::exception& e)
-//     {
-//         // If the pipeline crashes, we must still delete the temporary file!
-//         std::filesystem::remove(temp_file_path);
-
-//         Json::Value error;
-//         error["status"] = "error";
-//         error["message"] = e.what();
-        
-//         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-//         resp->setStatusCode(drogon::k500InternalServerError);
-//         callback(resp);
-//     }
-// }
-
 */
+
+drogon::HttpResponsePtr CalibrationController::toHttpResponse(const PipelineResult& result)
+{
+    Json::Value json;
+    
+    if (result.status == PipelineStatus::FATAL_ERROR) {
+        json["status"] = "error";
+    } else {
+        json["status"] = "success";
+    }
+
+    json["uuid"] = result.jobId;
+    json["mode"] = (result.processingMode == PipelineMode::GEOREFERENCED) ? "absolute" : "relative";
+    
+    if (result.manifest.glb.url.has_value()) {
+        json["glb_url"] = result.manifest.glb.url.value();
+    }
+
+    // Map the raster processing statuses
+    auto mapArtifact = [](const ArtifactStatus& artifact) -> Json::Value {
+        Json::Value node;
+        switch(artifact.status) {
+            case JobStatus::QUEUED: node["status"] = "queued"; break;
+            case JobStatus::PROCESSING: node["status"] = "processing"; break;
+            case JobStatus::READY: 
+                node["status"] = "ready"; 
+                if (artifact.url.has_value()) node["url"] = artifact.url.value();
+                break;
+            case JobStatus::FAILED: node["status"] = "failed"; break;
+        }
+        return node;
+    };
+
+    json["artifacts"]["dsm"] = mapArtifact(result.manifest.dsm);
+    json["artifacts"]["dtm"] = mapArtifact(result.manifest.dtm);
+    json["artifacts"]["ndsm"] = mapArtifact(result.manifest.ndsm);
+    json["artifacts"]["slope"] = mapArtifact(result.manifest.slope);
+    json["artifacts"]["hillshade"] = mapArtifact(result.manifest.hillshade);
+    json["artifacts"]["confidence"] = mapArtifact(result.manifest.confidence);
+    
+    if (result.manifest.canopyHeight.has_value()) {
+        json["artifacts"]["canopy"] = mapArtifact(result.manifest.canopyHeight.value());
+    }
+
+    // Map Quality Report
+    json["quality"]["status"] = (result.qualityReport.status == QualityStatus::PASS) ? "pass" : 
+                                (result.qualityReport.status == QualityStatus::WARN) ? "warn" : "fail";
+    json["quality"]["confidence"] = result.qualityReport.overallConfidence;
+    
+    Json::Value warningsArray(Json::arrayValue);
+    for (const auto& w : result.qualityReport.userWarnings) warningsArray.append(w);
+    json["quality"]["warnings"] = warningsArray;
+
+    auto resp = drogon::HttpResponse::newHttpJsonResponse(json);
+    if (result.status == PipelineStatus::FATAL_ERROR) resp->setStatusCode(drogon::k500InternalServerError);
+    else resp->setStatusCode(drogon::k200OK);
+    
+    return resp;
+}

@@ -1,330 +1,234 @@
-//This file is for the generation of the .glb file for the fast rendering on frontend
+// Iterates through an arbitrary number of primitives, handles the strict 4-byte 
+// memory alignment rules required by WebGL/glTFast and serializes the JSON header
+
 #include "GltfPackager.h"
 #include <iostream>
 #include <cstring>
 #include <sstream>
 
-// Only define these if not defined elsewhere in your project
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "tiny_gltf.h"
 
-//draco compression implemented GLTF packager
-std::vector<uint8_t> GltfPackager::buildToMemory(
-      const DracoCompressionResult& dracoResult,
-      size_t numVertices,
-      size_t numIndices,
-      const double bounds[6], 
-      const char* imgData,
-      size_t imgLength)
+GlbBuildResult GltfPackager::buildSceneToMemory(
+    const SceneMesh& scene, 
+    const std::vector<DracoCompressionResult>& compressedPrimitives)
 {
-      if (!dracoResult.success) 
-      {
-          throw std::runtime_error("Cannot package GLTF: Draco compression failed.");
-      }
+    GlbBuildResult buildResult;
+    tinygltf::Model model;
 
-      tinygltf::Model model;
+    // Register Draco Extensions Globally
+    model.extensionsUsed.push_back("KHR_draco_mesh_compression");
+    model.extensionsRequired.push_back("KHR_draco_mesh_compression");
 
-      //Register Draco Extensions Globally
-      model.extensionsUsed.push_back("KHR_draco_mesh_compression");
-      model.extensionsRequired.push_back("KHR_draco_mesh_compression");
+    // Gather all primitives into a clean list for iteration
+    std::vector<const MeshPrimitive*> activePrimitives;
+    activePrimitives.push_back(&scene.terrainPrimitive);
+    activePrimitives.push_back(&scene.roofPrimitive);
+    activePrimitives.push_back(&scene.wallPrimitive);
+    if (scene.overlayPrimitive.has_value()) 
+    {
+        activePrimitives.push_back(&scene.overlayPrimitive.value());
+    }
 
-      //Buffer Memory Alignment (CRITICAL for Unity glTFast)
-      size_t dracoBytes = dracoResult.compressedBytes.size();
-      size_t padding = (4 - (dracoBytes % 4)) % 4; // Ensure 4-byte boundary
-      size_t paddedDracoBytes = dracoBytes + padding;
+    if (activePrimitives.size() != compressedPrimitives.size()) 
+    {
+        buildResult.geometryWarnings.push_back("Fatal mismatch: Primitives count does not match compressed buffers count");
+        return buildResult;
+    }
 
-      // Calculate terminal padding for the final chunk length
-      size_t totalBytes = paddedDracoBytes + imgLength;
-      size_t finalPadding = (4 - (totalBytes % 4)) % 4;
+    // Pre-calculate total memory required for the master binary chunk
+    size_t totalDracoBytes = 0;
+    std::vector<size_t> byteOffsets; 
+    std::vector<size_t> bytePaddings;
 
-      //Allocate Single Buffer (Draco + Padding + Image + Terminal Padding)
-      tinygltf::Buffer mainBuffer;
-      mainBuffer.data.resize(totalBytes + finalPadding);
-      
-     
-      // Copy Draco bitstream
-      std::memcpy(mainBuffer.data.data(), dracoResult.compressedBytes.data(), dracoBytes);
-     
-      // Pad with zeroes (if necessary)
-      if (padding > 0) 
-      {
-          std::memset(mainBuffer.data.data() + dracoBytes, 0, padding);
-      }
+    for (const auto& draco : compressedPrimitives) 
+    {
+        if (!draco.success) throw std::runtime_error("Cannot package GLTF: A Draco compression step failed.");
+        
+        size_t rawSize = draco.compressedBytes.size();
+        size_t pad = (4 - (rawSize % 4)) % 4; // WebGL strictly requires 4-byte alignment
+        
+        byteOffsets.push_back(totalDracoBytes);
+        bytePaddings.push_back(pad);
+        
+        totalDracoBytes += (rawSize + pad);
+    }
 
-      // Copy Image Data
-      std::memcpy(mainBuffer.data.data() + paddedDracoBytes, imgData, imgLength);
-
-      // Pad the very end of the BIN chunk with zeroes (if necessary)
-      if (finalPadding > 0) 
-      {
-          std::memset(mainBuffer.data.data() + totalBytes, 0, finalPadding);
-      }
-
-      model.buffers.push_back(mainBuffer);
-      //Buffer Views
-      tinygltf::BufferView dracoView, imgView;
+    size_t imgLength = 0;
+    if (scene.texture.has_value()) 
+    {
+        imgLength = scene.texture->bytes.size();
+    }
     
-      dracoView.buffer = 0; 
-      dracoView.byteOffset = 0; 
-      dracoView.byteLength = dracoBytes; // The actual unpadded size
-     
-      imgView.buffer = 0; 
-      imgView.byteOffset = paddedDracoBytes; 
-      imgView.byteLength = imgLength;
+    size_t finalPadding = (4 - ((totalDracoBytes + imgLength) % 4)) % 4;
+    size_t masterBufferSize = totalDracoBytes + imgLength + finalPadding;
+
+    // Allocate and fill the single Master Buffer
+    tinygltf::Buffer mainBuffer;
+    mainBuffer.data.resize(masterBufferSize, 0); // Fills with zeroes, implicitly handling padding
     
-      model.bufferViews.push_back(dracoView); // Index 0
-      model.bufferViews.push_back(imgView);   // Index 1
+    for (size_t i = 0; i < compressedPrimitives.size(); ++i) 
+    {
+        std::memcpy(
+            mainBuffer.data.data() + byteOffsets[i], 
+            compressedPrimitives[i].compressedBytes.data(), 
+            compressedPrimitives[i].compressedBytes.size()
+        );
+    }
 
-      // Accessors (Orphaned from BufferViews for Draco)
-      tinygltf::Accessor posAccessor, indAccessor, uvAccessor;
+    if (scene.texture.has_value()) 
+    {
+        std::memcpy(mainBuffer.data.data() + totalDracoBytes, scene.texture->bytes.data(), imgLength);
+    }
+
+    model.buffers.push_back(mainBuffer);
+
+    // Setup Buffer Views, Accessors and Primitives dynamically
+    tinygltf::Mesh gltfMesh;
     
-      // By setting bufferView to -1, we tell TinyGLTF to omit the JSON property,
-      // which is strictly required by the KHR_draco_mesh_compression specification.
-      posAccessor.bufferView = -1; 
-      posAccessor.byteOffset = 0;
-      posAccessor.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
-      posAccessor.count = numVertices;
-      posAccessor.type = TINYGLTF_TYPE_VEC3;
-      posAccessor.minValues = { bounds[0], bounds[1], bounds[2] };
-      posAccessor.maxValues = { bounds[3], bounds[4], bounds[5] };
+    for (size_t i = 0; i < activePrimitives.size(); ++i) 
+    {
+        const MeshPrimitive* prim = activePrimitives[i];
+        const DracoCompressionResult& draco = compressedPrimitives[i];
 
-      indAccessor.bufferView = -1; 
-      indAccessor.byteOffset = 0;
-      indAccessor.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
-      indAccessor.count = numIndices;
-      indAccessor.type = TINYGLTF_TYPE_SCALAR;
+        // Create BufferView for this specific chunk of Draco data
+        tinygltf::BufferView dracoView;
+        dracoView.buffer = 0; 
+        dracoView.byteOffset = byteOffsets[i]; 
+        dracoView.byteLength = draco.compressedBytes.size();
+        
+        int viewIndex = model.bufferViews.size();
+        model.bufferViews.push_back(dracoView);
 
-      uvAccessor.bufferView = -1; 
-      uvAccessor.byteOffset = 0;
-      uvAccessor.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
-      uvAccessor.count = numVertices;
-      uvAccessor.type = TINYGLTF_TYPE_VEC2;
+        // Map Accessors (Set view to -1 as KHR_draco_mesh_compression requires)
+        size_t numVerts = prim->positions.size() / 3;
+        size_t numInds = prim->indices.size();
 
-      // NEW: Normal Accessor
-      tinygltf::Accessor normAccessor;
-      normAccessor.bufferView = -1; 
-      normAccessor.byteOffset = 0;
-      normAccessor.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
-      normAccessor.count = numVertices;
-      normAccessor.type = TINYGLTF_TYPE_VEC3;
+        buildResult.vertexCount += numVerts;
+        buildResult.triangleCount += (numInds / 3);
 
-      model.accessors.push_back(posAccessor); // Index 0
-      model.accessors.push_back(indAccessor); // Index 1
-      model.accessors.push_back(uvAccessor);  // Index 2
-      model.accessors.push_back(normAccessor);//index 3 for normals
+        tinygltf::Accessor posAcc;
+        posAcc.bufferView = -1; posAcc.byteOffset = 0; posAcc.count = numVerts;
+        posAcc.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT; posAcc.type = TINYGLTF_TYPE_VEC3;
+        posAcc.minValues = { prim->localBounds.minX, prim->localBounds.minY, prim->localBounds.minZ };
+        posAcc.maxValues = { prim->localBounds.maxX, prim->localBounds.maxY, prim->localBounds.maxZ };
+        int posAccIdx = model.accessors.size();
+        model.accessors.push_back(posAcc);
 
-      //Image & Material Construction
-      tinygltf::Image image;
-      image.bufferView = 1; // Point to the image buffer view
-      std::string detectedMime = "image/jpeg";
-      const unsigned char* uImg = reinterpret_cast<const unsigned char*>(imgData);
-      if (imgLength >= 4 && uImg[0] == 0x89 && uImg[1] == 0x50 && uImg[2] == 0x4E && uImg[3] == 0x47) 
-      {
-          detectedMime = "image/png";
-      }
+        tinygltf::Accessor indAcc;
+        indAcc.bufferView = -1; indAcc.byteOffset = 0; indAcc.count = numInds;
+        indAcc.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT; indAcc.type = TINYGLTF_TYPE_SCALAR;
+        int indAccIdx = model.accessors.size();
+        model.accessors.push_back(indAcc);
 
-      //Image & Material Construction
-      image.uri = "";       //  bypass TinyGLTF URI resolution bugs
-      image.mimeType = detectedMime; 
-      model.images.push_back(image); 
-      tinygltf::Texture texture;
-      texture.source = 0;
-      model.textures.push_back(texture);
+        int uvAccIdx = -1, normAccIdx = -1;
 
-      tinygltf::Material material;
-      material.pbrMetallicRoughness.baseColorTexture.index = 0;
-      material.pbrMetallicRoughness.metallicFactor = 0.0;
-      material.pbrMetallicRoughness.roughnessFactor = 1.0;
-      model.materials.push_back(material);
+        if (draco.uvAttrId != -1) 
+        {
+            tinygltf::Accessor uvAcc;
+            uvAcc.bufferView = -1; uvAcc.byteOffset = 0; uvAcc.count = numVerts;
+            uvAcc.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT; uvAcc.type = TINYGLTF_TYPE_VEC2;
+            uvAccIdx = model.accessors.size();
+            model.accessors.push_back(uvAcc);
+        }
 
-      //The Mesh Primitive & Draco Extension Injection
-      tinygltf::Primitive primitive;
-      primitive.attributes["POSITION"] = 0; 
-      primitive.attributes["TEXCOORD_0"] = 2; 
-      primitive.attributes["NORMAL"] = 3;
-      primitive.indices = 1;
-      primitive.material = 0; 
-      primitive.mode = TINYGLTF_MODE_TRIANGLES;
+        if (draco.normalAttrId != -1) 
+        {
+            tinygltf::Accessor normAcc;
+            normAcc.bufferView = -1; normAcc.byteOffset = 0; normAcc.count = numVerts;
+            normAcc.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT; normAcc.type = TINYGLTF_TYPE_VEC3;
+            normAccIdx = model.accessors.size();
+            model.accessors.push_back(normAcc);
+        }
 
-      // Inject the KHR_draco_mesh_compression JSON metadata
-      tinygltf::Value::Object dracoExt;
-      dracoExt["bufferView"] = tinygltf::Value(0); // Points to the Draco BufferView
-     
-      tinygltf::Value::Object dracoAttrs;
-      dracoAttrs["POSITION"] = tinygltf::Value(dracoResult.posAttrId);
-      dracoAttrs["TEXCOORD_0"] = tinygltf::Value(dracoResult.uvAttrId);
-      dracoAttrs["NORMAL"] = tinygltf::Value(dracoResult.normalAttrId);
+        // Construct the glTF Primitive
+        tinygltf::Primitive gltfPrim;
+        gltfPrim.mode = TINYGLTF_MODE_TRIANGLES;
+        gltfPrim.indices = indAccIdx;
+        gltfPrim.attributes["POSITION"] = posAccIdx;
+        if (uvAccIdx != -1) gltfPrim.attributes["TEXCOORD_0"] = uvAccIdx;
+        if (normAccIdx != -1) gltfPrim.attributes["NORMAL"] = normAccIdx;
 
-      dracoExt["attributes"] = tinygltf::Value(dracoAttrs);
+        // Assign materials based on role (0: Terrain, 1: Roofs, 2: Walls)
+        if (prim->materialRole == MaterialRole::TERRAIN_TEXTURE) gltfPrim.material = 0;
+        else if (prim->materialRole == MaterialRole::BUILDING_ROOF) gltfPrim.material = 1;
+        else if (prim->materialRole == MaterialRole::BUILDING_WALL) gltfPrim.material = 2;
 
-      primitive.extensions["KHR_draco_mesh_compression"] = tinygltf::Value(dracoExt);
+        // Inject Draco Extension JSON
+        tinygltf::Value::Object dracoExt;
+        dracoExt["bufferView"] = tinygltf::Value(viewIndex);
+        
+        tinygltf::Value::Object dracoAttrs;
+        dracoAttrs["POSITION"] = tinygltf::Value(draco.posAttrId);
+        if (draco.uvAttrId != -1) dracoAttrs["TEXCOORD_0"] = tinygltf::Value(draco.uvAttrId);
+        if (draco.normalAttrId != -1) dracoAttrs["NORMAL"] = tinygltf::Value(draco.normalAttrId);
+        
+        dracoExt["attributes"] = tinygltf::Value(dracoAttrs);
+        gltfPrim.extensions["KHR_draco_mesh_compression"] = tinygltf::Value(dracoExt);
 
-      tinygltf::Mesh mesh;
-      mesh.primitives.push_back(primitive);
-      model.meshes.push_back(mesh);
+        gltfMesh.primitives.push_back(gltfPrim);
+    }
 
-      tinygltf::Node node;
-      node.mesh = 0;
-      model.nodes.push_back(node);
+    model.meshes.push_back(gltfMesh);
 
-      tinygltf::Scene scene;
-      scene.nodes.push_back(0);
-      model.scenes.push_back(scene);
-      model.defaultScene = 0;
+    // Setup Materials and Image (if applicable)
+    tinygltf::Material matTerrain, matRoof, matWall;
+    
+    if (scene.texture.has_value()) 
+    {
+        tinygltf::BufferView imgView;
+        imgView.buffer = 0; 
+        imgView.byteOffset = totalDracoBytes; 
+        imgView.byteLength = imgLength;
+        int imgViewIdx = model.bufferViews.size();
+        model.bufferViews.push_back(imgView);
 
-      // Write to In-Memory Stream, then convert to Vector
-      tinygltf::TinyGLTF gltfContext;
-     
-      // Initialize a binary string stream
-      std::stringstream stream(std::ios_base::out | std::ios_base::binary);
-     
-      // Signature: WriteGltfSceneToStream(Model* model, std::ostream& stream, bool prettyPrint, bool writeBinary)
-      bool success = gltfContext.WriteGltfSceneToStream(&model, stream, false, true);
-      
-      if (!success) 
-      {
-          throw std::runtime_error("Failed to serialize GLTF to memory.");
-      }
+        tinygltf::Image image;
+        image.bufferView = imgViewIdx;
+        image.mimeType = scene.texture->mimeType;
+        model.images.push_back(image);
 
-      // Convert the stream's buffer directly to a uint8_t vector for MinIO
-      std::string streamStr = stream.str();
-      return std::vector<uint8_t>(streamStr.begin(), streamStr.end());
+        tinygltf::Texture texture;
+        texture.source = 0;
+        model.textures.push_back(texture);
+
+        matTerrain.pbrMetallicRoughness.baseColorTexture.index = 0;
+    }
+    
+    matTerrain.pbrMetallicRoughness.metallicFactor = 0.0;
+    matTerrain.pbrMetallicRoughness.roughnessFactor = 0.9;
+    
+    // Roof gets a slight neutral tint, Walls get a slightly darker tint
+    matRoof.pbrMetallicRoughness.baseColorFactor = {0.8, 0.8, 0.8, 1.0};
+    matWall.pbrMetallicRoughness.baseColorFactor = {0.6, 0.6, 0.6, 1.0};
+
+    model.materials.push_back(matTerrain);
+    model.materials.push_back(matRoof);
+    model.materials.push_back(matWall);
+
+    // Finalize Scene Graph
+    tinygltf::Node node;
+    node.mesh = 0;
+    model.nodes.push_back(node);
+
+    tinygltf::Scene gltfScene;
+    gltfScene.nodes.push_back(0);
+    model.scenes.push_back(gltfScene);
+    model.defaultScene = 0;
+
+    // Serialize to binary buffer
+    tinygltf::TinyGLTF gltfContext;
+    std::stringstream stream(std::ios_base::out | std::ios_base::binary);
+    bool success = gltfContext.WriteGltfSceneToStream(&model, stream, false, true);
+    
+    if (!success) throw std::runtime_error("Failed to serialize GLTF to memory.");
+
+    std::string streamStr = stream.str();
+    buildResult.compressedGlbByteBuffer = std::vector<uint8_t>(streamStr.begin(), streamStr.end());
+    buildResult.boundingBox = scene.sceneBounds;
+    buildResult.localOrigin = scene.localFrame;
+
+    return buildResult;
 }
-
-// 
-
-// #include "GltfPackager.h"
-// #include <iostream>
-// #include <cstring>
-// #define TINYGLTF_IMPLEMENTATION
-// #define STB_IMAGE_IMPLEMENTATION
-// #define STB_IMAGE_WRITE_IMPLEMENTATION
-// #include "tiny_gltf.h"
-
-// bool GltfPackager::buildAndSave(const std::string& outputPath,const std::vector<float>& positions,
-//      const std::vector<uint32_t>& indices,
-//      const std::vector<float>& uvs,
-//      const double bounds[6], 
-//      const char* imgData,
-//      size_t imgLength)
-// {
-//      tinygltf::Model model;
-//      tinygltf::Buffer mainBuffer;
-
-//      //calculate byte sizes
-//      size_t posBytes = positions.size() * sizeof(float);
-//      size_t indBytes = indices.size() * sizeof(uint32_t);
-//      size_t uvBytes = uvs.size() * sizeof(float);
-//      size_t imgBytes = imgLength;
-
-//      //allocate memory for geometry and the image texture
-//      mainBuffer.data.resize(posBytes + indBytes + uvBytes + imgBytes);
-    
-//      size_t offset = 0;
-    
-//      //copy Vertices
-//      std::memcpy(mainBuffer.data.data() + offset, positions.data(), posBytes);
-//      size_t posOffset = offset;
-//      offset += posBytes;
-
-//      //copy Indices
-//      std::memcpy(mainBuffer.data.data() + offset, indices.data(), indBytes);
-//      size_t indOffset = offset;
-//      offset += indBytes;
-
-//      //copy UVs
-//      std::memcpy(mainBuffer.data.data() + offset, uvs.data(), uvBytes);
-//      size_t uvOffset = offset;
-//      offset += uvBytes;
-
-//      //copy Raw Image Bytes directly into the GLB buffer
-//      std::memcpy(mainBuffer.data.data() + offset, imgData, imgBytes);
-//      size_t imgOffset = offset;
-
-//      model.buffers.push_back(mainBuffer);
-
-//      //Buffer Views
-//      tinygltf::BufferView posView, indView, uvView, imgView;
-    
-//      posView.buffer = 0; posView.byteOffset = posOffset; posView.byteLength = posBytes; 
-//      posView.target = TINYGLTF_TARGET_ARRAY_BUFFER;
-    
-//      indView.buffer = 0; indView.byteOffset = indOffset; indView.byteLength = indBytes; 
-//      indView.target = TINYGLTF_TARGET_ELEMENT_ARRAY_BUFFER;
-
-//      uvView.buffer = 0; uvView.byteOffset = uvOffset; uvView.byteLength = uvBytes; 
-//      uvView.target = TINYGLTF_TARGET_ARRAY_BUFFER;
-
-//      imgView.buffer = 0; imgView.byteOffset = imgOffset; imgView.byteLength = imgBytes;
-    
-//      model.bufferViews.push_back(posView);
-//      model.bufferViews.push_back(indView);
-//      model.bufferViews.push_back(uvView);
-//      model.bufferViews.push_back(imgView);
-
-//      //Accessors
-//      tinygltf::Accessor posAccessor, indAccessor, uvAccessor;
-    
-//      posAccessor.bufferView = 0; posAccessor.byteOffset = 0;
-//      posAccessor.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
-//      posAccessor.count = positions.size() / 3;
-//      posAccessor.type = TINYGLTF_TYPE_VEC3;
-//      posAccessor.minValues = { bounds[0], bounds[1], bounds[2] };
-//      posAccessor.maxValues = { bounds[3], bounds[4], bounds[5] };
-
-//      indAccessor.bufferView = 1; indAccessor.byteOffset = 0;
-//      indAccessor.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
-//      indAccessor.count = indices.size();
-//      indAccessor.type = TINYGLTF_TYPE_SCALAR;
-
-//      uvAccessor.bufferView = 2; uvAccessor.byteOffset = 0;
-//      uvAccessor.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
-//      uvAccessor.count = uvs.size() / 2;
-//      uvAccessor.type = TINYGLTF_TYPE_VEC2;
-
-//      model.accessors.push_back(posAccessor);
-//      model.accessors.push_back(indAccessor);
-//      model.accessors.push_back(uvAccessor);
-
-//      //Image, Texture, and Material Construction
-//      tinygltf::Image image;
-//      image.bufferView = 3; 
-//      image.mimeType = "image/jpeg"; // Note: Web viewers require JPEG or PNG, not TIFF.
-//      model.images.push_back(image);
-
-//      tinygltf::Texture texture;
-//      texture.source = 0; // Point to image 0
-//      model.textures.push_back(texture);
-
-//      tinygltf::Material material;
-//      material.pbrMetallicRoughness.baseColorTexture.index = 0; // Bind texture to base color
-//      material.pbrMetallicRoughness.metallicFactor = 0.0; // Matte look for terrain
-//      material.pbrMetallicRoughness.roughnessFactor = 1.0;
-//      model.materials.push_back(material);
-
-//      //Mesh & Node Assembly
-//      tinygltf::Primitive primitive;
-//      primitive.attributes["POSITION"] = 0; 
-//      primitive.attributes["TEXCOORD_0"] = 2; // Bind the UV Accessor
-//      primitive.indices = 1;
-//      primitive.material = 0; // Bind the Material
-//      primitive.mode = TINYGLTF_MODE_TRIANGLES;
-
-//      tinygltf::Mesh mesh;
-//      mesh.primitives.push_back(primitive);
-//      model.meshes.push_back(mesh);
-
-//      tinygltf::Node node;
-//      node.mesh = 0;
-//      model.nodes.push_back(node);
-
-//      tinygltf::Scene scene;
-//      scene.nodes.push_back(0);
-//      model.scenes.push_back(scene);
-//      model.defaultScene = 0;
-
-//      tinygltf::TinyGLTF gltfContext;
-//      return gltfContext.WriteGltfSceneToFile(&model, outputPath, false, false, false, true);
-// }

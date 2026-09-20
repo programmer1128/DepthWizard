@@ -1,4 +1,3 @@
-/*
 #include "PipelineService.h"
 #include "../SrtmExtractor/SrtmExtractor.h"
 #include "../RasterProcessor/RasterProcessor.h"
@@ -20,6 +19,7 @@
 #include <fstream>
 #include <algorithm>
 
+/*
 inline void writeJpegCallback(void* context, void* data, int size) 
 {
     auto* vec = static_cast<std::vector<uint8_t>*>(context);
@@ -537,3 +537,33 @@ inline std::vector<uint8_t> PipelineService::extractTextureFromNormalImage(const
 }
 
 */
+
+PipelineResult PipelineService::buildResult(
+    const SceneInput& scene,
+    const ArtifactManifest& artifacts,
+    const QualityReport& quality,
+    const ModelMetadata& model)
+{
+    PipelineResult result;
+    result.jobId = scene.jobId;
+    result.processingMode = scene.inputMode;
+    result.manifest = artifacts;
+    result.qualityReport = quality;
+    result.models.nDsmModel = model;
+
+    if (quality.status == QualityStatus::FAIL) 
+    {
+        result.status = PipelineStatus::FATAL_ERROR;
+        result.errors.push_back("Scientific constraints violated: Output unsafe for absolute derivation");
+    }
+    else if (quality.status == QualityStatus::WARN)
+    {
+        result.status = PipelineStatus::WARNING;
+    }
+    else 
+    {
+        result.status = PipelineStatus::SUCCESS;
+    }
+
+    return result;
+}

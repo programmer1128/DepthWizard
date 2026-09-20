@@ -6,6 +6,8 @@
 #include <drogon/drogon.h>
 #include <coroutine>
 #include "../structures/CommonTypes.h"
+#include "../structures/ExportStructs.h"
+#include "../structures/IngestionStructs.h"
 
 
 class PipelineService 
@@ -15,6 +17,12 @@ class PipelineService
 
          drogon::Task<std::string> executeCalibrationNormalImage(const drogon::HttpFile& imageFile);
 
+         // constructs the final comprehensive struct matching frontend expectations
+        static PipelineResult buildResult(
+                const SceneInput& scene,
+                const ArtifactManifest& artifacts,
+                const QualityReport& quality,
+                const ModelMetadata& model);
 
          private:
          //service broken down to methods for better modular access control and inlining added

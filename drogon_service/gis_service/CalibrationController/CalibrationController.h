@@ -3,6 +3,7 @@
 #include <drogon/HttpController.h>
 #include <drogon/drogon.h>
 #include <coroutine>
+#include "../structures/ExportStructs.h"
 using namespace drogon;
 
 class CalibrationController : public drogon::HttpController<CalibrationController>
@@ -26,4 +27,7 @@ class CalibrationController : public drogon::HttpController<CalibrationControlle
     drogon::Task<drogon::HttpResponsePtr>processTerrain(drogon::HttpRequestPtr req);
 
     drogon::Task<drogon::HttpResponsePtr>processNormalImageForTerrain(drogon::HttpRequestPtr req);
+
+    // serializes the C++ PipelineResult struct into strictly formatted JSON
+    static drogon::HttpResponsePtr toHttpResponse(const PipelineResult& result);
 };
