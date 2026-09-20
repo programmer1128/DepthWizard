@@ -18,6 +18,9 @@ CompressedPrimitive DracoCompressor::compress(
     draco::Mesh dracoMesh;
     size_t numFaces = primitive.indices.size() / 3;
     size_t numPoints = primitive.positions.size() / 3;
+    result.vertexCount = numPoints;
+    result.indexCount = primitive.indices.size();
+    result.localBounds = primitive.localBounds;
      
     dracoMesh.SetNumFaces(numFaces);
     dracoMesh.set_num_points(numPoints); 

@@ -33,6 +33,7 @@ GlbBuildResult SceneMeshService::generateGlb(
      if (!compTerrain.success) 
      {
          result.geometryWarnings.push_back("Failed to compress Terrain: " + compTerrain.errorMessage);
+         return result;
      } 
      else 
      {
@@ -42,27 +43,33 @@ GlbBuildResult SceneMeshService::generateGlb(
      }
 
      // Compress Roofs
-     CompressedPrimitive compRoofs = DracoCompressor::compress(sceneMesh.roofPrimitive, config.draco);
-     if (!compRoofs.success) {
-         result.geometryWarnings.push_back("Failed to compress Roofs: " + compRoofs.errorMessage);
-     } 
-     else 
+     if (!sceneMesh.roofPrimitive.indices.empty())
      {
-         compressedPrimitives.push_back(std::move(compRoofs));
-         result.vertexCount += sceneMesh.roofPrimitive.positions.size() / 3;
-         result.triangleCount += sceneMesh.roofPrimitive.indices.size() / 3;
+         CompressedPrimitive compRoofs = DracoCompressor::compress(sceneMesh.roofPrimitive, config.draco);
+         if (!compRoofs.success) {
+             result.geometryWarnings.push_back("Failed to compress Roofs: " + compRoofs.errorMessage);
+         }
+         else
+         {
+             compressedPrimitives.push_back(std::move(compRoofs));
+             result.vertexCount += sceneMesh.roofPrimitive.positions.size() / 3;
+             result.triangleCount += sceneMesh.roofPrimitive.indices.size() / 3;
+         }
      }
 
      // Compress Walls (The Holographic Extrusions)
-     CompressedPrimitive compWalls = DracoCompressor::compress(sceneMesh.wallPrimitive, config.draco);
-     if (!compWalls.success) {
-         result.geometryWarnings.push_back("Failed to compress Walls: " + compWalls.errorMessage);
-     } 
-     else 
+     if (!sceneMesh.wallPrimitive.indices.empty())
      {
-         compressedPrimitives.push_back(std::move(compWalls));
-         result.vertexCount += sceneMesh.wallPrimitive.positions.size() / 3;
-         result.triangleCount += sceneMesh.wallPrimitive.indices.size() / 3;
+         CompressedPrimitive compWalls = DracoCompressor::compress(sceneMesh.wallPrimitive, config.draco);
+         if (!compWalls.success) {
+             result.geometryWarnings.push_back("Failed to compress Walls: " + compWalls.errorMessage);
+         }
+         else
+         {
+             compressedPrimitives.push_back(std::move(compWalls));
+             result.vertexCount += sceneMesh.wallPrimitive.positions.size() / 3;
+             result.triangleCount += sceneMesh.wallPrimitive.indices.size() / 3;
+         }
      }
 
      // Abort if no geometry survived compression

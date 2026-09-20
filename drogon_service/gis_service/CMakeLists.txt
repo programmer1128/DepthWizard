@@ -31,6 +31,9 @@ find_package(Halide REQUIRED)
 #Eigen library dependency
 find_package(Eigen3 REQUIRED)
 
+# Building reconstruction uses OpenCV morphology, connected components and polygons.
+find_package(OpenCV REQUIRED COMPONENTS core imgproc)
+
 #SOURCE FILE DISCOVERY (Package-by-Feature Architecture)
 # Explicitly grab sources from each dedicated service folder
 
@@ -50,6 +53,14 @@ file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cp
 file(GLOB STRUCTURES CONFIGURE_DEPENDS "structures/*.cc" "structures/*.cpp" "structures/*.h")
 file(GLOB_RECURSE IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp")
 file(GLOB HEIGHT_SERVICE CONFIGURE_DEPENDS "HeightService/*.cc" "HeightService/*.cpp")
+file(GLOB IMAGE_PREPROCESSING_SRC CONFIGURE_DEPENDS "ImagePreprocessing/*.cc" "ImagePreprocessing/*.cpp")
+file(GLOB REFERENCE_TERRAIN_SRC CONFIGURE_DEPENDS "ReferenceTerrainService/*.cc" "ReferenceTerrainService/*.cpp")
+file(GLOB SEMANTIC_CONTEXT_SRC CONFIGURE_DEPENDS "SemanticContext/*.cc" "SemanticContext/*.cpp")
+file(GLOB SURFACE_FUSION_SRC CONFIGURE_DEPENDS "SurfaceFusion/*.cc" "SurfaceFusion/*.cpp")
+file(GLOB BUILDING_RECONSTRUCTION_SRC CONFIGURE_DEPENDS "BuildingReconstruction/*.cc" "BuildingReconstruction/*.cpp")
+
+# The old mesher depends on the removed pre-modular Draco/glTF API.
+list(FILTER MESH_SRC EXCLUDE REGEX "/MeshService\\.cc$")
 
 #COMPILER OPTIMIZATIONS (Release Mode)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -84,7 +95,12 @@ target_sources(${PROJECT_NAME}
                ${DATA_HANDLERS}
                ${IMAGE_TILER}
                ${STRUCTURES}
-               ${HEIGHT_SERVICE})
+               ${HEIGHT_SERVICE}
+               ${IMAGE_PREPROCESSING_SRC}
+               ${REFERENCE_TERRAIN_SRC}
+               ${SEMANTIC_CONTEXT_SRC}
+               ${SURFACE_FUSION_SRC}
+               ${BUILDING_RECONSTRUCTION_SRC})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -108,6 +124,7 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/HannAssembler
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/TilingOLS
                            ${CMAKE_CURRENT_SOURCE_DIR}/HeightService
+                           ${OpenCV_INCLUDE_DIRS}
                            ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
 
 
@@ -121,6 +138,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     OpenMP::OpenMP_CXX #OpenMp Multi threading 
     Halide
     Eigen3::Eigen
+    ${OpenCV_LIBS}
 )
 
 if (CMAKE_CXX_STANDARD LESS 20)
@@ -129,7 +147,11 @@ else ()
     message(STATUS "Using C++20 standard with Coroutines enabled.")
 endif ()
 
-# Optional test directory
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/CMakeLists.txt")
+include(CTest)
+
+if(
+    BUILD_TESTING
+    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/CMakeLists.txt"
+)
     add_subdirectory(test)
 endif()

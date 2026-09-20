@@ -2,6 +2,7 @@
 #include <gdal_priv.h>
 #include <iostream>
 #include <cstring>
+#include <limits>
 
 bool TiffExporter::writeFloatTiff(
      const std::string& outputPath, 
@@ -36,6 +37,7 @@ bool TiffExporter::writeFloatTiff(
 
      // Write the raw memory matrix directly to the file
      GDALRasterBand *poBand = poDstDS->GetRasterBand(1);
+     poBand->SetNoDataValue(std::numeric_limits<double>::quiet_NaN());
      CPLErr err = poBand->RasterIO(GF_Write, 0, 0, width, height, 
                                   dsm_matrix.data(), width, height, GDT_Float32, 0, 0);
 
@@ -77,6 +79,7 @@ std::vector<uint8_t> TiffExporter::exportTiffToBuffer(
      }
 
      GDALRasterBand *poBand = poDstDS->GetRasterBand(1);
+     poBand->SetNoDataValue(std::numeric_limits<double>::quiet_NaN());
      CPLErr err = poBand->RasterIO(GF_Write, 0, 0, width, height, 
                                    dsm_matrix.data(), width, height, GDT_Float32, 0, 0);
 

@@ -1,536 +1,309 @@
 #include "PipelineService.h"
-#include "../SrtmExtractor/SrtmExtractor.h"
-#include "../RasterProcessor/RasterProcessor.h"
-#include "../RansacCalibrator/ransacCalibrator.h"
-#include "../MeshMapping/MeshService.h"
-#include "../DataHandlers/MiniIOClient.h"
-#include "../ImageTilingService/TilingService.h"
-#include <drogon/utils/Utilities.h>
-#include <gdal_priv.h>
-#include <stdexcept>
-#include <cpl_vsi.h>
-#include <cstring>
-#include <thread>
-#include <chrono>
-#include <iostream>
-#include "../FileGenerators/TiffExporter.h"
-#include "stb_image_write.h"
-#include "stb_image.h"
-#include <fstream>
-#include <algorithm>
 
-inline void writeJpegCallback(void* context, void* data, int size) 
+#include "../BuildingReconstruction/BuildingReconstructionService.h"
+#include "../DataHandlers/MiniIOClient.h"
+#include "../FileGenerators/BackgroundTiffExportService.h"
+#include "../ImagePreprocessing/ImagePreprocessingService.h"
+#include "../ImagePreprocessing/RasterIngestService.h"
+#include "../ImageTilingService/TilingService.h"
+#include "../MeshMapping/SceneMeshService.h"
+#include "../ReferenceTerrainService/MetricReferenceOrchestrator.h"
+#include "../SemanticContext/GroundSurfaceService.h"
+#include "../SemanticContext/SemanticPostProcessor.h"
+#include "../SurfaceFusion/NdsmGroundBiasCorrector.h"
+#include "../SurfaceFusion/SurfaceFusionService.h"
+
+#include <cpl_vsi.h>
+#include <drogon/utils/Utilities.h>
+#include <ogr_spatialref.h>
+#include <trantor/utils/Logger.h>
+
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+#include <string>
+#include <utility>
+
+// RasterIngestService mounts the upload in GDAL's in-memory filesystem.
+// Keep it mounted while preprocessing and reference extraction read it, then
+// remove it on both the successful and exception paths.
+class VsiInputFileGuard
 {
-    auto* vec = static_cast<std::vector<uint8_t>*>(context);
-    auto* byteData = static_cast<uint8_t*>(data);
-    vec->insert(vec->end(), byteData, byteData + size);
+public:
+    explicit VsiInputFileGuard(std::string path) : path_(std::move(path)) {}
+    VsiInputFileGuard(const VsiInputFileGuard&) = delete;
+    VsiInputFileGuard& operator=(const VsiInputFileGuard&) = delete;
+
+    ~VsiInputFileGuard()
+    {
+        if (!path_.empty())
+            VSIUnlink(path_.c_str());
+    }
+
+private:
+    std::string path_;
+};
+
+template <typename T>
+static void requireGridShape(const RasterGrid<T>& grid,
+                             int width,
+                             int height,
+                             const char* name)
+{
+    if (!grid.isValid() || grid.width != width || grid.height != height)
+        throw std::runtime_error(std::string("PipelineService: invalid ") +
+                                 name + " grid shape");
 }
 
-
-drogon::Task<std::string> PipelineService::executeCalibrationNormalImage(
-     const drogon::HttpFile& imageFile)
+// The present mesh and building-height algorithms use projected XY metres.
+// Reprojection of geographic or feet-based inputs belongs in ingestion.
+static void validateScene(const SceneInput& scene)
 {
-     std::string uuid = drogon::utils::getUuid(); //
-     std::string vsi_path = mountImageToRAM(uuid, imageFile); //
+    if (!scene.spatialMetadata)   
+    {
+         throw std::runtime_error("PipelineService: GeoTIFF lacks spatial metadata");
+    }
 
-     try
+    const SpatialMetadata& metadata = *scene.spatialMetadata;
+    if (!metadata.isGeoreferenced || metadata.width != scene.width ||
+        metadata.height != scene.height || metadata.projectionRef.empty())
      {
-         //extract exact pixel dimensions from the JPG/PNG buffer
-         int width = 0, height = 0, channels = 0;
-         int ok = stbi_info_from_memory(
-             reinterpret_cast<const stbi_uc*>(imageFile.fileData()), 
-             imageFile.fileLength(), 
-             &width, 
-             &height, 
-             &channels
-         );
+         throw std::runtime_error("PipelineService: inconsistent spatial metadata");
+     }
+       
 
-         if (!ok || width <= 0 || height <= 0)
+     OGRSpatialReference spatialReference;
+     if (spatialReference.SetFromUserInput(metadata.projectionRef.c_str()) != OGRERR_NONE ||
+         !spatialReference.IsProjected() ||
+         std::abs(spatialReference.GetLinearUnits() - 1.0) > 1e-6)
+     {
+         throw std::runtime_error(
+            "PipelineService: the working GeoTIFF CRS must be projected in metres");
+     }
+}
+
+// Fail before dispatch if preprocessing cannot provide one RGB tensor and
+// one usable validity mask covering the complete uploaded image.
+static void validatePreprocessing(const SceneInput& scene,
+                                  const ImageQualityResult& quality)
+{
+     requireGridShape(quality.validPixelMask, scene.width, scene.height,
+                     "preprocessing valid mask");
+
+     const auto& tensor = quality.normalizedRgbTensor;
+     const size_t pixels = static_cast<size_t>(scene.width) * scene.height;
+     if (tensor.width != scene.width || tensor.height != scene.height ||
+         tensor.channels != 3 || tensor.layout != TensorLayout::CHW ||
+         tensor.data.size() != pixels * 3)
+     {
+         throw std::runtime_error("PipelineService: invalid normalized RGB tensor");
+     }
+        
+     if (!std::isfinite(quality.qualityScore) || quality.qualityScore <= 0.0f)  
+     {
+         throw std::runtime_error("PipelineService: no usable optical pixels");
+     }
+}
+
+// The tiling service must return full-resolution metric nDSM, confidence,
+// validity, and six semantic-logit planes on exactly the same pixel grid.
+static void validateInference(const InferenceBundle& inference,
+                              int width,
+                              int height)
+{
+     requireGridShape(inference.globalNdsm, width, height, "nDSM");
+     requireGridShape(inference.globalNdsmConfidence, width, height,
+                     "AI confidence");
+     requireGridShape(inference.globalValidMask, width, height, "AI valid mask");
+
+     const SemanticLogits& logits = inference.globalSemanticLogits;
+     
+     if (logits.classCount != 6 || logits.layout != TensorLayout::CHW)
+     {
+         throw std::runtime_error("PipelineService: incompatible semantic contract");
+     }
+
+     requireGridShape(logits.unknownLogits, width, height, "unknown logits");
+     requireGridShape(logits.groundLogits, width, height, "ground logits");
+     requireGridShape(logits.buildingLogits, width, height, "building logits");
+     requireGridShape(logits.roadLogits, width, height, "road logits");
+     requireGridShape(logits.vegetationLogits, width, height, "vegetation logits");
+     requireGridShape(logits.waterLogits, width, height, "water logits");
+}
+
+// Invalid optical pixels must remain invalid even if a model tile predicts
+// values there. The semantic and surface services consume this final mask.
+static void applyPreprocessingMask(InferenceBundle& inference,
+                                   const ImageQualityResult& quality)
+{
+     const size_t pixels = inference.globalNdsm.data.size();
+ 
+     for (size_t i = 0; i < pixels; ++i)
+     {
+         if (inference.globalValidMask.data[i] == 0 ||
+             quality.validPixelMask.data[i] == 0)
          {
-             throw std::runtime_error("STB Failed to parse JPG/PNG image dimensions.");
+             inference.globalValidMask.data[i] = 0;
+             inference.globalNdsm.data[i] =
+                 std::numeric_limits<float>::quiet_NaN();
+             inference.globalNdsmConfidence.data[i] = 0.0f;
+             continue;
          }
 
-         //extract textures (for JPG/PNG this is a zero-copy passthrough)
-         std::vector<uint8_t> texture_map = extractTextureFromNormalImage(imageFile); //
-
-         std::cout << "[Texture Debug] Size: " << texture_map.size() << " bytes\n";
-
-         //generate stitched AI depth matrix with accurate dimensions
-         std::vector<float> aiDepth = 
-             co_await TilingService::generateStitchedDepth(vsi_path, width, height);
-
-         //free RAM disk file to prevent memory leaks
-         std::remove(vsi_path.c_str()); //
-
-         //Build Relative 3D Mesh (rDSM)
-         std::vector<uint8_t> glbBytes = buildRelative3DMesh(
-             uuid, 
-             aiDepth, 
-             width, 
-             height, 
-             texture_map
-         );
-
-         //Upload .glb to MinIO
-         std::string bucket = "terrain-assets"; //
-         std::string key = "mesh_" + uuid + ".glb"; //
-
-         bool minio_success = MinioClient::uploadBuffer(bucket, key, glbBytes, "model/gltf-binary"); //
-         if (!minio_success) 
+         const float height = inference.globalNdsm.data[i];
+         const float confidence = inference.globalNdsmConfidence.data[i];
+         
+         if (!std::isfinite(height) || !std::isfinite(confidence) ||
+            confidence < 0.0f || confidence > 1.0f)
          {
-             throw std::runtime_error("Failed to upload relative GLB to MinIO."); //
+             throw std::runtime_error("PipelineService: invalid AI output values");
          }
+    }
+}
 
-         //Generate Presigned URL for frontend consumption
-         std::string minio_url = MinioClient::generatePresignedUrl(bucket, key); //
-
-         co_return minio_url; 
-     }
-     catch (const std::exception& e)
+// GLB publication remains on the request path: the frontend must receive a
+// usable URL, not just a promise that mesh generation will finish later.
+static std::string uploadGlb(const std::string& jobId,
+                             const GlbBuildResult& glb)
+{
+     if (glb.compressedGlbByteBuffer.empty())
      {
-         // Failsafe RAM cleanup
-         std::remove(vsi_path.c_str()); //
-         std::cerr << "[Relative Pipeline Error] " << e.what() << "\n";
-         throw std::runtime_error(e.what()); //
+         throw std::runtime_error("PipelineService: scene mesher returned an empty GLB");
      }
+
+     const std::string objectKey = "mesh_" + jobId + ".glb";
+     
+     if (!MinioClient::uploadBuffer("terrain-assets", objectKey,
+                                   glb.compressedGlbByteBuffer,
+                                   "model/gltf-binary"))
+     {
+         throw std::runtime_error("PipelineService: GLB upload failed");
+     }
+
+     std::string url = MinioClient::generatePresignedUrl(
+        "terrain-assets", objectKey);
+     if (url.empty())
+     {
+         throw std::runtime_error("PipelineService: GLB URL generation failed");
+     }
+
+     return url;
 }
 
 drogon::Task<Json::Value> PipelineService::executeCalibration(
-     const drogon::HttpFile& imageFile)
+    const drogon::HttpFile& imageFile)
 {
-     std::string uuid = drogon::utils::getUuid();
-     std::string vsi_path = mountImageToRAM(uuid, imageFile);
+     const std::string jobId = drogon::utils::getUuid();
 
-     try 
+     try
      {
-         //auto start_total = std::chrono::steady_clock::now();
+         // 1. Ingest the GeoTIFF. The scene holds the optical GLB texture,
+         //    a temporary GDAL path, and the authoritative georeferencing.
+         SceneInput scene = RasterIngestService::ingestGeoTiff(jobId, imageFile);
+         VsiInputFileGuard inputFile(scene.inputPath);
+         validateScene(scene);
+         const SpatialMetadata& metadata = *scene.spatialMetadata;
 
-         auto start_fetch = std::chrono::steady_clock::now();
-         //Extract Base Topography and Spatial Context for geotiff generation for
-         //storage of data for user height req query
-         SpatialMetadata meta;
-         std::vector<float> srtmHeight = extractSrtmAndMetadata(vsi_path, meta);
+         // 2. Normalize RGB for the models and identify unusable source pixels.
+         ImageQualityResult quality = ImagePreprocessingService::process(scene);
+         validatePreprocessing(scene, quality);
+
+         // 3. Run tiled model inference and stitch metric nDSM plus semantics.
+         InferenceBundle inference =
+             co_await TilingService::generateStitchedMetricInference(scene, quality);
+         validateInference(inference, scene.width, scene.height);
+         applyPreprocessingMask(inference, quality);
+
+         // 4. Fetch and align the low-resolution DEM. This supplies absolute
+         //    ground elevation; the AI nDSM supplies above-ground height.
+         ReferenceTerrainBundle reference =
+             co_await MetricReferenceOrchestrator::prepareReferenceTerrain(scene);
+         requireGridShape(reference.correctedTerrainPrior, scene.width,
+                         scene.height, "reference DTM");
+         requireGridShape(reference.validMask, scene.width,
+                         scene.height, "reference valid mask");
+
+         // 5. Decode semantic classes, locate trustworthy ground pixels, and
+         //    remove any residual ground bias from the predicted metric nDSM.
+         SemanticScene semantics = SemanticPostProcessor::buildScene(
+             inference.globalSemanticLogits,
+             inference.globalNdsmConfidence,
+             inference.globalValidMask);
         
-         std::vector<uint8_t> textureBytes = extractJpegTexture(vsi_path, imageFile);
+         GroundMask ground = GroundSurfaceService::buildGroundMask(
+            semantics, quality, reference);
+     
+        NdsmCorrectionResult correction = NdsmGroundBiasCorrector::correct(
+            inference.globalNdsm, ground, inference.globalNdsmConfidence);
+
+         // 6. Fuse terrain and corrected above-ground height into metric DSM.
+         GeoreferencedSurfaceBundle surface =
+             SurfaceFusionService::composeMetricSurface(
+                 correction.correctedMetricNdsm,
+                 reference,
+                 semantics,
+                 correction.confidence,
+                 metadata);
+         requireGridShape(surface.dsm, scene.width, scene.height, "DSM");
+         requireGridShape(surface.dtm, scene.width, scene.height, "DTM");
+         requireGridShape(surface.validMask, scene.width, scene.height,
+                         "surface valid mask");
+
+         // 7. Turn building pixels into individual footprints and heights,
+         //    then assemble terrain, roofs, and walls into one Draco GLB.
+         BuildingCollection buildings = BuildingReconstructionService::reconstruct(
+             semantics, surface, metadata);
          
-         auto end_fetch = std::chrono::steady_clock::now();
-         auto fetch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_fetch - start_fetch).count();
-         std::cout << "[Latency] GDAL Fetch & Extraction: " << fetch_ms << " ms\n";
+         GlbBuildResult glb = SceneMeshService::generateGlb(
+            scene, surface, buildings, metadata);
 
-         auto start_calib = std::chrono::steady_clock::now();
+         // 8. Upload the finished GLB before replying to the frontend.
+         std::string glbUrl = uploadGlb(jobId, glb);
 
-         //integrating the image tiling
-         std::vector<float> aiDepth = 
-             co_await TilingService::generateStitchedDepth(vsi_path, meta.width, meta.height);
-
-         // Clean RAM immediately after extraction, this prevents RAM bloat for multiple
-         //user req at the same time offering better concurrency
-         std::remove(vsi_path.c_str());
-
-        
-         //RANSAC Calibration
-         //upto this part logic will remain same even for tiling of the .glb files
-         //
-         std::vector<float> absoluteDsm = calibrateHeights(aiDepth, srtmHeight);
-         
-         auto end_calib = std::chrono::steady_clock::now();
-
-         auto calib_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_calib - start_calib).count();
-         std::cout << "[Latency] RANSAC Calibration: " << calib_ms << " ms\n";
-
-         auto start_mesh = std::chrono::steady_clock::now();
-         //Generate 3D Textured Mesh (.glb) and get raw bytes
-         //std::vector<uint8_t> glbBytes = build3DMesh(uuid, absoluteDsm, meta, imageFile);
-
-         std::vector<uint8_t> glbBytes = build3DMesh(uuid, absoluteDsm, meta, textureBytes);
-         auto end_mesh = std::chrono::steady_clock::now();
-
-         auto mesh_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_mesh - start_mesh).count();
-         std::cout << "[Latency] Meshing & Draco Compression: " << mesh_ms << " ms\n";
-
-         //upload the glbBytes to the MiniIO object storage
-         std::string bucket = "terrain-assets";
-         std::string key = "mesh_" + uuid + ".glb";
- 
-         auto start_upload = std::chrono::steady_clock::now();
-         //Upload to MinIO
-         bool minio_success = MinioClient::uploadBuffer(bucket, key, glbBytes, "model/gltf-binary");
-
-         if (!minio_success) 
+         // 9. Give the raster matrices to the background worker. Its queue
+         //    owns them after this move; no request-local references survive.
+         if (!BackgroundTiffExportService::instance().enqueue(
+                jobId, std::move(surface)))
          {
-             throw std::runtime_error("Failed to upload GLB to MinIO.");
+             throw std::runtime_error(
+                "PipelineService: background GeoTIFF export queue is full or stopped");
          }
 
-         std::string minio_url = MinioClient::generatePresignedUrl(bucket, key);
-
-         //the .tiff file generation is handed to a background async worker thread that generates
-         //the .tiff n server after the .glb file is sent for better performance. UI remains smooth
-         //and better performance 
-         std::string tiff_key = "heights_" + uuid + ".tif";
-
-         // Hand off in-memory GeoTIFF encoding and MinIO upload to the background thread
-         std::thread([
-             dsm = std::move(absoluteDsm), // Transfer ownership of elevation matrix
-             uuid,
-             tiff_key,
-             bucket,
-             w = meta.width, 
-             h = meta.height, 
-             geoTransform = meta.geoTransform, // Copy spatial parameters
-             proj = meta.projectionRef 
-             ]() 
-         mutable 
-         { 
-             try 
-             {
-                 //generate the GeoTIFF in RAM
-                 std::vector<uint8_t> tiffBytes = TiffExporter::exportTiffToBuffer(
-                     uuid, dsm, w, h, geoTransform.data(), proj.c_str());
-
-                 if (tiffBytes.empty()) 
-                 {
-                     std::cerr << "Failed to generate GeoTIFF buffer for UUID: " << uuid << "\n";
-                     return;
-                 }
-                 //upload byte stream to MinIO
-                 bool success = MinioClient::uploadBuffer(bucket, tiff_key, tiffBytes, "image/tiff");
-                 if (!success) 
-                 {
-                     std::cerr << "[MinIO Error] Background upload failed for: " << tiff_key << "\n";
-                 }
-                 else 
-                 {
-                     std::cout << "[MinIO] Successfully uploaded background GeoTIFF: " << tiff_key 
-                               << " (" << (tiffBytes.size() / 1024) << " KB)\n";
-                 }
-             } 
-             catch (const std::exception& e) 
-             {
-                 std::cerr << "[Worker Exception] Background TIFF task failed: " << e.what() << "\n";
-             }
-
-         }).detach();
-
-         //return glb download URL of minio to frontend.
-         auto end_upload = std::chrono::steady_clock::now();
-         auto upload_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_upload - start_upload).count();
-         std::cout << "[Latency] MinIO Network Upload: " << upload_ms << " ms\n";
-
-         // Total Time
-         //auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_upload - start_total).count();
-         //std::cout << "[Latency] TOTAL PIPELINE EXECUTION: " << total_ms << " ms\n";
-         
-         // New JSON return
-         Json::Value responseJson;
-         responseJson["uuid"] = uuid;
-         responseJson["glb_url"] = minio_url;
-         co_return responseJson; // Make sure to change the method signature in .h to drogon::Task<Json::Value>
-     } 
-     catch (const std::exception& e) 
+        //  for (const std::string& warning : quality.warnings)
+        //     LOG_WARN << "PipelineService: " << jobId << ": " << warning;
+        // for (const std::string& warning : reference.warnings)
+        //     LOG_WARN << "PipelineService: " << jobId << ": " << warning;
+        // for (const std::string& warning : glb.geometryWarnings)
+        //     LOG_WARN << "PipelineService: " << jobId << ": " << warning;
+         if (!correction.warning.empty())
+             LOG_WARN << "PipelineService: " << jobId << ": " << correction.warning;
+ 
+         LOG_INFO << "PipelineService: GLB ready for " << jobId
+                  << "; raster exports queued; buildings="
+                  << buildings.buildings.size();
+ 
+         // The initial response has only the two fields needed for rendering.
+         // The frontend can query raster progress later using this UUID.
+         Json::Value response(Json::objectValue);
+         response["uuid"] = jobId;
+         response["glb_url"] = std::move(glbUrl);
+         co_return response;
+     }
+     catch (const std::exception& error)
      {
-         // Failsafe RAM cleanup
-         std::remove(vsi_path.c_str());
-         std::cerr << "CRASH DETECTED: " << e.what() << "\n";
-         // Explicitly rethrow to bypass the GCC coroutine bug
-         throw std::runtime_error(e.what());
+         LOG_ERROR << "PipelineService: job " << jobId
+                   << " failed: " << error.what();
+         throw;
      }
 }
 
-inline std::vector<float> PipelineService::parseDepthMatrix(const drogon::HttpFile& depthFile) const
+drogon::Task<std::string> PipelineService::executeCalibrationNormalImage(
+    const drogon::HttpFile& imageFile)
 {
-     size_t floatCount = depthFile.fileLength() / sizeof(float);
-     std::vector<float> aiDepth(floatCount);
-     std::memcpy(aiDepth.data(), depthFile.fileData(), depthFile.fileLength());
-     return aiDepth;
-}
-
-inline std::string PipelineService::mountImageToRAM(const std::string& uuid, const drogon::HttpFile& imageFile) const
-{
-     // Use the OS /tmp/ directory (tmpfs RAM disk) instead of GDAL's /vsimem/
-     std::string real_path = "/tmp/upload_" + uuid + ".tif";
-     
-     std::ofstream out(real_path, std::ios::binary);
-     if (out.is_open()) 
-     {
-         out.write(imageFile.fileData(), imageFile.fileLength());
-         out.close();
-     }
-     else 
-     {
-         throw std::runtime_error("Failed to write temporary image to " + real_path);
-     }
-     
-     return real_path;
-}
-
-inline std::vector<float> PipelineService::extractSrtmAndMetadata(const std::string& vsi_path, 
-     SpatialMetadata& meta) const
-{
-     auto datasets = SrtmExtractor::fetchTile(vsi_path);
-     if (!datasets.hInputDS || !datasets.hDemDS) 
-     {
-         throw std::runtime_error("Failed to extract datasets from AWS or input image.");
-     }
-
-     // Populate the struct with the spatial context
-     meta.width = datasets.hInputDS->GetRasterXSize();
-     meta.height = datasets.hInputDS->GetRasterYSize();
-    
-     double geoTransformRaw[6];
-     if (datasets.hInputDS->GetGeoTransform(geoTransformRaw) == CE_None) 
-     {
-         std::copy(std::begin(geoTransformRaw), std::end(geoTransformRaw), meta.geoTransform.begin());
-     }
-
-     const char* proj = datasets.hInputDS->GetProjectionRef();
-     meta.projectionRef = (proj != nullptr) ? std::string(proj) : "";
-
-     // Process heights
-     return RasterProcessor::processor(
-         std::move(datasets.hInputDS),
-         std::move(datasets.hDemDS)
-     );
-}
-
-inline std::vector<float> PipelineService::calibrateHeights(const std::vector<float>& aiDepth, const std::vector<float>& srtmHeight) const
-{
-     RansacCalibrator calibrator(500, 15.0); 
-     CalibrationResult result = calibrator.calculateScaleAndOffset(aiDepth, srtmHeight);
-
-     if (result.inliers_count == 0) 
-     {
-         throw std::runtime_error("RANSAC failed to find a valid calibration model.");
-     }
-
-     return calibrator.applyCalibration(aiDepth, result.a, result.b, result.c);
-}
-
-// inline std::vector<uint8_t> PipelineService::build3DMesh(
-//      const std::string& uuid, 
-//      const std::vector<float>& absoluteDsm, 
-//      const SpatialMetadata& meta, 
-//      const drogon::HttpFile& imageFile) const
-// {
-//      std::string glb_output_path = "./mesh_" + uuid + ".glb";
-//      GlbMesher mesher;
-    
-//      std::vector<uint8_t> glbBytes = mesher.generateGlb(
-//          absoluteDsm, 
-//          meta.width, 
-//          meta.height, 
-//          1.0f, // pixel_size modifier
-//          imageFile.fileData(),   
-//          imageFile.fileLength()
-//      );
-
-//      // If the vector is empty, the Draco compression or GLTF packaging failed
-//      if (glbBytes.empty()) 
-//      {
-//          throw std::runtime_error("Failed to package the .glb 3D mesh.");
-//      }
-
-//      return glbBytes;
-// }
-
-inline std::vector<uint8_t> PipelineService::build3DMesh(
-     const std::string& uuid, 
-     const std::vector<float>& absoluteDsm, 
-     const SpatialMetadata& meta, 
-     const std::vector<uint8_t>& textureBytes) const
-{
-     GlbMesher mesher;
-
-     //Find the true elevation range of this specific landscape
-     auto min_it = std::min_element(absoluteDsm.begin(), absoluteDsm.end());
-     auto max_it = std::max_element(absoluteDsm.begin(), absoluteDsm.end());
-     float min_z = (min_it != absoluteDsm.end()) ? *min_it : 0.0f;
-     float max_z = (max_it != absoluteDsm.end()) ? *max_it : 1.0f;
-     
-     float z_range = max_z - min_z;
-     if (z_range < 0.1f) z_range = 1.0f; // Failsafe against division by zero
-
-     //Find the longest edge of the pixel grid
-     float max_dimension = std::max(static_cast<float>(meta.width), static_cast<float>(meta.height));
-     
-     //Force the highest peak to be exactly 25% of the map's width.
-     //This guarantees dramatic proportions without ever turning into spikes.
-     float cinematic_ratio = 0.25f; 
-     float desired_max_height = max_dimension * cinematic_ratio; 
-     float dynamic_scale = desired_max_height / z_range;
-     
-     //Add a clean, proportional base thickness (2% of map width)
-     float base_thickness = max_dimension * 0.02f; 
-
-     std::vector<float> exaggeratedDsm = absoluteDsm;
-     for (float& z : exaggeratedDsm) 
-     {
-         // Normalize the height to 0, stretch it to the calculated pixel scale, and add the base
-         z = ((z - min_z) * dynamic_scale) + base_thickness;
-     }
-
-     std::vector<uint8_t> glbBytes = mesher.generateGlb(
-         exaggeratedDsm,  
-         meta.width, 
-         meta.height, 
-         1.0f, // Keep X/Y plane in strict pixel units
-         reinterpret_cast<const char*>(textureBytes.data()),   
-         textureBytes.size()
-     );
-
-     if (glbBytes.empty()) 
-     {
-         throw std::runtime_error("Failed to package the .glb 3D mesh.");
-     }
-
-     return glbBytes;
-}
-
-
-//for the JPG/PNG images
-inline std::vector<uint8_t> PipelineService::buildRelative3DMesh(
-     const std::string& uuid, 
-     const std::vector<float>& relativeDsm, 
-     int width,
-     int height,
-     const std::vector<uint8_t>& textureBytes) const
-{
-     GlbMesher mesher;
-
-     // 1. Find the relative range of the AI's raw output
-     auto min_it = std::min_element(relativeDsm.begin(), relativeDsm.end());
-     auto max_it = std::max_element(relativeDsm.begin(), relativeDsm.end());
-     float min_z = (min_it != relativeDsm.end()) ? *min_it : 0.0f;
-     float max_z = (max_it != relativeDsm.end()) ? *max_it : 1.0f;
-     
-     float z_range = max_z - min_z;
-     if (z_range < 1e-6f) z_range = 1.0f; // Failsafe for flat images
-
-     // 2. Extract dimensions directly from the JPG/PNG width and height
-     float max_dimension = std::max(static_cast<float>(width), static_cast<float>(height));
-     
-     // 3. Cinematic auto-scaling
-     float cinematic_ratio = 0.25f; 
-     float desired_max_height = max_dimension * cinematic_ratio; 
-     float dynamic_scale = desired_max_height / z_range;
-     float base_thickness = max_dimension * 0.02f; 
-
-     // 4. Apply the scale to the relative depths
-     std::vector<float> exaggeratedDsm = relativeDsm;
-     for (float& z : exaggeratedDsm) 
-     {
-         z = ((z - min_z) * dynamic_scale) + base_thickness;
-     }
-
-     // 5. Pass to your existing GlbMesher
-     std::vector<uint8_t> glbBytes = mesher.generateGlb(
-         exaggeratedDsm,  
-         width, 
-         height, 
-         1.0f, // Keep the grid strictly 1:1 with the pixel coordinates
-         reinterpret_cast<const char*>(textureBytes.data()),   
-         textureBytes.size()
-     );
-
-     if (glbBytes.empty()) 
-     {
-         throw std::runtime_error("Failed to package the relative .glb 3D mesh.");
-     }
-
-     return glbBytes;
-}
-
-inline std::vector<uint8_t> PipelineService::extractJpegTexture(
-    const std::string& vsi_path, 
-    const drogon::HttpFile& imageFile) const
-{
-    //Passthrough if client explicitly uploaded a standard JPEG/PNG
-    const unsigned char* raw = reinterpret_cast<const unsigned char*>(imageFile.fileData());
-    size_t len = imageFile.fileLength();
-    if (len >= 3 && raw[0] == 0xFF && raw[1] == 0xD8 && raw[2] == 0xFF) return std::vector<uint8_t>(raw, raw + len);
-    if (len >= 4 && raw[0] == 0x89 && raw[1] == 'P' && raw[2] == 'N' && raw[3] == 'G') return std::vector<uint8_t>(raw, raw + len);
-
-    //Open the GeoTIFF currently mounted in RAM
-    GDALDataset* poDS = static_cast<GDALDataset*>(GDALOpen(vsi_path.c_str(), GA_ReadOnly));
-    if (!poDS) throw std::runtime_error("Failed to open GeoTIFF for texture conversion.");
-
-    int width = poDS->GetRasterXSize();
-    int height = poDS->GetRasterYSize();
-    int bands = poDS->GetRasterCount();
-
-    //Extract pixels and 3 channels (glTF strictly requires RGB textures)
-    std::vector<uint8_t> rawPixels(width * height * 3);
-    std::vector<uint8_t> bandData(width * height);
-
-    for (int b = 1; b <= 3; ++b) 
-    {
-        // If the TIFF is 1-band grayscale, this replicates it across RGB
-        int srcB = (b <= bands) ? b : 1; 
-        GDALRasterBand* band = poDS->GetRasterBand(srcB);
-        
-        // Read the band as 8-bit bytes
-        band->RasterIO(GF_Read, 0, 0, width, height, bandData.data(), width, height, GDT_Byte, 0, 0);
-
-        // Interleave the flat band data into RGB format (e.g., [R,G,B, R,G,B])
-        for (int i = 0; i < width * height; ++i) 
-        {
-            rawPixels[i * 3 + (b - 1)] = bandData[i];
-        }
-    }
-    GDALClose(poDS);
-
-    //Encode directly to a pure, EXIF-free JPEG using STB
-    std::vector<uint8_t> jpegBuffer;
-    stbi_write_jpg_to_func(writeJpegCallback, &jpegBuffer, width, height, 3, rawPixels.data(), 90);
-
-    if (jpegBuffer.empty()) 
-    {
-         throw std::runtime_error("STB JPEG encoding failed.");
-    }
-
-    return jpegBuffer;
-}
-
-
-
-inline std::vector<uint8_t> PipelineService::extractTextureFromNormalImage(const drogon::HttpFile& imageFile)
-{
-    const uint8_t* rawData = reinterpret_cast<const uint8_t*>(imageFile.fileData());
-    size_t length = imageFile.fileLength();
-
-    if (!rawData || length < 4) 
-    {
-        return {};
-    }
-
-    // 1. Passthrough if the input is already a JPEG
-    if (rawData[0] == 0xFF && rawData[1] == 0xD8) 
-    {
-        return std::vector<uint8_t>(rawData, rawData + length);
-    }
-
-    // 2. Decode PNG / other formats to raw RGB
-    int w = 0, h = 0, channels = 0;
-    stbi_uc* decodedPixels = stbi_load_from_memory(
-        rawData, static_cast<int>(length), &w, &h, &channels, 3 // Force 3 channels (RGB)
-    );
-
-    if (!decodedPixels) 
-    {
-        std::cerr << "[Texture Error] stbi_load_from_memory failed: " << stbi_failure_reason() << "\n";
-        return {};
-    }
-
-    // 3. Re-encode to JPEG in memory for glTF compatibility
-    std::vector<uint8_t> jpegBuffer;
-    auto writeFunc = [](void* context, void* data, int size) 
-    {
-        auto* buf = reinterpret_cast<std::vector<uint8_t>*>(context);
-        const auto* bytes = reinterpret_cast<const uint8_t*>(data);
-        buf->insert(buf->end(), bytes, bytes + size);
-    };
-
-    stbi_write_jpg_to_func(writeFunc, &jpegBuffer, w, h, 3, decodedPixels, 90);
-    stbi_image_free(decodedPixels);
-
-    return jpegBuffer;
+    (void)imageFile;
+    // Metric nDSM does not reconstruct natural terrain in a non-georeferenced
+    // image. Keep this route explicit until its relative-surface path exists.
+    throw std::runtime_error(
+        "Non-georeferenced reconstruction is unavailable until the relative-surface pipeline is integrated");
+    co_return std::string{};
 }

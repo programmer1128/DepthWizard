@@ -149,16 +149,18 @@ BuildingMesh BuildingMesher::generate(
      result.roofPrimitive.topology = PrimitiveTopology::TRIANGLES;
      result.roofPrimitive.materialRole = MaterialRole::BUILDING_ROOF;
      result.roofPrimitive.featureIds.emplace(); // Activate feature tracking
+     result.roofPrimitive.normals.emplace();
      
      // Initialize Wall Primitive
      result.wallPrimitive.topology = PrimitiveTopology::TRIANGLES;
      result.wallPrimitive.materialRole = MaterialRole::BUILDING_WALL;
      result.wallPrimitive.featureIds.emplace();
+     result.wallPrimitive.normals.emplace();
     
      if (config.generateRoofUVs) result.roofPrimitive.uvs.emplace();
      if (config.generateWallUVs) result.wallPrimitive.uvs.emplace();
 
-     AxisAlignedBounds roofBounds; roofBounds.isInitialized = true;
+     AxisAlignedBounds roofBounds; roofBounds.isInitialized = false;
      roofBounds.minX = roofBounds.minY = roofBounds.minZ = std::numeric_limits<double>::max();
      roofBounds.maxX = roofBounds.maxY = roofBounds.maxZ = std::numeric_limits<double>::lowest();
 
@@ -209,6 +211,8 @@ BuildingMesh BuildingMesher::generate(
              result.roofPrimitive.normals->push_back(0.0f);
             
              result.roofPrimitive.featureIds->push_back(bldg.buildingId);
+
+             roofBounds.isInitialized = true;
 
              roofBounds.minX = std::min(roofBounds.minX, pt.x); roofBounds.maxX = std::max(roofBounds.maxX, pt.x);
              roofBounds.minY = std::min(roofBounds.minY, static_cast<double>(localRoofY)); roofBounds.maxY = std::max(roofBounds.maxY, static_cast<double>(localRoofY));
@@ -264,6 +268,8 @@ BuildingMesh BuildingMesher::generate(
                      result.wallPrimitive.normals->push_back(nz);
                     
                      result.wallPrimitive.featureIds->push_back(bldg.buildingId);
+
+                     wallBounds.isInitialized = true;
 
                      wallBounds.minX = std::min(wallBounds.minX, vx); wallBounds.maxX = std::max(wallBounds.maxX, vx);
                      wallBounds.minY = std::min(wallBounds.minY, static_cast<double>(vy)); wallBounds.maxY = std::max(wallBounds.maxY, static_cast<double>(vy));

@@ -7,6 +7,7 @@
 #include "Loader.h"
 #include "../SrtmExtractor/SrtmExtractor.h"
 #include "../DataHandlers/MiniIOClient.h"
+#include "../FileGenerators/BackgroundTiffExportService.h"
 #include <trantor/utils/Logger.h>
 
 using namespace drogon;
@@ -25,6 +26,9 @@ void Loader::initAndStart(const Json::Value &config)
 
 void Loader::shutdown() 
 {
+    // Finish queued TIFF writes before destroying GDAL and the MinIO client.
+    BackgroundTiffExportService::instance().shutdown();
+
     LOG_INFO << "Shutting down GDAL Plugin...";
     
     GDALDestroyDriverManager();

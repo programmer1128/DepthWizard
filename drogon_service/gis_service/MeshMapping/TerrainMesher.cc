@@ -1,6 +1,8 @@
 #include "TerrainMesher.h"
 #include <cmath>
 #include <algorithm>
+#include <limits>
+#include <stdexcept>
 
 TerrainMesh TerrainMesher::generate(
     const GeoreferencedSurfaceBundle& surface,
@@ -14,16 +16,23 @@ TerrainMesh TerrainMesher::generate(
 
     int width = metadata.width;
     int height = metadata.height;
+    if (width < 2 || height < 2 || config.maxGridSize < 2 ||
+        !surface.dtm.isValid() || !surface.validMask.isValid() ||
+        surface.dtm.width != width || surface.dtm.height != height ||
+        surface.validMask.width != width || surface.validMask.height != height)
+        throw std::invalid_argument("TerrainMesher: invalid terrain dimensions or grid");
 
     //Dynamic Decimation (Stride)
     int stride = 1;
     if (width > config.maxGridSize || height > config.maxGridSize) 
     {
-        stride = std::max(width / config.maxGridSize, height / config.maxGridSize);
+        stride = std::max((width - 2) / (config.maxGridSize - 1) + 1,
+                          (height - 2) / (config.maxGridSize - 1) + 1);
     }
 
-    int gridWidth = width / stride;
-    int gridHeight = height / stride;
+    int gridWidth = (width - 2) / stride + 2;
+    int gridHeight = (height - 2) / stride + 2;
+    std::vector<uint8_t> sampledValid(static_cast<size_t>(gridWidth) * gridHeight, 0);
 
     std::vector<float>& positions = result.terrainPrimitive.positions;
     std::vector<float> uvs;
@@ -47,6 +56,9 @@ TerrainMesh TerrainMesher::generate(
              
              // Sample DTM (Bare Earth) instead of DSM
              float elevation = surface.dtm.data[origY * width + origX];
+             bool valid = surface.validMask.data[origY * width + origX] != 0 &&
+                          std::isfinite(elevation);
+             sampledValid[static_cast<size_t>(y) * gridWidth + x] = valid;
              
              // Convert to Projected Metric, then to Local glTF Space
              double E = metadata.geoTransform[0] + origX * metadata.geoTransform[1] + origY * metadata.geoTransform[2];
@@ -54,7 +66,9 @@ TerrainMesh TerrainMesher::generate(
             
              ProjectedPoint proj{E, N};
              LocalPoint localPt = LocalFrameTransformer::toLocal(proj, frame);
-             float localY = LocalFrameTransformer::toLocalElevation(elevation, frame);
+             float localY = valid
+                 ? LocalFrameTransformer::toLocalElevation(elevation, frame)
+                 : 0.0f; // Unused placeholder: faces touching NoData are omitted.
 
              positions.push_back(static_cast<float>(localPt.x));
              positions.push_back(localY);
@@ -64,12 +78,14 @@ TerrainMesh TerrainMesher::generate(
              uvs.push_back(static_cast<float>(origX) / (width - 1));
              uvs.push_back(1.0f - (static_cast<float>(origY) / (height - 1))); // glTF V axis flips
 
-             bounds.minX = std::min(bounds.minX, localPt.x);
-             bounds.minY = std::min(bounds.minY, static_cast<double>(localY));
-             bounds.minZ = std::min(bounds.minZ, localPt.z);
-             bounds.maxX = std::max(bounds.maxX, localPt.x);
-             bounds.maxY = std::max(bounds.maxY, static_cast<double>(localY));
-             bounds.maxZ = std::max(bounds.maxZ, localPt.z);
+             if (valid) {
+                 bounds.minX = std::min(bounds.minX, localPt.x);
+                 bounds.minY = std::min(bounds.minY, static_cast<double>(localY));
+                 bounds.minZ = std::min(bounds.minZ, localPt.z);
+                 bounds.maxX = std::max(bounds.maxX, localPt.x);
+                 bounds.maxY = std::max(bounds.maxY, static_cast<double>(localY));
+                 bounds.maxZ = std::max(bounds.maxZ, localPt.z);
+             }
          }
      }
 
@@ -83,10 +99,17 @@ TerrainMesh TerrainMesher::generate(
              uint32_t v2 = (y + 1) * gridWidth + x;
              uint32_t v3 = (y + 1) * gridWidth + (x + 1);
             
-             indices.push_back(v0); indices.push_back(v2); indices.push_back(v1);
-             indices.push_back(v1); indices.push_back(v2); indices.push_back(v3);
+             if (sampledValid[v0] && sampledValid[v2] && sampledValid[v1]) {
+                 indices.push_back(v0); indices.push_back(v2); indices.push_back(v1);
+             }
+             if (sampledValid[v1] && sampledValid[v2] && sampledValid[v3]) {
+                 indices.push_back(v1); indices.push_back(v2); indices.push_back(v3);
+             }
          }
      } 
+
+     if (indices.empty())
+         throw std::runtime_error("TerrainMesher: no valid terrain triangles");
 
      //Skirt Generation (The Pedestal)
      float yBase = static_cast<float>(bounds.minY) - config.skirtDepth;
@@ -101,6 +124,8 @@ TerrainMesh TerrainMesher::generate(
 
      auto addSkirtEdge = [&](uint32_t vTopCurr, uint32_t vTopNext) 
      {
+         if (!sampledValid[vTopCurr] || !sampledValid[vTopNext])
+             return;
          uint32_t vBaseCurr = positions.size() / 3;
          positions.push_back(positions[vTopCurr * 3]);     
          positions.push_back(yBase);                           

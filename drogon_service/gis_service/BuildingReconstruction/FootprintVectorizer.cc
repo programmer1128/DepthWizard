@@ -2,6 +2,7 @@
 #include <opencv2/opencv.hpp>
 #include <cmath>
 #include <algorithm>
+#include <utility>
 #include <limits>
 #include <unordered_map>
 #include <cstdint>
@@ -253,15 +254,41 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
      std::vector<std::vector<ProjectedPoint>> outerRings;
      std::vector<std::vector<ProjectedPoint>> holeRings;
     
-     for (const auto& ring : rawRings) 
+     // A negative affine determinant reverses polygon winding when converting
+     // from pixel coordinates to projected coordinates.
+     const double affineOrientation = (det >= 0.0) ? 1.0 : -1.0;
+
+     for (auto ring : rawRings)
      {
-         double area = calculateSignedArea(ring);
-         if (area > 0) { // CCW = Outer
-             outerRings.push_back(ring);
-         } 
-         else if (std::abs(area) >= config.minHoleAreaSquareMetres) 
-         { // CW = Hole
-             holeRings.push_back(ring);
+         const double projectedSignedArea = calculateSignedArea(ring);
+ 
+         // Restore the winding produced by the boundary tracer before the
+         // affine transform changed its orientation.
+         const double topologySignedArea =
+             projectedSignedArea * affineOrientation;
+ 
+         if (topologySignedArea > 0.0)
+         {
+             // Canonical projected-coordinate output: outer ring is CCW.
+             if (projectedSignedArea < 0.0)
+             {
+                 std::reverse(ring.begin(), ring.end());
+             }
+
+             outerRings.push_back(std::move(ring));
+         }
+         else if (
+             topologySignedArea < 0.0 &&
+             std::abs(projectedSignedArea) >=
+                 config.minHoleAreaSquareMetres)
+         {
+             // Canonical projected-coordinate output: holes are CW.
+             if (projectedSignedArea > 0.0)
+             {
+                 std::reverse(ring.begin(), ring.end());
+             }
+
+             holeRings.push_back(std::move(ring));
          }
      }
 

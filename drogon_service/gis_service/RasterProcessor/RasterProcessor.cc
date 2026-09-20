@@ -1,191 +1,173 @@
+// implements GDAL-based warping using in-memory virtual filesystems (/vsimem/)
+
 #include "RasterProcessor.h"
 #include <gdal_utils.h>
 #include <cpl_vsi.h>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
-#include <cstdlib>
 #include <drogon/utils/Utilities.h>
 
-//updated GDAL warp to use multi threading for calculations for maximum performance
 
-// helper functions
-std::vector<std::string> RasterProcessor::buildWarpArgs(const GDALDatasetPtr& hInputDS)
+// building the warp arguments
+std::vector<std::string> RasterProcessor::buildWarpArgsFromMetadata(const SpatialMetadata& metadata)
 {
-     // build the string configuration for warping the fetched tile
-     // physical pixel dimensions of the target
-     int target_W = hInputDS->GetRasterXSize(); // width
-     int target_H = hInputDS->GetRasterYSize(); // height
+    int target_W = metadata.width;
+    int target_H = metadata.height;
+    const double* gt = metadata.geoTransform.data();
 
-     // geoTransform holds 6 numbers: top-left coordinates, pixel width, pixel height
-     double geoTransform[6];
-     hInputDS->GetGeoTransform(geoTransform);
+    // affine transform coordinate derivation:
+    // min_x = gt[0] (left border)
+    // max_x = gt[0] + width * gt[1] (right border)
+    // max_y = gt[3] (top border)
+    // min_y = gt[3] + height * gt[5] (bottom border, since gt[5] is negative pixel height)
+    double min_x = gt[0];
+    double max_x = gt[0] + (target_W * gt[1]);
+    double max_y = gt[3];
+    double min_y = gt[3] + (target_H * gt[5]);
 
-     // next we build the list of string arguments
+    // to ensure min_y is smaller than max_y
+    if (min_y > max_y)
+    {
+        std::swap(min_y, max_y);
+    }
+    if (min_x > max_x)
+    {
+        std::swap(min_x, max_x);
+    }
 
-     std::vector<std::string> warpArgs = {
-         "-ts", std::to_string(target_W), std::to_string(target_H), // to match pixel width and height exactly
+    std::vector<std::string> warpArgs = {
+        "-ts", std::to_string(target_W), std::to_string(target_H), // exact pixel grid matching
+        "-te", std::to_string(min_x), std::to_string(min_y), std::to_string(max_x), std::to_string(max_y), // bounding extent
+        "-t_srs", metadata.projectionRef,   // target CRS matching optical image
+        "-r", "bilinear",       // bilinear resampling for smooth topography
+        "-wm", "500",         // 500 MB GDAL Warp memory allocation
+        "-multi",                 // for asynchronous I/O
+        "-wo", "NUM_THREADS=ALL_CPUS"          // multi-core parallel warping
+    };
 
-         "-te", // target extent (cropping the bounding box): min x, min y, max x, max y
-         std::to_string(geoTransform[0]),        // min x: left edge
-         std::to_string(geoTransform[3] + (target_H * geoTransform[5])),     // min y: bottom edge
-         std::to_string(geoTransform[0] + (target_W * geoTransform[1])),     // max x: right edge
-         std::to_string(geoTransform[3]),        // max y: top edge
-
-         "-t_srs", hInputDS->GetProjectionRef(),  // force the CRS of warped tile to match user's image
-
-         "-r", "bilinear",  // smoothes out 30m blocks into a fine, smooth gradient after stretching 
-                         //to match high resolution of user's image
-         
-         //adding performance flags
-         "-wm", "500",                  // Allow GDAL to use up to 500MB of RAM for processing
-         "-multi",                      // Enable asynchronous I/O
-         "-wo", "NUM_THREADS=ALL_CPUS"  // Force Warp algorithm to use all available logical cores
-     };
-
-     return warpArgs;
+    return warpArgs;
 }
 
-GDALDatasetPtr RasterProcessor::executeWarp(const GDALDatasetPtr& hDemDS, const std::vector<std::string>& warpArgs, const std::string& outPath)
+
+// executing the warp
+GDALDatasetPtr RasterProcessor::executeWarpInternal(
+    const GDALDatasetPtr& hDemDS, 
+    const std::vector<std::string>& warpArgs, 
+    const std::string& outPath)
 {
-     // to execute the warping process on fetched tile
+    if (!hDemDS)
+    {
+        throw std::invalid_argument("RasterProcessor: Source DEM dataset pointer is null");
+    }
 
-     // to convert std::vector<std::string> into string list that GDAL needs
-     char** papszWarpArgs = nullptr;
-     for(const auto& arg : warpArgs)
-     {
-         papszWarpArgs = CSLAddString(papszWarpArgs, arg.c_str());
-     }
+    // to convert C++ string list into char* array for GDAL C-API
+    char** papszWarpArgs = nullptr;
+    for (const auto& arg : warpArgs)
+    {
+        papszWarpArgs = CSLAddString(papszWarpArgs, arg.c_str());
+    }
 
-     // load these arguments into GDAL options object
-     GDALWarpAppOptions* warpOptions = GDALWarpAppOptionsNew(papszWarpArgs, nullptr);
+    GDALWarpAppOptions* warpOptions = GDALWarpAppOptionsNew(papszWarpArgs, nullptr);
+    GDALDataset* rawDemPtr = hDemDS.get();
 
-     // GDAL's core C functions require array of raw pointers
-     // we temporarily extract the raw pointer just for GDALWarp function call
-     GDALDataset* rawDemPtr = hDemDS.get();
+    // reproject directly into RAM disk path (/vsimem/)
+    GDALDatasetPtr hOutDS(static_cast<GDALDataset*>(
+        GDALWarp(outPath.c_str(), nullptr, 1, (GDALDatasetH*)&rawDemPtr, warpOptions, nullptr)
+    ));
 
-     // mathematically stretch the hDemDS and save it to outPath (/vsimem/)
-     // immediately wrap the GDALDataset object and make hOutDS point to it
-     GDALDatasetPtr hOutDS(static_cast<GDALDataset*>(
-         GDALWarp(outPath.c_str(), nullptr, 1, (GDALDatasetH*)&rawDemPtr, warpOptions, nullptr)
-     ));
+    GDALWarpAppOptionsFree(warpOptions);
+    CSLDestroy(papszWarpArgs);
 
-     // cleanup configuration objects: as these are not unique_ptr
-     GDALWarpAppOptionsFree(warpOptions);
-     CSLDestroy(papszWarpArgs);
+    if (!hOutDS)
+    {
+        throw std::runtime_error("RasterProcessor: Reprojection and resampling failed in GDALWarp.");
+    }
 
-     if (!hOutDS) 
-     {
-         throw std::runtime_error("RasterProcessor: GDALWarp failed to stretch the DEM.");
-     }
-
-     return hOutDS; // no need for std::move as return values are automatically moved
+    return hOutDS;
 }
 
-std::vector<float> RasterProcessor::extractFloatMatrix(const GDALDatasetPtr& hOutDS, int width, int height)
+// extracting the warped DEM to RasterGrid<float>
+RasterGrid<float> RasterProcessor::extractFloatGrid(const GDALDatasetPtr& hOutDS, int width, int height)
 {
-    // argument is a pointer to the warped tile object
-    // here we ultimately build the float vector and return it
-
-    // we grab the first band of the image: elevation height in meters
     GDALRasterBand* demBand = hOutDS->GetRasterBand(1);
 
-    // now we find out what number is used when satellite fails to record data
-    int hasNoData;
+    int hasNoData = 0;
     double noDataValue = demBand->GetNoDataValue(&hasNoData);
 
-    // GDAL's RasterIO function copies millions of pixels in a single memory block transfer
-    // we pre-size the array and let GDAL fill it with data
-    std::vector<float> final_matrix(width * height);
+    RasterGrid<float> grid;
+    grid.width = width;
+    grid.height = height;
+    grid.data.resize(static_cast<size_t>(width) * height);
 
-    // now fill the data from the warped image directly to this matrix
-    CPLErr err = demBand->RasterIO(GF_Read, 0, 0, width, height,            // read from x:0, y:0 to width, height
-                                   final_matrix.data(), width, height,      // write into our C++ vector
-                                   GDT_Float32, 0, 0);                      // specify that we want float32 numbers
-    
-     if (err != CE_None) 
-     {
-         throw std::runtime_error("RasterProcessor: Failed to read pixel data from warped DEM.");
-     }
-    
-    // NoData filtering 
+    // fast block memory read directly into vector
+    CPLErr err = demBand->RasterIO(
+        GF_Read, 0, 0, width, height, 
+        grid.data.data(), width, height, 
+        GDT_Float32, 0, 0
+    );
 
-    // if the data contains invalid "NoData" pixels (-32768)
-    // convert them to NaN (Not a Number)
+    if (err != CE_None)
+    {
+        throw std::runtime_error("RasterProcessor: RasterIO failed to read elevation pixels from warped DEM");
+    }
 
-    //previous version of no data filtering
-    // if(hasNoData)
-    // {
-    //     for (size_t i = 0; i < final_matrix.size(); i++) 
-    //     {
-    //         if (final_matrix[i] == static_cast<float>(noDataValue)) 
-    //         {
-    //             final_matrix[i] = std::numeric_limits<float>::quiet_NaN();
-    //         }
-    //     }
-    // }
-
-    // NoData filtering 
+    // to convert any satellite NoData into NaN
     if (hasNoData)
     {
-         //single cast to save CPU cycles
-         const float void_val = static_cast<float>(noDataValue);
-         const float nan_val = std::numeric_limits<float>::quiet_NaN();
-        
-         //pointer-based iteration for faster access
-         float* data_ptr = final_matrix.data();
-         size_t total_pixels = final_matrix.size();
-        
-         for (size_t i = 0; i < total_pixels; ++i) 
-         {
-             if (data_ptr[i] == void_val) 
-             {
-                 data_ptr[i] = nan_val;
-             }
-         }
-     }
+        const float void_val = static_cast<float>(noDataValue);
+        const float nan_val = std::numeric_limits<float>::quiet_NaN();
+        float* ptr = grid.data.data();
+        size_t total = grid.data.size();
 
-     return final_matrix;
+        for (size_t i = 0; i < total; ++i)
+        {
+            if (ptr[i] == void_val)
+            {
+                ptr[i] = nan_val;
+            }
+        }
+    }
+
+    return grid;
 }
 
-// main function
 
-std::vector<float> RasterProcessor::processor(GDALDatasetPtr hInputDS, GDALDatasetPtr hDemDS)
+// main orchestrator function
+RasterGrid<float> RasterProcessor::warpDemToScene(
+    const GDALDatasetPtr& demDataset, 
+    const SpatialMetadata& metadata)
 {
-    // we write a new RAM file location where the warped DEM will be stored using vsimem
-    std::string out_warped_dem = "/vsimem/warped_dem_" + drogon::utils::getUuid() + ".tif";
+    std::string vsiOutPath = "/vsimem/warped_scene_" + drogon::utils::getUuid() + ".tif";
 
     try
     {
-        // build the warp arguments based on user's image
-        // pass the unique_ptr directly
+        std::vector<std::string> warpArgs = buildWarpArgsFromMetadata(metadata);
+        GDALDatasetPtr hOutDS = executeWarpInternal(demDataset, warpArgs, vsiOutPath);
 
-        std::vector<std::string> warpArgs = buildWarpArgs(hInputDS);
+        RasterGrid<float> resultGrid = extractFloatGrid(hOutDS, metadata.width, metadata.height);
 
-        // now execute the warp
-        // brand new dataset gets stored in warped_dem.tif and we get a pointer to this dataset: hOutDS
+        // to delete the temporary virtual memory file
+        VSIUnlink(vsiOutPath.c_str());
 
-        GDALDatasetPtr hOutDS = executeWarp(hDemDS, warpArgs, out_warped_dem);
-
-        // extract the physical width and height in pixels from the user's image
-        int target_W = hInputDS->GetRasterXSize();
-        int target_H = hInputDS->GetRasterYSize();
-
-        // extract the warped image pixels into a float vector
-
-        std::vector<float> final_matrix = extractFloatMatrix(hOutDS, target_W, target_H);
-
-        // cleanup virtual RAM files
-        VSIUnlink(out_warped_dem.c_str());
-
-        return final_matrix;
-
+        return resultGrid;
     }
-    catch(const std::exception& e)
+    catch (...)
     {
-        // if anything fails, still cleanup the virtual RAM files
-        VSIUnlink(out_warped_dem.c_str());
-
-        throw; // Re-throw the error to the controller
+        VSIUnlink(vsiOutPath.c_str());
+        throw;
     }
+}
+
+// for compare service / backward compatibility
+std::vector<float> RasterProcessor::processor(GDALDatasetPtr hInputDS, GDALDatasetPtr hDemDS)
+{
+    SpatialMetadata meta;
+    meta.width = hInputDS->GetRasterXSize();
+    meta.height = hInputDS->GetRasterYSize();
+    hInputDS->GetGeoTransform(meta.geoTransform.data());
+    meta.projectionRef = hInputDS->GetProjectionRef();
+
+    RasterGrid<float> warped = warpDemToScene(hDemDS, meta);
+    return warped.data;
 }

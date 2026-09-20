@@ -1,231 +1,153 @@
 #include "CalibrationController.h"
-#include "../SrtmExtractor/SrtmExtractor.h"
-#include "../RasterProcessor/RasterProcessor.h"
-#include "CalibrationController.h"
+
 #include "PipelineService.h"
-#include <drogon/utils/Utilities.h>
-#include <fstream>
-#include <filesystem> // For deleting the temporary file
-#include <cstring>
+#include "../DataHandlers/MiniIOClient.h"
+#include "../FileGenerators/BackgroundTiffExportService.h"
 
-drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(drogon::HttpRequestPtr req)
+#include <string>
+#include <utility>
+
+static const char* exportStateName(JobStatus state)
 {
-     drogon::MultiPartParser fileUpload;
-    
-     if (fileUpload.parse(req) != 0) 
-     {
-         Json::Value error;
-         error["status"] = "error";
-         error["message"] = "Failed to parse multipart request.";
-         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-         resp->setStatusCode(drogon::k400BadRequest);
-         co_return resp; 
-     }
-
-     auto files = fileUpload.getFilesMap();
-
-     //Ensure both the image and the test depth matrix were uploaded
-     if (files.find("image") == files.end()) 
-     {
-         Json::Value error;
-         error["status"] = "error";
-         error["message"] = "Missing files. Please provide image file";
-         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-         resp->setStatusCode(drogon::k400BadRequest);
-         co_return resp; 
-     }
-
-     //Read-only access
-     const auto& imageFile = files.at("image");
-     //const auto& depthFile = files.at("depth");
-
-     try 
-     {
-        //  //convert the uploaded depth binary directly into a std::vector<float>
-        //  // We calculate how many floats are in the file by dividing byte length by 4 (sizeof float)
-        //  size_t floatCount = depthFile.fileLength() / sizeof(float);
-        //  std::vector<float> aiDepth(floatCount);
-        
-        //  // Copy the raw bytes directly into the vector's memory
-        //  std::memcpy(aiDepth.data(), depthFile.fileData(), depthFile.fileLength());
-         //Execute the strictly isolated C++ GIS Pipeline
-         //Execute the strictly isolated C++ GIS Pipeline
-         Json::Value pipelineResult = co_await PipelineService().executeCalibration(
-                 imageFile
-             );
-
-         //Return Success
-         Json::Value success;
-         success["status"] = "success";
-         success["message"] = "Pipeline completed successfully.";
-         
-         // Extract the values from the pipeline result and send them to the frontend
-         success["uuid"] = pipelineResult["uuid"].asString();
-         success["glb_url"] = pipelineResult["glb_url"].asString();
-
-         co_return drogon::HttpResponse::newHttpJsonResponse(success);
-
-     } 
-     catch (const std::exception& e) 
-     {
-         Json::Value error;
-         error["status"] = "error";
-         error["message"] = e.what();
-         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-         resp->setStatusCode(drogon::k500InternalServerError);
-         co_return resp;
-     }
+    switch (state)
+    {
+    case JobStatus::QUEUED: return "queued";
+    case JobStatus::PROCESSING: return "processing";
+    case JobStatus::READY: return "ready";
+    case JobStatus::FAILED: return "failed";
+    }
+    return "unknown";
 }
 
-
-drogon::Task<drogon::HttpResponsePtr> CalibrationController::processNormalImageForTerrain
-     (drogon::HttpRequestPtr req)
+drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(
+    drogon::HttpRequestPtr request)
 {
-     drogon::MultiPartParser fileUpload;
-    
-     if (fileUpload.parse(req) != 0) 
-     {
-         Json::Value error;
-         error["status"] = "error";
-         error["message"] = "Failed to parse multipart request.";
-         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-         resp->setStatusCode(drogon::k400BadRequest);
-         co_return resp; 
-     }
+    drogon::MultiPartParser upload;
+    if (upload.parse(request) != 0)
+    {
+        Json::Value error;
+        error["message"] = "Failed to parse multipart request.";
+        auto response = drogon::HttpResponse::newHttpJsonResponse(error);
+        response->setStatusCode(drogon::k400BadRequest);
+        co_return response;
+    }
 
-     auto files = fileUpload.getFilesMap();
+    const auto files = upload.getFilesMap();
+    auto image = files.find("image");
+    if (image == files.end())
+    {
+        Json::Value error;
+        error["message"] = "Missing image file.";
+        auto response = drogon::HttpResponse::newHttpJsonResponse(error);
+        response->setStatusCode(drogon::k400BadRequest);
+        co_return response;
+    }
 
-     //Ensure both the image and the test depth matrix were uploaded
-     if (files.find("image") == files.end()) 
-     {
-         Json::Value error;
-         error["status"] = "error";
-         error["message"] = "Missing files. Please provide image file";
-         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-         resp->setStatusCode(drogon::k400BadRequest);
-         co_return resp; 
-     }
-
-     //Read-only access
-     const auto& imageFile = files.at("image");
-     //const auto& depthFile = files.at("depth");
-
-     try 
-     {
-        //  //convert the uploaded depth binary directly into a std::vector<float>
-        //  // We calculate how many floats are in the file by dividing byte length by 4 (sizeof float)
-        //  size_t floatCount = depthFile.fileLength() / sizeof(float);
-        //  std::vector<float> aiDepth(floatCount);
-        
-        //  // Copy the raw bytes directly into the vector's memory
-        //  std::memcpy(aiDepth.data(), depthFile.fileData(), depthFile.fileLength());
-         //Execute the strictly isolated C++ GIS Pipeline
-         std::string saved_file = co_await PipelineService().executeCalibrationNormalImage(imageFile);
-
-         //Return Success
-         Json::Value success;
-         success["status"] = "success";
-         success["message"] = "Pipeline completed successfully.";
-         success["saved_file"] = saved_file;
-
-         co_return drogon::HttpResponse::newHttpJsonResponse(success);
-
-     } 
-     catch (const std::exception& e) 
-     {
-         Json::Value error;
-         error["status"] = "error";
-         error["message"] = e.what();
-         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-         resp->setStatusCode(drogon::k500InternalServerError);
-         co_return resp;
-     }
+    try
+    {
+        // The pipeline completes GLB generation and queues GeoTIFF exports.
+        // Return its small rendering response without waiting for TIFF uploads.
+        Json::Value result = co_await PipelineService().executeCalibration(
+            image->second);
+        co_return drogon::HttpResponse::newHttpJsonResponse(result);
+    }
+    catch (const std::exception& error)
+    {
+        Json::Value body;
+        body["message"] = error.what();
+        auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+        response->setStatusCode(drogon::k500InternalServerError);
+        co_return response;
+    }
 }
 
+drogon::Task<drogon::HttpResponsePtr>
+CalibrationController::processNormalImageForTerrain(
+    drogon::HttpRequestPtr request)
+{
+    drogon::MultiPartParser upload;
+    if (upload.parse(request) != 0)
+    {
+        Json::Value error;
+        error["message"] = "Failed to parse multipart request.";
+        auto response = drogon::HttpResponse::newHttpJsonResponse(error);
+        response->setStatusCode(drogon::k400BadRequest);
+        co_return response;
+    }
 
+    const auto files = upload.getFilesMap();
+    auto image = files.find("image");
+    if (image == files.end())
+    {
+        Json::Value error;
+        error["message"] = "Missing image file.";
+        auto response = drogon::HttpResponse::newHttpJsonResponse(error);
+        response->setStatusCode(drogon::k400BadRequest);
+        co_return response;
+    }
 
-// void CalibrationController::processTerrain(const drogon::HttpRequestPtr& req,
-//                                            std::function<void (const drogon::HttpResponsePtr &)> &&callback)
-// {
-//     // parse the uploaded file from the HTTP request
-//     drogon::MultiPartParser fileUpload;
-//     if (fileUpload.parse(req) != 0 || fileUpload.getFiles().empty())
-//     {
-//         Json::Value error;
-//         error["status"] = "error";
-//         error["message"] = "No file uploaded. Please attach a GeoTIFF.";
-//         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-//         resp->setStatusCode(drogon::k400BadRequest);
-//         callback(resp);
-//         return;
-//     }
+    try
+    {
+        std::string savedFile = co_await PipelineService()
+            .executeCalibrationNormalImage(image->second);
 
-//     const auto& file = fileUpload.getFiles()[0];
-    
-//     // save the uploaded file temporarily to the hard drive
-//     // we generate a UUID so multiple users dont overwrite each other's uploads
-//     std::string temp_file_path = "./temp_upload_" + drogon::utils::getUuid() + ".tif";
-//     file.saveAs(temp_file_path);
+        Json::Value result;
+        result["saved_file"] = std::move(savedFile);
+        co_return drogon::HttpResponse::newHttpJsonResponse(result);
+    }
+    catch (const std::exception& error)
+    {
+        Json::Value body;
+        body["message"] = error.what();
+        auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+        response->setStatusCode(drogon::k500InternalServerError);
+        co_return response;
+    }
+}
 
-//     try
-//     {
-//         // hand over to srtm extractor
+drogon::Task<drogon::HttpResponsePtr> CalibrationController::getExportStatus(
+    drogon::HttpRequestPtr request, std::string uuid)
+{
+    (void)request;
 
-//         RasterDatasets datasets = SrtmExtractor::fetchTile(temp_file_path);
-        
-//         if (!datasets.hInputDS || !datasets.hDemDS)
-//         {
-//             throw std::runtime_error("Failed to extract datasets from AWS or input image.");
-//         }
+    // The initial upload response contains the UUID. Poll this endpoint
+    // before requesting the DSM through a height-query API.
+    auto status = BackgroundTiffExportService::instance().getStatus(uuid);
+    if (!status)
+    {
+        Json::Value error;
+        error["message"] = "No raster-export job found for this UUID.";
+        auto response = drogon::HttpResponse::newHttpJsonResponse(error);
+        response->setStatusCode(drogon::k404NotFound);
+        co_return response;
+    }
 
-//         // hand over to raster processor
+    Json::Value result(Json::objectValue);
+    result["uuid"] = uuid;
+    result["status"] = exportStateName(status->overall());
+    result["dsm"] = exportStateName(status->dsm);
+    result["dtm"] = exportStateName(status->dtm);
+    result["ndsm"] = exportStateName(status->ndsm);
+    result["confidence"] = exportStateName(status->confidence);
 
-//         std::vector<float> final_matrix = RasterProcessor::processor(std::move(datasets.hInputDS), std::move(datasets.hDemDS));
+    if (status->dsm == JobStatus::READY)
+        result["dsm_url"] = MinioClient::generatePresignedUrl(
+            "terrain-assets", "heights_" + uuid + ".tif");
+    if (status->dtm == JobStatus::READY)
+        result["dtm_url"] = MinioClient::generatePresignedUrl(
+            "terrain-assets", "dtm_" + uuid + ".tif");
+    if (status->ndsm == JobStatus::READY)
+        result["ndsm_url"] = MinioClient::generatePresignedUrl(
+            "terrain-assets", "ndsm_" + uuid + ".tif");
+    if (status->confidence == JobStatus::READY)
+        result["confidence_url"] = MinioClient::generatePresignedUrl(
+            "terrain-assets", "confidence_" + uuid + ".tif");
 
-//         // write matrix to a text file
+    Json::Value errors(Json::arrayValue);
+    for (const std::string& error : status->errors)
+        errors.append(error);
+    if (!errors.empty())
+        result["errors"] = std::move(errors);
 
-//         std::string output_txt_path = "./final_matrix_" + drogon::utils::getUuid() + ".txt";
-//         std::ofstream outFile(output_txt_path);
-        
-//         if (outFile.is_open())
-//         {
-//             outFile << "Final Extracted Float Matrix\n";
-//             outFile << "Total Pixels: " << final_matrix.size() << "\n\n";
-            
-//             for (size_t i = 0; i < final_matrix.size(); ++i)
-//             {
-//                 outFile << final_matrix[i] << " ";
-
-//                 // added a line break every 10 numbers to make the text file readable
-//                 if ((i + 1) % 10 == 0) outFile << "\n"; 
-//             }
-//             outFile.close();
-//         }
-
-//         // Delete the temporary uploaded file from the SSD
-//         std::filesystem::remove(temp_file_path);
-
-//         // return success message
-//         Json::Value success;
-//         success["status"] = "success";
-//         success["message"] = "Pipeline completed successfully.";
-//         success["matrix_size"] = static_cast<Json::Value::UInt64>(final_matrix.size());
-//         success["saved_file"] = output_txt_path;
-
-//         auto resp = drogon::HttpResponse::newHttpJsonResponse(success);
-//         callback(resp);
-//     }
-//     catch (const std::exception& e)
-//     {
-//         // If the pipeline crashes, we must still delete the temporary file!
-//         std::filesystem::remove(temp_file_path);
-
-//         Json::Value error;
-//         error["status"] = "error";
-//         error["message"] = e.what();
-        
-//         auto resp = drogon::HttpResponse::newHttpJsonResponse(error);
-//         resp->setStatusCode(drogon::k500InternalServerError);
-//         callback(resp);
-//     }
-// }
+    co_return drogon::HttpResponse::newHttpJsonResponse(result);
+}

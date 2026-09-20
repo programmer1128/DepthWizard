@@ -152,9 +152,10 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
         posAcc.bufferView = -1; // Must be -1 for Draco
         posAcc.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
         posAcc.type = TINYGLTF_TYPE_VEC3;
-        if (i == 0) { // Only set absolute scene bounds on the first primitive for simplicity
-            posAcc.minValues = { scene.sceneBounds.minX, scene.sceneBounds.minY, scene.sceneBounds.minZ };
-            posAcc.maxValues = { scene.sceneBounds.maxX, scene.sceneBounds.maxY, scene.sceneBounds.maxZ };
+        posAcc.count = prim.vertexCount;
+        if (prim.localBounds.isInitialized) {
+            posAcc.minValues = { prim.localBounds.minX, prim.localBounds.minY, prim.localBounds.minZ };
+            posAcc.maxValues = { prim.localBounds.maxX, prim.localBounds.maxY, prim.localBounds.maxZ };
         }
         model.accessors.push_back(posAcc);
         int posAccIdx = static_cast<int>(model.accessors.size() - 1);
@@ -167,6 +168,7 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
             normAcc.bufferView = -1;
             normAcc.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
             normAcc.type = TINYGLTF_TYPE_VEC3;
+            normAcc.count = prim.vertexCount;
             model.accessors.push_back(normAcc);
             int normAccIdx = static_cast<int>(model.accessors.size() - 1);
             gltfPrim.attributes["NORMAL"] = normAccIdx;
@@ -179,6 +181,7 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
             uvAcc.bufferView = -1;
             uvAcc.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
             uvAcc.type = TINYGLTF_TYPE_VEC2;
+            uvAcc.count = prim.vertexCount;
             model.accessors.push_back(uvAcc);
             int uvAccIdx = static_cast<int>(model.accessors.size() - 1);
             gltfPrim.attributes["TEXCOORD_0"] = uvAccIdx;
@@ -191,6 +194,7 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
             featAcc.bufferView = -1;
             featAcc.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
             featAcc.type = TINYGLTF_TYPE_SCALAR;
+            featAcc.count = prim.vertexCount;
             model.accessors.push_back(featAcc);
             int featAccIdx = static_cast<int>(model.accessors.size() - 1);
             // Standard naming convention for custom per-vertex IDs in glTF
@@ -201,6 +205,14 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
         // Apply Draco Extension to this Primitive
         dracoExt["attributes"] = tinygltf::Value(dracoAttrs);
         gltfPrim.extensions["KHR_draco_mesh_compression"] = tinygltf::Value(dracoExt);
+
+        tinygltf::Accessor indexAcc;
+        indexAcc.bufferView = -1;
+        indexAcc.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
+        indexAcc.type = TINYGLTF_TYPE_SCALAR;
+        indexAcc.count = prim.indexCount;
+        model.accessors.push_back(indexAcc);
+        gltfPrim.indices = static_cast<int>(model.accessors.size() - 1);
 
         mesh.primitives.push_back(gltfPrim);
     }

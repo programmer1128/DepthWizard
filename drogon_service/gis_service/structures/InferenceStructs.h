@@ -60,3 +60,32 @@ struct InferenceBundle
     RasterGrid<uint8_t> globalValidMask;
     ModelCollection models; 
 };
+
+struct TiledInferencePayload
+{
+    int globalWidth;
+    int globalHeight;
+    std::vector<TileInferenceResult> allTiles;
+};
+
+
+// struct to hold one 518x518 square of the image ready to be sent to the model
+
+struct TileRequest 
+{
+    uint32_t tileId;       // unique number for this square
+    int xOffset;           // distance from the left edge of the main image
+    int yOffset;           // distance from the top edge of the main image
+    int width;             // always 518
+    int height;            // always 518
+
+    // we must track the valid area so the stitcher knows what to ignore
+    int validWidth;        
+    int validHeight;
+    
+    // normalized colors (RGB) for the model
+    std::vector<float> normalizedRgbBytes;
+    
+    // the black-and-white safety map (1 = safe, 0 = cloud/shadow)
+    std::vector<uint8_t> validMaskBytes;
+};

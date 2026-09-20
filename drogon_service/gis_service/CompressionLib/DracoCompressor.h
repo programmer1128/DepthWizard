@@ -18,6 +18,9 @@ struct CompressedPrimitive {
     std::string errorMessage;
     
     std::vector<uint8_t> compressedBytes;
+    size_t vertexCount{0};
+    size_t indexCount{0};
+    AxisAlignedBounds localBounds;
     
     // Draco Attribute Mapping IDs (needed by the GLTF Packager)
     int posAttrId{-1};

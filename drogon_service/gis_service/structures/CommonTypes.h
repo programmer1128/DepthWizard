@@ -99,6 +99,7 @@ struct SpatialMetadata
       double pixelSizeY{0.0};
       std::string verticalDatum{""};
       bool isGeoreferenced{false};
+       double gsd{1.0};
 };
 
 // Explicit geometric coordinate concepts to prevent CRS mix-ups
