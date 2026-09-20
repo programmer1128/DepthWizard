@@ -49,6 +49,20 @@ file(GLOB COMPRESSOR CONFIGURE_DEPENDS "CompressionLib/*.cc" "CompressionLib/*.c
 file(GLOB DATA_HANDLERS CONFIGURE_DEPENDS "DataHandlers/*.cc" "DataHandlers/*.cpp")
 file(GLOB STRUCTURES CONFIGURE_DEPENDS "structures/*.cc" "structures/*.cpp" "structures/*.h")
 file(GLOB_RECURSE IMAGE_TILER CONFIGURE_DEPENDS "ImageTilingService/*.cc" "ImageTilingService/*.cpp")
+file(GLOB QUALITY_CONTROL_SRC
+     CONFIGURE_DEPENDS
+     "QualityControl/*.cc"
+     "QualityControl/*.cpp") // for module qc
+
+file(GLOB RASTER_DERIVATIVES_SRC
+     CONFIGURE_DEPENDS
+     "RasterDerivatives/*.cc"
+     "RasterDerivatives/*.cpp")
+
+file(GLOB MODULE7_SRC
+     CONFIGURE_DEPENDS
+     "Module7/*.cc"
+     "Module7/*.cpp")
 
 #COMPILER OPTIMIZATIONS (Release Mode)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -82,7 +96,10 @@ target_sources(${PROJECT_NAME}
                ${COMPRESSOR}
                ${DATA_HANDLERS}
                ${IMAGE_TILER}
-               ${STRUCTURES})
+               ${STRUCTURES}
+               ${QUALITY_CONTROL_SRC}
+               ${MODULE7_SRC}
+               ${RASTER_DERIVATIVES_SRC}) // for module 7 to detect qc
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
