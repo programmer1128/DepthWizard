@@ -7,7 +7,7 @@
 // Do not change this endpoint unless the backend team
 // changes the API contract.
 
-export const API_BASE = 'http://localhost:8080';
+export const API_BASE = '';
 
 export const GEOTIFF_PROCESSOR_ENDPOINT = `${API_BASE}/api/v1/processor`;
 export const NORMAL_IMAGE_PROCESSOR_ENDPOINT = `${API_BASE}/api/v1/processor/normal-image`;
@@ -62,6 +62,7 @@ export async function processImage(file, imageType = 'auto') {
 
     let response;
     try {
+        console.log("send");        
         response = await fetch(
             endpoint,
             {
@@ -69,6 +70,7 @@ export async function processImage(file, imageType = 'auto') {
                 body: formData
             }
         );
+        console.log("receive");
     } catch (networkError) {
         throw new Error(
             `Unable to connect to backend at ${API_BASE}. Please ensure the server is running.`
