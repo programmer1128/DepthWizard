@@ -1,3 +1,5 @@
 .vscode/
 drogon_service/gis_service/build/
 drogon_service/gis_service/codebase_context.txt
+real_tile.bin
+minio.rpm

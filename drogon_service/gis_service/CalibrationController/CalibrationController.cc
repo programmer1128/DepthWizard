@@ -10,6 +10,7 @@
 
 drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(drogon::HttpRequestPtr req)
 {
+     std::cout << "controller started";
      drogon::MultiPartParser fileUpload;
     
      if (fileUpload.parse(req) != 0) 

@@ -31,6 +31,11 @@ find_package(Halide REQUIRED)
 #Eigen library dependency
 find_package(Eigen3 REQUIRED)
 
+# Add this above your target_link_libraries
+find_package(OpenSSL REQUIRED)
+
+find_package(CURL REQUIRED)
+
 #SOURCE FILE DISCOVERY (Package-by-Feature Architecture)
 # Explicitly grab sources from each dedicated service folder
 
@@ -121,6 +126,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     OpenMP::OpenMP_CXX #OpenMp Multi threading 
     Halide
     Eigen3::Eigen
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    CURL::libcurl
 )
 
 if (CMAKE_CXX_STANDARD LESS 20)
