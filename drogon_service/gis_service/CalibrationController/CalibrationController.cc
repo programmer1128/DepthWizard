@@ -11,10 +11,10 @@ static const char* exportStateName(JobStatus state)
 {
     switch (state)
     {
-    case JobStatus::QUEUED: return "queued";
-    case JobStatus::PROCESSING: return "processing";
-    case JobStatus::READY: return "ready";
-    case JobStatus::FAILED: return "failed";
+         case JobStatus::QUEUED: return "queued";
+         case JobStatus::PROCESSING: return "processing";
+         case JobStatus::READY: return "ready";
+         case JobStatus::FAILED: return "failed";
     }
     return "unknown";
 }
@@ -130,24 +130,36 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::getExportStatus(
     result["ndsm"] = exportStateName(status->ndsm);
     result["confidence"] = exportStateName(status->confidence);
 
-    if (status->dsm == JobStatus::READY)
-        result["dsm_url"] = MinioClient::generatePresignedUrl(
+     if (status->dsm == JobStatus::READY)
+     {
+         result["dsm_url"] = MinioClient::generatePresignedUrl(
             "terrain-assets", "heights_" + uuid + ".tif");
-    if (status->dtm == JobStatus::READY)
-        result["dtm_url"] = MinioClient::generatePresignedUrl(
+     }
+     if (status->dtm == JobStatus::READY)
+     {
+         result["dtm_url"] = MinioClient::generatePresignedUrl(
             "terrain-assets", "dtm_" + uuid + ".tif");
-    if (status->ndsm == JobStatus::READY)
-        result["ndsm_url"] = MinioClient::generatePresignedUrl(
+     }
+     if (status->ndsm == JobStatus::READY)
+     {
+         result["ndsm_url"] = MinioClient::generatePresignedUrl(
             "terrain-assets", "ndsm_" + uuid + ".tif");
-    if (status->confidence == JobStatus::READY)
-        result["confidence_url"] = MinioClient::generatePresignedUrl(
+     }
+     if (status->confidence == JobStatus::READY)
+     {
+         result["confidence_url"] = MinioClient::generatePresignedUrl(
             "terrain-assets", "confidence_" + uuid + ".tif");
+     }
 
-    Json::Value errors(Json::arrayValue);
-    for (const std::string& error : status->errors)
-        errors.append(error);
-    if (!errors.empty())
-        result["errors"] = std::move(errors);
+     Json::Value errors(Json::arrayValue);
+     for (const std::string& error : status->errors)
+     {
+         errors.append(error);
+     }
+     if (!errors.empty())
+     {
+         result["errors"] = std::move(errors);
+     }
 
-    co_return drogon::HttpResponse::newHttpJsonResponse(result);
+     co_return drogon::HttpResponse::newHttpJsonResponse(result);
 }
