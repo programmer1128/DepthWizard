@@ -12,4 +12,11 @@ class TerrainMesher
          const SpatialMetadata& metadata,
          const LocalSceneFrame& frame,
          const TerrainMeshConfig& config = TerrainMeshConfig());
+
+     static TerrainMesh generate(
+         const GeoreferencedSurfaceBundle& surface,
+         const RasterGrid<uint8_t>& acceptedBuildingMask,
+         const SpatialMetadata& metadata,
+         const LocalSceneFrame& frame,
+         const TerrainMeshConfig& config = TerrainMeshConfig());
 };

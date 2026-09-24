@@ -193,22 +193,22 @@ TileInferenceResult makeTile(
     tile.validMask =
         makeGrid<uint8_t>(width, height, std::move(validMask));
 
-    tile.semanticLogits.groundLogits =
+    tile.semanticLogits.otherLogits =
         makeConstantFloatGrid(width, height, logits[0]);
 
-    tile.semanticLogits.buildingLogits =
+    tile.semanticLogits.groundLogits =
         makeConstantFloatGrid(width, height, logits[1]);
 
-    tile.semanticLogits.roadLogits =
+    tile.semanticLogits.lowVegetationLogits =
         makeConstantFloatGrid(width, height, logits[2]);
 
-    tile.semanticLogits.vegetationLogits =
+    tile.semanticLogits.buildingLogits =
         makeConstantFloatGrid(width, height, logits[3]);
 
     tile.semanticLogits.waterLogits =
         makeConstantFloatGrid(width, height, logits[4]);
 
-    tile.semanticLogits.unknownLogits =
+    tile.semanticLogits.roadLogits =
         makeConstantFloatGrid(width, height, logits[5]);
 
     tile.semanticLogits.classCount = 6;
@@ -288,13 +288,13 @@ TEST(MetricOutputStitcherTest, SingleMock4x4TilePreservesExactValues)
         result.globalSemanticLogits.groundLogits,
         4,
         4,
-        std::vector<float>(16, 1.0F));
+        std::vector<float>(16, 2.0F));
 
     expectFloatGridNear(
         result.globalSemanticLogits.buildingLogits,
         4,
         4,
-        std::vector<float>(16, 2.0F));
+        std::vector<float>(16, 4.0F));
 
     EXPECT_EQ(
         result.globalValidMask.data,
@@ -359,19 +359,19 @@ TEST(MetricOutputStitcherTest, TwoOverlapping4x4TilesUseExactConfidenceWeights)
         4,
         std::vector<float>(16, 0.75F));
 
-    // (1*1 + 7*0.5) / 1.5 = 3
+    // Ground is GAMUS channel 1: (2*1 + 8*0.5) / 1.5 = 4.
     expectFloatGridNear(
         result.globalSemanticLogits.groundLogits,
         4,
         4,
-        std::vector<float>(16, 3.0F));
+        std::vector<float>(16, 4.0F));
 
-    // (2*1 + 8*0.5) / 1.5 = 4
+    // Building is GAMUS channel 3: (4*1 + 10*0.5) / 1.5 = 6.
     expectFloatGridNear(
         result.globalSemanticLogits.buildingLogits,
         4,
         4,
-        std::vector<float>(16, 4.0F));
+        std::vector<float>(16, 6.0F));
 }
 
 TEST(MetricOutputStitcherTest, AllZeroValidMaskContributesNothing)
@@ -570,7 +570,7 @@ TEST(MetricOutputStitcherTest, OneByOneTileAvoidsHannDivisionByZero)
     EXPECT_EQ(result.globalValidMask.data[0], 1);
     EXPECT_NEAR(
         result.globalSemanticLogits.groundLogits.data[0],
-        1.0F,
+        2.0F,
         1.0e-6F);
 }
 

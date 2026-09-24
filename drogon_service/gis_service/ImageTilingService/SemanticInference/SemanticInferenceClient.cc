@@ -8,8 +8,53 @@
 #include <cstring>
 #include <stdexcept>
 #include <chrono>
+#include <cerrno>
+#include <limits>
 #include "SemanticResponseValidator.h"
 
+class SocketHandle
+{
+public:
+    explicit SocketHandle(int descriptor) : descriptor_(descriptor) {}
+    SocketHandle(const SocketHandle&) = delete;
+    SocketHandle& operator=(const SocketHandle&) = delete;
+
+    ~SocketHandle()
+    {
+        if (descriptor_ >= 0)
+            ::close(descriptor_);
+    }
+
+    int get() const noexcept { return descriptor_; }
+
+private:
+    int descriptor_{-1};
+};
+
+static timeval toTimeval(std::chrono::milliseconds timeout)
+{
+    const auto totalMilliseconds = timeout.count();
+    timeval value{};
+    value.tv_sec = static_cast<time_t>(totalMilliseconds / 1000);
+    value.tv_usec = static_cast<suseconds_t>((totalMilliseconds % 1000) * 1000);
+    return value;
+}
+
+static void requireSocketOption(
+    int socketDescriptor,
+    int level,
+    int option,
+    const void* value,
+    socklen_t valueSize,
+    const char* optionName)
+{
+    if (::setsockopt(socketDescriptor, level, option, value, valueSize) != 0)
+    {
+        throw std::runtime_error(
+            std::string("SemanticClient: Failed to set ") + optionName +
+            ": " + std::strerror(errno));
+    }
+}
 
 static size_t validateRequest(
     const TileRequest& request,
@@ -116,47 +161,41 @@ SemanticTileResult SemanticInferenceClient::inferTile(
         throw std::invalid_argument("SemanticClient: TileRequest is null.");
     }
 
-    uint64_t correlationId = static_cast<uint64_t>(request->tileId);
-    size_t pixelCount = static_cast<size_t>(request->width) * request->height;
+    config.validate();
+    const size_t pixelCount = validateRequest(*request, config);
+    const uint64_t correlationId = static_cast<uint64_t>(request->tileId);
 
     // 1. Establish Socket
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         throw std::runtime_error("SemanticClient: Failed to create socket.");
     }
+    SocketHandle socketHandle(sock);
 
     // Disable Nagle's algorithm for immediate transmission
     int flag = 1;
-    config.validate();
-    const size_t pixelCount = validateRequest(*request, config);
-    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char*)&flag, sizeof(int));
+    requireSocketOption(sock, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag), "TCP_NODELAY");
 
     // Apply strict configuration timeouts
-    struct timeval tvSend, tvRecv;
-    tvSend.tv_sec = std::chrono::duration_cast<std::chrono::seconds>(config.sendTimeout).count();
-    tvSend.tv_usec = 0;
-    tvRecv.tv_sec = std::chrono::duration_cast<std::chrono::seconds>(config.receiveTimeout).count();
-    tvRecv.tv_usec = 0;
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tvSend, sizeof(tvSend));
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tvRecv, sizeof(tvRecv));
+    const timeval tvSend = toTimeval(config.sendTimeout);
+    const timeval tvRecv = toTimeval(config.receiveTimeout);
+    requireSocketOption(sock, SOL_SOCKET, SO_SNDTIMEO, &tvSend, sizeof(tvSend), "SO_SNDTIMEO");
+    requireSocketOption(sock, SOL_SOCKET, SO_RCVTIMEO, &tvRecv, sizeof(tvRecv), "SO_RCVTIMEO");
 
-    struct sockaddr_in serv_addr;
+    struct sockaddr_in serv_addr{};
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(endpoint.port); 
     
     if (inet_pton(AF_INET, endpoint.host.c_str(), &serv_addr.sin_addr) <= 0) {
-        close(sock);
         throw std::runtime_error("SemanticClient: Invalid worker IP: " + endpoint.host);
     }
 
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        close(sock);
         throw std::runtime_error("SemanticClient: Connection refused at " + endpoint.host + ":" + std::to_string(endpoint.port));
     }
 
-    try {
-        // 2. Transmit Data
-        SemanticRequestHeader reqHeader = SemanticProtocolCodec::buildRequestHeader(correlationId, *request);
+    // 2. Transmit Data
+    SemanticRequestHeader reqHeader = SemanticProtocolCodec::buildRequestHeader(correlationId, *request);
         
         sendAll(sock, reinterpret_cast<const uint8_t*>(&reqHeader), sizeof(SemanticRequestHeader));
         sendAll(sock, reinterpret_cast<const uint8_t*>(request->normalizedRgbBytes.data()), reqHeader.rgbPayloadLength);
@@ -184,9 +223,7 @@ SemanticTileResult SemanticInferenceClient::inferTile(
         recvAll(sock, reinterpret_cast<uint8_t*>(rawConfidence.data()), respHeader.confidencePayloadLength);
         recvAll(sock, reinterpret_cast<uint8_t*>(rawMask.data()), respHeader.validMaskPayloadLength);
 
-        close(sock);
-
-        // 5. Build Result & Intersect Mask
+        // 5. Build Result
         SemanticTileResult result;
         result.tileId = request->tileId;
         
@@ -209,13 +246,10 @@ SemanticTileResult SemanticInferenceClient::inferTile(
         result.validMask.height = request->height;
         result.validMask.data.resize(pixelCount, 0);
 
-        // Intersect worker mask with preprocessing mask
+        // Copy the worker mask now; validation intersects it with preprocessing.
         result.validMask.data = std::move(rawMask);
-        SemanticResponseValidator::validateAndNormalize(
-            result,
-            request->validMaskBytes);
 
-        // 6. Distribute Flat Logits into CHW Rasters
+        // 6. Distribute flat logits into CHW rasters before validation.
         result.semanticLogits.classCount = config.expectedClassCount;
         result.semanticLogits.layout = TensorLayout::CHW;
         
@@ -227,33 +261,34 @@ SemanticTileResult SemanticInferenceClient::inferTile(
         };
 
         initGrid(
-    result.semanticLogits.unknownLogits,
-    static_cast<size_t>(SemanticChannel::UNKNOWN));
+            result.semanticLogits.otherLogits,
+            static_cast<size_t>(SemanticChannel::OTHER));
 
         initGrid(
             result.semanticLogits.groundLogits,
             static_cast<size_t>(SemanticChannel::GROUND));
 
         initGrid(
+            result.semanticLogits.lowVegetationLogits,
+            static_cast<size_t>(SemanticChannel::LOW_VEGETATION));
+
+        initGrid(
             result.semanticLogits.buildingLogits,
             static_cast<size_t>(SemanticChannel::BUILDING));
+
+        initGrid(
+            result.semanticLogits.waterLogits,
+            static_cast<size_t>(SemanticChannel::WATER));
 
         initGrid(
             result.semanticLogits.roadLogits,
             static_cast<size_t>(SemanticChannel::ROAD));
 
-        initGrid(
-            result.semanticLogits.vegetationLogits,
-            static_cast<size_t>(SemanticChannel::VEGETATION));
+        // Intersect the worker and preprocessing masks only after every grid
+        // has been constructed; the validator reads and normalizes all grids.
+        SemanticResponseValidator::validateAndNormalize(
+            result,
+            request->validMaskBytes);
 
-        initGrid(
-            result.semanticLogits.waterLogits,
-            static_cast<size_t>(SemanticChannel::WATER));
-       // SemanticResponseValidator::validateAndNormalize(result);
         return result;
-
-    } catch (...) {
-        close(sock);
-        throw; // Re-throw to be handled by the dispatcher's retry logic
-    }
 }

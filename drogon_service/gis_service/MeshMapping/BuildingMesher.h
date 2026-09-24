@@ -13,11 +13,20 @@ class BuildingMesher
          const BuildingMeshConfig& config = BuildingMeshConfig());
 
      private:
-     // Lightweight Ear-Clipping triangulator supporting holes via bridge-edges
-     static std::vector<uint32_t> triangulate(
+     struct TriangulationResult
+     {
+         std::vector<LocalPoint> vertices;
+         std::vector<uint32_t> indices;
+     };
+
+     // Lightweight ear-clipping triangulator supporting holes via bridge
+     // edges. Vertices are returned with indices because bridging duplicates
+     // vertices and changes their order.
+     static TriangulationResult triangulate(
          const std::vector<LocalPoint>& outerRing, 
          const std::vector<std::vector<LocalPoint>>& holes);
-        
+
+     static double signedArea(const std::vector<LocalPoint>& ring);
      static bool isPointInsideTriangle(const LocalPoint& pt, const LocalPoint& v1, const LocalPoint& v2, const LocalPoint& v3);
      static float crossProduct(const LocalPoint& a, const LocalPoint& b, const LocalPoint& c);
 };

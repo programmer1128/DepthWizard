@@ -10,6 +10,30 @@
 #include <array>
 #include <cstddef>
 
+// This describes the deployed ONNX head exactly. Its six channels retained
+// GAMUS labels 0..5 and omit label 6 (tree).
+inline constexpr uint32_t DEPTHWIZARD_SEMANTIC_SCHEMA_ID = 3;
+
+enum class SemanticChannel : std::size_t
+{
+    OTHER = 0,
+    GROUND = 1,
+    LOW_VEGETATION = 2,
+    BUILDING = 3,
+    WATER = 4,
+    ROAD = 5
+};
+
+inline constexpr std::array<SemanticChannel, 6>
+    DEPTHWIZARD_SEMANTIC_CHANNEL_ORDER = {
+        SemanticChannel::OTHER,
+        SemanticChannel::GROUND,
+        SemanticChannel::LOW_VEGETATION,
+        SemanticChannel::BUILDING,
+        SemanticChannel::WATER,
+        SemanticChannel::ROAD
+    };
+
 /**
  * @brief The result of a single tile processed by the semantic segmentation model.
  */
@@ -61,28 +85,4 @@ struct SemanticInferenceBundle {
     // Invariants:
     // 1. All grids must exactly match scene.width x scene.height.
     // 2. No padding exists in these grids.
-};
-
-
-
-inline constexpr uint32_t DEPTHWIZARD_SEMANTIC_SCHEMA_ID = 1;
-
-inline constexpr std::array<SemanticClass, 6>
-    DEPTHWIZARD_SEMANTIC_CHANNEL_ORDER = {
-        SemanticClass::UNKNOWN,
-        SemanticClass::GROUND,
-        SemanticClass::BUILDING,
-        SemanticClass::ROAD,
-        SemanticClass::VEGETATION,
-        SemanticClass::WATER
-    };
-
-enum class SemanticChannel : std::size_t
-{
-    UNKNOWN = 0,
-    GROUND = 1,
-    BUILDING = 2,
-    ROAD = 3,
-    VEGETATION = 4,
-    WATER = 5
 };

@@ -41,7 +41,9 @@ struct MeshPrimitive
     std::optional<std::vector<float>> normals; // Optional
     std::optional<std::vector<float>> uvs;     // Optional for untextured walls
     std::vector<uint32_t> indices;
-    std::optional<std::vector<uint32_t>> featureIds; // Bound per-vertex
+    // glTF 2.0 forbids UNSIGNED_INT for vertex attributes. Float retains
+    // exact integer identity for IDs up to 16,777,216 and is WebGL-safe.
+    std::optional<std::vector<float>> featureIds; // Bound per-vertex
     MaterialRole materialRole{MaterialRole::TERRAIN_TEXTURE};
     AxisAlignedBounds localBounds; // Strongly typed bounds
     

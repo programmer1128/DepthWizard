@@ -33,6 +33,7 @@ GroundMask GroundSurfaceService::buildGroundMask(
         !matchesSceneShape(semantics.vegetationProbability) ||
         !matchesSceneShape(semantics.semanticConfidence) ||
         !matchesSceneShape(imageQuality.validPixelMask) ||
+        !matchesSceneShape(imageQuality.shadowMask) ||
         !matchesSceneShape(reference.validMask))
     {
         throw std::invalid_argument(
@@ -60,6 +61,7 @@ GroundMask GroundSurfaceService::buildGroundMask(
 
     // extract raw pointers for the physical safety masks
     const uint8_t* m_img_valid = imageQuality.validPixelMask.data.data();
+    const uint8_t* m_shadow = imageQuality.shadowMask.data.data();
     const uint8_t* m_dem_valid = reference.validMask.data.data();
 
     // output pointers
@@ -78,7 +80,7 @@ GroundMask GroundSurfaceService::buildGroundMask(
     for (size_t i = 0; i < totalPixels; ++i) 
     {
         // check if pixel is safe or not (no clouds, shadows or satellite voids)
-        if (m_img_valid[i] == 0 || m_dem_valid[i] == 0) 
+        if (m_img_valid[i] == 0 || m_shadow[i] != 0 || m_dem_valid[i] == 0)
         {
             continue; // skip this pixel entirely
         }

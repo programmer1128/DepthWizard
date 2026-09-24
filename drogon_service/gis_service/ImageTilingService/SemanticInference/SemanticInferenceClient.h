@@ -17,27 +17,3 @@ public:
         const SemanticWorkerEndpoint& endpoint,
         const SemanticInferenceConfig& config);
 };
-
-
-class SocketHandle
-{
-public:
-    explicit SocketHandle(int descriptor) : descriptor_(descriptor) {}
-
-    SocketHandle(const SocketHandle&) = delete;
-    SocketHandle& operator=(const SocketHandle&) = delete;
-
-    ~SocketHandle()
-    {
-        if (descriptor_ >= 0)
-            ::close(descriptor_);
-    }
-
-    int get() const
-    {
-        return descriptor_;
-    }
-
-private:
-    int descriptor_{-1};
-};

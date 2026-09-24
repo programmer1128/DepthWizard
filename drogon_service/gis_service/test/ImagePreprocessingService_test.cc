@@ -38,7 +38,7 @@ TEST(ImagePreprocessingServiceTest, ProducesExactNormalizationAndQualityMasksFor
 
     red[0] = green[0] = blue[0] = 220; // cloud
     red[1] = 10; green[1] = 10; blue[1] = 30; // blue-biased shadow
-    red[2] = 255; green[2] = 100; blue[2] = 100; // saturated
+    red[2] = green[2] = blue[2] = 255; // fully clipped/saturated
     red[3] = green[3] = blue[3] = 0; // border padding
 
     const std::array<double, 6> transform{100.0, 1.0, 0.0, 200.0, 0.0, -1.0};
@@ -76,11 +76,11 @@ TEST(ImagePreprocessingServiceTest, ProducesExactNormalizationAndQualityMasksFor
     EXPECT_EQ(result.saturationMask.data[2], 1);
     EXPECT_EQ(result.saturationMask.data[3], 1);
     EXPECT_EQ(result.validPixelMask.data[0], 0);
-    EXPECT_EQ(result.validPixelMask.data[1], 0);
+    EXPECT_EQ(result.validPixelMask.data[1], 1);
     EXPECT_EQ(result.validPixelMask.data[2], 0);
     EXPECT_EQ(result.validPixelMask.data[3], 0);
     EXPECT_EQ(result.validPixelMask.data[4], 1);
-    EXPECT_NEAR(result.qualityScore, 12.0F / 16.0F, 1.0e-6F);
+    EXPECT_NEAR(result.qualityScore, 13.0F / 16.0F, 1.0e-6F);
 }
 
 TEST(ImagePreprocessingServiceTest, AppliesGrayscaleCloudAndShadowRules)
@@ -102,10 +102,10 @@ TEST(ImagePreprocessingServiceTest, AppliesGrayscaleCloudAndShadowRules)
 
     EXPECT_EQ(result.shadowMask.data[0], 1);
     EXPECT_EQ(result.cloudMask.data[1], 1);
-    EXPECT_EQ(result.validPixelMask.data[0], 0);
+    EXPECT_EQ(result.validPixelMask.data[0], 1);
     EXPECT_EQ(result.validPixelMask.data[1], 0);
     EXPECT_EQ(result.validPixelMask.data[2], 1);
-    EXPECT_NEAR(result.qualityScore, 14.0F / 16.0F, 1.0e-6F);
+    EXPECT_NEAR(result.qualityScore, 15.0F / 16.0F, 1.0e-6F);
 
     EXPECT_NEAR(
         result.normalizedRgbTensor.data[2],

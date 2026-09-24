@@ -25,7 +25,15 @@ ReferenceTerrainBundle makeReference(float dtm, float confidence)
 SemanticScene makeSemantics(float confidence)
 {
     SemanticScene semantics;
+    semantics.groundProbability = makeConstantGrid(4, 4, 0.0F);
+    semantics.buildingProbability = makeConstantGrid(4, 4, 1.0F);
+    semantics.roadProbability = makeConstantGrid(4, 4, 0.0F);
+    semantics.vegetationProbability = makeConstantGrid(4, 4, 0.0F);
+    semantics.waterProbability = makeConstantGrid(4, 4, 0.0F);
+    semantics.unknownProbability = makeConstantGrid(4, 4, 0.0F);
     semantics.semanticConfidence = makeConstantGrid(4, 4, confidence);
+    semantics.finalClassMap = makeConstantGrid<SemanticClass>(
+        4, 4, SemanticClass::BUILDING);
     return semantics;
 }
 
@@ -70,7 +78,7 @@ TEST(SurfaceFusionServiceTest, ComputesExactDsmAndRootSumSquareConfidenceOn4x4Gr
     EXPECT_EQ(result.spatialMetadata.projectionRef, "EPSG:32645");
 }
 
-TEST(SurfaceFusionServiceTest, InvalidMaskOrNanInputsProduceNodataOutputs)
+TEST(SurfaceFusionServiceTest, InvalidDemProducesNodataAndInvalidNdsmFallsBackToDtm)
 {
     const float nan = std::numeric_limits<float>::quiet_NaN();
     RasterGrid<float> ndsm = makeConstantGrid(4, 4, 5.0F);
@@ -90,7 +98,7 @@ TEST(SurfaceFusionServiceTest, InvalidMaskOrNanInputsProduceNodataOutputs)
                 ndsm, reference, semantics, aiConfidence, makeMetadata());
         });
 
-    for (std::size_t index = 0; index < 3; ++index)
+    for (std::size_t index = 0; index < 2; ++index)
     {
         EXPECT_EQ(result.validMask.data[index], 0);
         EXPECT_TRUE(std::isnan(result.dtm.data[index]));
@@ -98,6 +106,11 @@ TEST(SurfaceFusionServiceTest, InvalidMaskOrNanInputsProduceNodataOutputs)
         EXPECT_TRUE(std::isnan(result.dsm.data[index]));
         EXPECT_FLOAT_EQ(result.surfaceConfidence.data[index], 0.0F);
     }
+    EXPECT_EQ(result.validMask.data[2], 1);
+    EXPECT_FLOAT_EQ(result.dtm.data[2], 100.0F);
+    EXPECT_FLOAT_EQ(result.ndsm.data[2], 0.0F);
+    EXPECT_FLOAT_EQ(result.dsm.data[2], 100.0F);
+    EXPECT_FLOAT_EQ(result.surfaceConfidence.data[2], 0.5F);
     EXPECT_EQ(result.validMask.data[3], 1);
     EXPECT_FLOAT_EQ(result.dsm.data[3], 105.0F);
 }
@@ -119,6 +132,60 @@ TEST(SurfaceFusionServiceTest, MaximumCombinedUncertaintyClampsConfidenceToZero)
 
     expectGridNear(result.surfaceConfidence, 4, 4,
                    std::vector<float>(16, 0.0F));
+}
+
+TEST(SurfaceFusionServiceTest, SuppressesNdsmOnRoadGroundAndWater)
+{
+    const RasterGrid<float> ndsm = makeConstantGrid(4, 4, 5.0F);
+    const ReferenceTerrainBundle reference = makeReference(100.0F, 1.0F);
+    SemanticScene semantics = makeSemantics(1.0F);
+    const RasterGrid<float> aiConfidence = makeConstantGrid(4, 4, 1.0F);
+
+    semantics.finalClassMap.data = {
+        SemanticClass::GROUND,
+        SemanticClass::ROAD,
+        SemanticClass::WATER,
+        SemanticClass::BUILDING,
+        SemanticClass::VEGETATION,
+        SemanticClass::UNKNOWN,
+        SemanticClass::UNKNOWN,
+        SemanticClass::UNKNOWN,
+        SemanticClass::BUILDING,
+        SemanticClass::BUILDING,
+        SemanticClass::BUILDING,
+        SemanticClass::BUILDING,
+        SemanticClass::BUILDING,
+        SemanticClass::BUILDING,
+        SemanticClass::BUILDING,
+        SemanticClass::BUILDING};
+    semantics.buildingProbability.data.assign(16, 0.0F);
+    semantics.vegetationProbability.data.assign(16, 0.0F);
+    semantics.buildingProbability.data[3] = 1.0F;
+    semantics.vegetationProbability.data[4] = 1.0F;
+    semantics.buildingProbability.data[5] = 0.40F;
+    semantics.vegetationProbability.data[6] = 0.40F;
+    semantics.buildingProbability.data[7] = 0.20F;
+    for (std::size_t index = 8; index < 16; ++index)
+    {
+        semantics.buildingProbability.data[index] = 1.0F;
+    }
+
+    const GeoreferencedSurfaceBundle result =
+        SurfaceFusionService::composeMetricSurface(
+            ndsm, reference, semantics, aiConfidence, makeMetadata());
+
+    expectGridNear(
+        result.ndsm,
+        4,
+        4,
+        {0.0F, 0.0F, 0.0F, 5.0F,
+         5.0F, 5.0F, 5.0F, 0.0F,
+         5.0F, 5.0F, 5.0F, 5.0F,
+         5.0F, 5.0F, 5.0F, 5.0F});
+    EXPECT_FLOAT_EQ(result.dsm.data[0], 100.0F);
+    EXPECT_FLOAT_EQ(result.dsm.data[1], 100.0F);
+    EXPECT_FLOAT_EQ(result.dsm.data[2], 100.0F);
+    EXPECT_FLOAT_EQ(result.dsm.data[3], 105.0F);
 }
 
 TEST(SurfaceFusionServiceTest, RejectsMismatchedInputGridShapes)

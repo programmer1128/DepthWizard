@@ -13,6 +13,7 @@ struct BuildingMaskResult
     std::string errorMessage;
     RasterGrid<uint8_t> cleanMask;
     int smallComponentRejectedPixelCount{0};
+    int recoveredCandidatePixelCount{0};
     float thresholdUsed{0.0f};
     int openingKernelWidth{0};
     int openingKernelHeight{0};
@@ -77,6 +78,11 @@ struct BuildingHeightEstimate
      float representativeBaseElevation{0.0f};
      float heightAboveGround{0.0f};
      float roofElevation{0.0f};
+     float footprintElevationDeltaMetres{0.0f};
+
+     // DTM sampled at each outer-footprint vertex. This lets the wall mesh
+     // follow terrain locally instead of ending at one median elevation.
+     std::vector<float> baseElevationPerOuterVertex;
     
      int validRoofSampleCount{0};
      int validGroundSampleCount{0};

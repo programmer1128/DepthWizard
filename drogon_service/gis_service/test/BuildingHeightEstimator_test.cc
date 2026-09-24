@@ -108,7 +108,7 @@ TEST(BuildingHeightEstimatorTest, FallsBackToUnerodedFootprintForSmallRoof)
     EXPECT_GE(result.validRoofSampleCount, 5);
 }
 
-TEST(BuildingHeightEstimatorTest, EnforcesMinimumPositivePhysicalHeight)
+TEST(BuildingHeightEstimatorTest, RejectsHeightBelowPhysicalMinimum)
 {
     constexpr int width = 14;
     constexpr int height = 14;
@@ -132,11 +132,79 @@ TEST(BuildingHeightEstimatorTest, EnforcesMinimumPositivePhysicalHeight)
         makeProjectedMetadata(width, height),
         config);
 
+    EXPECT_FALSE(result.success);
+    EXPECT_FALSE(result.errorMessage.empty());
+}
+
+TEST(BuildingHeightEstimatorTest, FallsBackToFootprintDtmWhenExteriorGroundIsUnavailable)
+{
+    constexpr int width = 14;
+    constexpr int height = 14;
+    GeoreferencedSurfaceBundle surface = makeSurface(width, height, 1500.0F, 8.0F);
+    SemanticScene semantics =
+        makeSemanticScene(width, height, SemanticClass::VEGETATION);
+    fillRectangle<SemanticClass>(
+        semantics.finalClassMap,
+        4,
+        4,
+        10,
+        10,
+        SemanticClass::BUILDING);
+
+    BuildingReconstructionConfig config = noMorphologyConfig();
+    config.minRequiredSamples = 5;
+
+    const BuildingHeightEstimate result = BuildingHeightEstimator::estimate(
+        squareFootprint(4, 4, 9, 9),
+        surface,
+        semantics,
+        makeProjectedMetadata(width, height),
+        config);
+
     ASSERT_TRUE(result.success) << result.errorMessage;
-    EXPECT_FLOAT_EQ(result.heightAboveGround, 0.1F);
-    EXPECT_FLOAT_EQ(
-        result.roofElevation,
-        result.representativeBaseElevation + 0.1F);
+    EXPECT_FLOAT_EQ(result.representativeBaseElevation, 1500.0F);
+    EXPECT_FLOAT_EQ(result.heightAboveGround, 8.0F);
+    EXPECT_FLOAT_EQ(result.roofElevation, 1508.0F);
+    EXPECT_FALSE(result.warnings.empty());
+    EXPECT_EQ(
+        result.baseElevationPerOuterVertex.size(),
+        squareFootprint(4, 4, 9, 9).outerRing.size());
+}
+
+TEST(BuildingHeightEstimatorTest, RejectsHallucinatedFootprintAcrossSteepTerrain)
+{
+    constexpr int width = 16;
+    constexpr int height = 16;
+    GeoreferencedSurfaceBundle surface = makeSurface(width, height, 100.0F, 0.0F);
+    SemanticScene semantics = makeSemanticScene(width, height, SemanticClass::GROUND);
+
+    for (int row = 4; row <= 10; ++row)
+    {
+        for (int column = 4; column <= 10; ++column)
+        {
+            const std::size_t index =
+                static_cast<std::size_t>(row) * width + column;
+            surface.dtm.data[index] =
+                100.0F + static_cast<float>(column - 4) * 3.0F;
+            surface.ndsm.data[index] = 10.0F;
+            semantics.finalClassMap.data[index] = SemanticClass::BUILDING;
+        }
+    }
+
+    BuildingReconstructionConfig config = noMorphologyConfig();
+    config.minRequiredSamples = 5;
+    config.maxFootprintElevationDeltaMetres = 8.0F;
+
+    const BuildingHeightEstimate result = BuildingHeightEstimator::estimate(
+        squareFootprint(4, 4, 10, 10),
+        surface,
+        semantics,
+        makeProjectedMetadata(width, height),
+        config);
+
+    EXPECT_FALSE(result.success);
+    EXPECT_GT(result.footprintElevationDeltaMetres, 8.0F);
+    EXPECT_NE(result.errorMessage.find("terrain relief"), std::string::npos);
 }
 
 TEST(BuildingHeightEstimatorTest, RejectsGridDimensionsThatDoNotMatchMetadata)

@@ -1,5 +1,4 @@
 #include "SemanticProtocolCodec.h"
-#include "SemanticProtocolCodec.h"
 #include <limits>
 
 SemanticRequestHeader SemanticProtocolCodec::buildRequestHeader(

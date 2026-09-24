@@ -58,21 +58,41 @@ void SemanticResponseValidator::validateGridShape(
             "SemanticValidator: Invalid tile valid region.");
     }
 
-    // Keep the existing grid-shape validation here.
+    const auto validateGrid =
+        [width, height, expectedSize](const auto& grid, const char* name)
+        {
+            validateGridShape(
+                width,
+                height,
+                expectedSize,
+                grid.width,
+                grid.height,
+                grid.data.size(),
+                name);
+        };
+
+    validateGrid(result.confidence, "confidence");
+    validateGrid(result.validMask, "valid mask");
+    validateGrid(result.semanticLogits.otherLogits, "other logits");
+    validateGrid(result.semanticLogits.groundLogits, "ground logits");
+    validateGrid(result.semanticLogits.lowVegetationLogits, "low vegetation logits");
+    validateGrid(result.semanticLogits.buildingLogits, "building logits");
+    validateGrid(result.semanticLogits.waterLogits, "water logits");
+    validateGrid(result.semanticLogits.roadLogits, "road logits");
 
     float* confidence = result.confidence.data.data();
     uint8_t* workerMask = result.validMask.data.data();
 
-    float* unknown =
-        result.semanticLogits.unknownLogits.data.data();
+    float* other =
+        result.semanticLogits.otherLogits.data.data();
     float* ground =
         result.semanticLogits.groundLogits.data.data();
+    float* lowVegetation =
+        result.semanticLogits.lowVegetationLogits.data.data();
     float* building =
         result.semanticLogits.buildingLogits.data.data();
     float* road =
         result.semanticLogits.roadLogits.data.data();
-    float* vegetation =
-        result.semanticLogits.vegetationLogits.data.data();
     float* water =
         result.semanticLogits.waterLogits.data.data();
 
@@ -113,11 +133,11 @@ void SemanticResponseValidator::validateGridShape(
             if (!valid)
             {
                 confidence[index] = 0.0f;
-                unknown[index] = 0.0f;
+                other[index] = 0.0f;
                 ground[index] = 0.0f;
+                lowVegetation[index] = 0.0f;
                 building[index] = 0.0f;
                 road[index] = 0.0f;
-                vegetation[index] = 0.0f;
                 water[index] = 0.0f;
                 continue;
             }
@@ -130,11 +150,11 @@ void SemanticResponseValidator::validateGridShape(
                     "SemanticValidator: Invalid confidence.");
             }
 
-            if (!std::isfinite(unknown[index]) ||
+            if (!std::isfinite(other[index]) ||
                 !std::isfinite(ground[index]) ||
+                !std::isfinite(lowVegetation[index]) ||
                 !std::isfinite(building[index]) ||
                 !std::isfinite(road[index]) ||
-                !std::isfinite(vegetation[index]) ||
                 !std::isfinite(water[index]))
             {
                 throw std::runtime_error(

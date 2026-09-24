@@ -58,8 +58,16 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
          validateGrid(tile.validMask, "validMask");
 
          validateGrid(
+             tile.semanticLogits.otherLogits,
+             "otherLogits");
+
+         validateGrid(
              tile.semanticLogits.groundLogits,
              "groundLogits");
+
+         validateGrid(
+             tile.semanticLogits.lowVegetationLogits,
+             "lowVegetationLogits");
 
          validateGrid(
              tile.semanticLogits.buildingLogits,
@@ -70,17 +78,9 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
              "roadLogits");
  
          validateGrid(
-             tile.semanticLogits.vegetationLogits,
-             "vegetationLogits");
- 
-         validateGrid(
              tile.semanticLogits.waterLogits,
              "waterLogits");
- 
-         validateGrid(
-             tile.semanticLogits.unknownLogits,
-             "unknownLogits");
- 
+
          if (tile.semanticLogits.classCount !=
              expectedSemanticClassCount)
          {
@@ -139,12 +139,12 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
 
     // initialising continuous semantic logit grids
     // they contain  raw, continuous mathematical probability scores directly from the neural network -> strictly unnormalized logits, not percentages
+    initGridFloat(bundle.globalSemanticLogits.otherLogits);
     initGridFloat(bundle.globalSemanticLogits.groundLogits);
+    initGridFloat(bundle.globalSemanticLogits.lowVegetationLogits);
     initGridFloat(bundle.globalSemanticLogits.buildingLogits);
     initGridFloat(bundle.globalSemanticLogits.roadLogits);
-    initGridFloat(bundle.globalSemanticLogits.vegetationLogits);
     initGridFloat(bundle.globalSemanticLogits.waterLogits);
-    initGridFloat(bundle.globalSemanticLogits.unknownLogits);
 
     // other values in sematic logits
     bundle.globalSemanticLogits.classCount = numClasses;
@@ -161,12 +161,12 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
     float *pWeight = globalWeights.data();
     float *pHannWeight = hannWeights.data();
 
+    float *pOther = bundle.globalSemanticLogits.otherLogits.data.data();
     float *pGround = bundle.globalSemanticLogits.groundLogits.data.data();
+    float *pLowVegetation = bundle.globalSemanticLogits.lowVegetationLogits.data.data();
     float *pBldg = bundle.globalSemanticLogits.buildingLogits.data.data();
     float *pRoad = bundle.globalSemanticLogits.roadLogits.data.data();
-    float *pVeg = bundle.globalSemanticLogits.vegetationLogits.data.data();
     float *pWater = bundle.globalSemanticLogits.waterLogits.data.data();
-    float *pUnknown = bundle.globalSemanticLogits.unknownLogits.data.data();
 
     LOG_INFO << "[MetricOutputStitcher] Initiating Hann-blending for " << payload.allTiles.size() << " tiles.";
 
@@ -243,12 +243,12 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
                 }
 
                 // continuous semantic logits accumulation
+                pOther[globalIdx] += (tile.semanticLogits.otherLogits.data[localIdx] * active_weight);
                 pGround[globalIdx] += (tile.semanticLogits.groundLogits.data[localIdx] * active_weight);
+                pLowVegetation[globalIdx] += (tile.semanticLogits.lowVegetationLogits.data[localIdx] * active_weight);
                 pBldg[globalIdx] += (tile.semanticLogits.buildingLogits.data[localIdx] * active_weight);
                 pRoad[globalIdx] += (tile.semanticLogits.roadLogits.data[localIdx] * active_weight);
-                pVeg[globalIdx] += (tile.semanticLogits.vegetationLogits.data[localIdx] * active_weight);
                 pWater[globalIdx] += (tile.semanticLogits.waterLogits.data[localIdx] * active_weight);
-                pUnknown[globalIdx] += (tile.semanticLogits.unknownLogits.data[localIdx] * active_weight);
             }
         }
     }
@@ -261,12 +261,12 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
         if (w_sum >= 1e-7f) // FIX 5 : Lowered tolerance to rescue extreme edge pixels
         {
             pNdsm[i] /= w_sum;
+            pOther[i] /= w_sum;
             pGround[i] /= w_sum;
+            pLowVegetation[i] /= w_sum;
             pBldg[i] /= w_sum;
             pRoad[i] /= w_sum;
-            pVeg[i] /= w_sum;
             pWater[i] /= w_sum;
-            pUnknown[i] /= w_sum;
 
             // FIX 6 : Exact weighted average for model confidence
             // only compute confidence if the pixel as a whole contains valid predictions
@@ -286,12 +286,12 @@ InferenceBundle MetricOutputStitcher::stitch(const TiledInferencePayload &payloa
             pNdsm[i] = 0.0f;
             pConf[i] = 0.0f;
 
+            pOther[i] = 0.0f;
             pGround[i] = 0.0f;
+            pLowVegetation[i] = 0.0f;
             pBldg[i] = 0.0f;
             pRoad[i] = 0.0f;
-            pVeg[i] = 0.0f;
             pWater[i] = 0.0f;
-            pUnknown[i] = 0.0f;
         }
 
         // // in a standard stride, a pixel is covered by max 4 overlapping tiles -> strict statistical probability between 0.0 and 1.0 (0% to 100%)

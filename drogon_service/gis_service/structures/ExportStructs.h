@@ -10,6 +10,9 @@ struct GlbBuildResult
     size_t vertexCount{0};
     size_t triangleCount{0};
     size_t buildingCount{0};
+    size_t terrainTriangleCount{0};
+    size_t roofTriangleCount{0};
+    size_t wallTriangleCount{0};
     AxisAlignedBounds boundingBox;        // Replaces double[6][cite: 8]
     LocalSceneFrame localOrigin;          
     std::vector<std::string> geometryWarnings;

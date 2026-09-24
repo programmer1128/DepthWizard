@@ -57,7 +57,8 @@ CompressedPrimitive DracoCompressor::compress(
     if (primitive.featureIds.has_value()) {
         draco::GeometryAttribute idAttr;
         // Map as a generic custom attribute. The GLTF packager will map this to _FEATURE_ID_0
-        idAttr.Init(draco::GeometryAttribute::GENERIC, nullptr, 1, draco::DT_UINT32, false, sizeof(uint32_t), 0);
+        idAttr.Init(draco::GeometryAttribute::GENERIC, nullptr, 1,
+                    draco::DT_FLOAT32, false, sizeof(float), 0);
         result.featureIdAttrId = dracoMesh.AddAttribute(idAttr, true, numPoints);
     }
 
@@ -93,9 +94,8 @@ CompressedPrimitive DracoCompressor::compress(
     if (primitive.normals.has_value()) {
         encoder.SetAttributeQuantization(draco::GeometryAttribute::NORMAL, config.normalQuantization);
     }
-    if (primitive.featureIds.has_value()) {
-        encoder.SetAttributeQuantization(draco::GeometryAttribute::GENERIC, config.featureIdQuantization);
-    }
+    // Feature IDs are floats only because glTF restricts vertex component
+    // types. Do not quantize them: picking requires exact integral values.
 
     draco::EncoderBuffer dracoBuffer;
     draco::Status status = encoder.EncodeMeshToBuffer(dracoMesh, &dracoBuffer);

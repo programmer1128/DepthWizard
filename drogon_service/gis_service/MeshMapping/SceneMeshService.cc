@@ -1,6 +1,7 @@
 #include "SceneMeshService.h"
 #include "LocalFrameTransformer.h"
 #include "TerrainMesher.h"
+#include "TerrainSurfaceComposer.h"
 #include "BuildingMesher.h"
 #include "SceneAssembler.h"
 #include "../FileGenerators/GltfPackager.h"
@@ -18,9 +19,36 @@ GlbBuildResult SceneMeshService::generateGlb(
      //Establish Mathematical Anchor
      LocalSceneFrame frame = LocalFrameTransformer::create(metadata, surface);
 
-     //Generate Independent Geometry
-     TerrainMesh terrain = TerrainMesher::generate(surface, metadata, frame, config.terrain);
+     // Build a render-only mask from buildings that survived semantic,
+     // topology, and physical validation. The scientific DSM remains intact.
+     const RasterGrid<uint8_t> acceptedBuildingMask =
+         TerrainSurfaceComposer::buildAcceptedBuildingMask(
+             buildings,
+             metadata,
+             config.terrain.buildingTerrainClearanceMetres);
+
+     // Generate independent geometry. Beneath accepted buildings the terrain
+     // uses DTM, preventing a textured molten DSM mound from competing with
+     // the sharp solid roof/wall primitives.
+     TerrainMesh terrain = TerrainMesher::generate(
+         surface,
+         acceptedBuildingMask,
+         metadata,
+         frame,
+         config.terrain);
      BuildingMesh bldgMesh = BuildingMesher::generate(buildings, frame, config.building);
+
+     // An accepted building must materialize as both a roof and wall mesh.
+     // Returning a terrain-only GLB in this state would silently recreate the
+     // molten/textured result while claiming that buildings were reconstructed.
+     if (!buildings.buildings.empty() &&
+         (bldgMesh.roofPrimitive.indices.empty() ||
+          bldgMesh.wallPrimitive.indices.empty()))
+     {
+         result.geometryWarnings.push_back(
+             "Accepted buildings produced no complete roof/wall geometry.");
+         return result;
+     }
 
      //Assemble into Unified Scene
      SceneMesh sceneMesh = SceneAssembler::assemble(terrain, bldgMesh, scene, frame);
@@ -40,6 +68,8 @@ GlbBuildResult SceneMeshService::generateGlb(
          compressedPrimitives.push_back(std::move(compTerrain));
          result.vertexCount += sceneMesh.terrainPrimitive.positions.size() / 3;
          result.triangleCount += sceneMesh.terrainPrimitive.indices.size() / 3;
+         result.terrainTriangleCount =
+             sceneMesh.terrainPrimitive.indices.size() / 3;
      }
 
      // Compress Roofs
@@ -54,6 +84,8 @@ GlbBuildResult SceneMeshService::generateGlb(
              compressedPrimitives.push_back(std::move(compRoofs));
              result.vertexCount += sceneMesh.roofPrimitive.positions.size() / 3;
              result.triangleCount += sceneMesh.roofPrimitive.indices.size() / 3;
+             result.roofTriangleCount =
+                 sceneMesh.roofPrimitive.indices.size() / 3;
          }
      }
 
@@ -69,6 +101,8 @@ GlbBuildResult SceneMeshService::generateGlb(
              compressedPrimitives.push_back(std::move(compWalls));
              result.vertexCount += sceneMesh.wallPrimitive.positions.size() / 3;
              result.triangleCount += sceneMesh.wallPrimitive.indices.size() / 3;
+             result.wallTriangleCount =
+                 sceneMesh.wallPrimitive.indices.size() / 3;
          }
      }
 
@@ -88,6 +122,9 @@ GlbBuildResult SceneMeshService::generateGlb(
      // Merge metadata and pass back to PipelineService
      packagedResult.vertexCount = result.vertexCount;
      packagedResult.triangleCount = result.triangleCount;
+     packagedResult.terrainTriangleCount = result.terrainTriangleCount;
+     packagedResult.roofTriangleCount = result.roofTriangleCount;
+     packagedResult.wallTriangleCount = result.wallTriangleCount;
     
      // Carry over any geometry warnings triggered during compression
      packagedResult.geometryWarnings.insert(

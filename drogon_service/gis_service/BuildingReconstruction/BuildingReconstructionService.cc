@@ -15,7 +15,7 @@ BuildingCollection BuildingReconstructionService::reconstruct(
 
      //Mask Cleanup
      BuildingMaskResult maskResult = BuildingMaskProcessor::createCleanMask(
-         semantics, surface.validMask, metadata, config);
+         semantics, surface.ndsm, surface.validMask, metadata, config);
         
      if (!maskResult.success) 
      {
@@ -23,9 +23,17 @@ BuildingCollection BuildingReconstructionService::reconstruct(
          return collection;
      }
 
+     collection.recoveredCandidatePixelCount =
+         static_cast<std::size_t>(maskResult.recoveredCandidatePixelCount);
+
      //Instance Extraction
      ComponentExtractionResult extractionResult = BuildingInstanceExtractor::extract(
          maskResult, semantics, metadata, config);
+
+     collection.semanticCandidateCount =
+         static_cast<std::size_t>(extractionResult.acceptedComponentCount);
+     collection.componentRejectedCount =
+         static_cast<std::size_t>(extractionResult.rejectedComponentCount);
  
      if (!extractionResult.success || extractionResult.acceptedComponentCount == 0) 
      {
@@ -35,14 +43,16 @@ BuildingCollection BuildingReconstructionService::reconstruct(
 
      // Pre-allocate space to avoid vector reallocations
      collection.buildings.reserve(extractionResult.acceptedComponentCount);
-
      //Loop through extracted components and generate physical instances
      for (const ComponentStats& stats : extractionResult.components) 
      {
          BuildingInstance instance;
          instance.buildingId = stats.componentId;
          instance.footprintAreaSquareMetres = static_cast<float>(stats.physicalAreaSquareMetres);
-         instance.semanticConfidence = stats.meanSemanticConfidence;
+         // Store confidence in the building hypothesis itself. Recovered
+         // UNKNOWN pixels intentionally have zero final-class confidence but
+         // still carry a meaningful building probability.
+         instance.semanticConfidence = stats.meanBuildingProbability;
 
          //Footprint Vectorization
          FootprintVectorizationResult vectorResult = FootprintVectorizer::vectorize(
@@ -50,7 +60,8 @@ BuildingCollection BuildingReconstructionService::reconstruct(
 
          if (!vectorResult.success) 
          {
-             std::cerr << "[Module 6] Vectorization failed for Building ID " 
+             ++collection.vectorizationRejectedCount;
+             std::cerr << "[Module 6] Rejected semantic candidate "
                        << stats.componentId << ": " << vectorResult.errorMessage << "\n";
              continue; // Skip this building and move to the next
          }
@@ -69,13 +80,20 @@ BuildingCollection BuildingReconstructionService::reconstruct(
 
          if (!heightResult.success) 
          {
-             std::cerr << "[Module 6] Height estimation failed for Building ID " 
+             ++collection.physicsRejectedCount;
+             std::cerr << "[Module 6] Rejected semantic candidate "
                       << stats.componentId << ": " << heightResult.errorMessage << "\n";
              continue; // Skip rendering a building with corrupted physics
          }
 
-         instance.baseModel = BaseElevationModel::FLAT; // Version 1 uses Flat representative bases
          instance.representativeBaseElevation = heightResult.representativeBaseElevation;
+         instance.baseElevationPerVertex =
+             std::move(heightResult.baseElevationPerOuterVertex);
+         instance.baseModel =
+             instance.baseElevationPerVertex.size() ==
+                     instance.projectedFootprint.outerRing.size()
+                 ? BaseElevationModel::PER_VERTEX
+                 : BaseElevationModel::FLAT;
          instance.heightAboveGround = heightResult.heightAboveGround;
          instance.roofElevation = heightResult.roofElevation; // base + height
          instance.heightConfidence = heightResult.confidence;
@@ -88,6 +106,15 @@ BuildingCollection BuildingReconstructionService::reconstruct(
          //Finalize and Store the Building
          collection.buildings.push_back(std::move(instance));
      }
+
+     std::cerr << "[Module 6] Reconstruction summary: semantic candidates="
+               << extractionResult.acceptedComponentCount
+               << ", accepted buildings=" << collection.buildings.size()
+               << ", recovered candidate pixels="
+               << collection.recoveredCandidatePixelCount
+               << ", component rejected=" << collection.componentRejectedCount
+               << ", vectorization rejected=" << collection.vectorizationRejectedCount
+               << ", physics rejected=" << collection.physicsRejectedCount << "\n";
 
      return collection;
 }

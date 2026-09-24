@@ -13,7 +13,8 @@ GeoreferencedSurfaceBundle SurfaceFusionService::composeMetricSurface(
     const ReferenceTerrainBundle& reference,
     const SemanticScene& semantics,
     const RasterGrid<float>& aiConfidence,
-    const SpatialMetadata& metadata)
+    const SpatialMetadata& metadata,
+    const SurfaceFusionConfig& config)
 {
     if (!correctedNdsm.isValid())
     {
@@ -32,9 +33,13 @@ GeoreferencedSurfaceBundle SurfaceFusionService::composeMetricSurface(
                 grid.height == h;
         };
 
-    if (!matchesNdsmShape(reference.correctedTerrainPrior) ||
+    if (!config.validate() ||
+        !matchesNdsmShape(reference.correctedTerrainPrior) ||
         !matchesNdsmShape(reference.confidence) ||
         !matchesNdsmShape(reference.validMask) ||
+        !matchesNdsmShape(semantics.buildingProbability) ||
+        !matchesNdsmShape(semantics.vegetationProbability) ||
+        !matchesNdsmShape(semantics.finalClassMap) ||
         !matchesNdsmShape(semantics.semanticConfidence) ||
         !matchesNdsmShape(aiConfidence))
     {
@@ -85,6 +90,9 @@ GeoreferencedSurfaceBundle SurfaceFusionService::composeMetricSurface(
     const float* in_ai_conf = aiConfidence.data.data();
     const float* in_dem_conf = reference.confidence.data.data();
     const float* in_sem_conf = semantics.semanticConfidence.data.data();
+    const float* in_building_prob = semantics.buildingProbability.data.data();
+    const float* in_vegetation_prob = semantics.vegetationProbability.data.data();
+    const SemanticClass* in_class = semantics.finalClassMap.data.data();
     const uint8_t* in_dem_mask = reference.validMask.data.data();
     
 
@@ -101,7 +109,7 @@ GeoreferencedSurfaceBundle SurfaceFusionService::composeMetricSurface(
     for (size_t i = 0; i < totalPixels; ++i) 
     {
         // check core spatial validity
-        if (in_dem_mask[i] == 0 || std::isnan(in_dtm[i]) || std::isnan(in_ndsm[i])) 
+        if (in_dem_mask[i] == 0 || !std::isfinite(in_dtm[i]))
         {
             out_mask[i] = 0;
             out_dtm[i] = std::numeric_limits<float>::quiet_NaN();
@@ -111,10 +119,65 @@ GeoreferencedSurfaceBundle SurfaceFusionService::composeMetricSurface(
             continue;
         }
 
+        // Optical/model invalidity must not punch a hole through otherwise
+        // valid reference terrain. Fall back to the aligned DTM, mark nDSM as
+        // zero, and lower confidence to reflect the missing high-frequency AI
+        // contribution. Semantic processing will still treat that pixel as
+        // UNKNOWN, so it cannot create a building.
+        if (!std::isfinite(in_ndsm[i]))
+        {
+            out_mask[i] = 1;
+            out_dtm[i] = in_dtm[i];
+            out_ndsm[i] = 0.0f;
+            out_dsm[i] = in_dtm[i];
+            out_conf[i] = std::isfinite(in_dem_conf[i])
+                ? 0.5f * std::clamp(in_dem_conf[i], 0.0f, 1.0f)
+                : 0.0f;
+            continue;
+        }
+
+        // Decide whether this pixel may physically carry an above-ground
+        // object. A metric nDSM is not ordinary terrain relief: roads, bare
+        // ground and water must be zero even if the height model is noisy.
+        float fusedNdsm = in_ndsm[i];
+        if (config.clampNegativeNdsmToZero)
+        {
+            fusedNdsm = std::max(0.0F, fusedNdsm);
+        }
+
+        bool retainAboveGroundHeight = true;
+        if (config.suppressGroundInfrastructureNdsm)
+        {
+            switch (in_class[i])
+            {
+                case SemanticClass::GROUND:
+                case SemanticClass::ROAD:
+                case SemanticClass::WATER:
+                    retainAboveGroundHeight = false;
+                    break;
+
+                case SemanticClass::BUILDING:
+                case SemanticClass::VEGETATION:
+                    retainAboveGroundHeight = true;
+                    break;
+
+                case SemanticClass::UNKNOWN:
+                    retainAboveGroundHeight =
+                        std::max(in_building_prob[i], in_vegetation_prob[i]) >=
+                        config.uncertainObjectProbabilityThreshold;
+                    break;
+            }
+        }
+
+        if (!retainAboveGroundHeight)
+        {
+            fusedNdsm = 0.0F;
+        }
+
         // Pass 1: assign valid structural grids
         out_mask[i] = 1;
         out_dtm[i] = in_dtm[i];
-        out_ndsm[i] = in_ndsm[i];
+        out_ndsm[i] = fusedNdsm;
 
         // Pass 2: the Core Geographic Addition -> DSM = DTM + nDSM
         out_dsm[i] = out_dtm[i] + out_ndsm[i];

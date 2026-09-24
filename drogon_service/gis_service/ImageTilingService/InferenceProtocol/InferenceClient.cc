@@ -176,20 +176,21 @@ TileInferenceResult InferenceClient::inferMetricTile(std::shared_ptr<TileRequest
          grid.data.resize(pixel_count);
      };
 
-     initGrid(result.semanticLogits.unknownLogits);
+     initGrid(result.semanticLogits.otherLogits);
      initGrid(result.semanticLogits.groundLogits);
+     initGrid(result.semanticLogits.lowVegetationLogits);
      initGrid(result.semanticLogits.buildingLogits);
-     initGrid(result.semanticLogits.roadLogits);
-     initGrid(result.semanticLogits.vegetationLogits);
      initGrid(result.semanticLogits.waterLogits);
+     initGrid(result.semanticLogits.roadLogits);
 
-     // copy Channel by Channel (CHW format)
-     std::memcpy(result.semanticLogits.unknownLogits.data.data(), &flatLogits[0 * pixel_count], pixel_count * sizeof(float));
+     // Copy channels using the reduced GAMUS contract:
+     // ground, low vegetation, building, water, road, tree.
+     std::memcpy(result.semanticLogits.otherLogits.data.data(), &flatLogits[0 * pixel_count], pixel_count * sizeof(float));
      std::memcpy(result.semanticLogits.groundLogits.data.data(), &flatLogits[1 * pixel_count], pixel_count * sizeof(float));
-     std::memcpy(result.semanticLogits.buildingLogits.data.data(), &flatLogits[2 * pixel_count], pixel_count * sizeof(float));
-     std::memcpy(result.semanticLogits.roadLogits.data.data(), &flatLogits[3 * pixel_count], pixel_count * sizeof(float));
-     std::memcpy(result.semanticLogits.vegetationLogits.data.data(), &flatLogits[4 * pixel_count], pixel_count * sizeof(float));
-     std::memcpy(result.semanticLogits.waterLogits.data.data(), &flatLogits[5 * pixel_count], pixel_count * sizeof(float));
+     std::memcpy(result.semanticLogits.lowVegetationLogits.data.data(), &flatLogits[2 * pixel_count], pixel_count * sizeof(float));
+     std::memcpy(result.semanticLogits.buildingLogits.data.data(), &flatLogits[3 * pixel_count], pixel_count * sizeof(float));
+     std::memcpy(result.semanticLogits.waterLogits.data.data(), &flatLogits[4 * pixel_count], pixel_count * sizeof(float));
+     std::memcpy(result.semanticLogits.roadLogits.data.data(), &flatLogits[5 * pixel_count], pixel_count * sizeof(float));
 
 
      // Reverse GAMUS Normalization to absolute meters

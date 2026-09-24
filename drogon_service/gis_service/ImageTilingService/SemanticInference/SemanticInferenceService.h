@@ -1,8 +1,8 @@
 #pragma once
 
-#include <drogon/drogon.h>
-#include <drogon/utils/coroutine.h>
-#include "../../structures/IngestionStructs.h"
+#include <memory>
+#include <vector>
+#include "../../structures/InferenceStructs.h"
 #include "../../structures/SemanticInferenceTypes.h"
 #include "SemanticInferenceConfig.h"
 
@@ -12,8 +12,9 @@ public:
     // The single public facade for the semantic inference branch.
     // Coordinates the asynchronous dispatch of tiles and the synchronous 
     // Hann-window stitching of the returned multi-channel logits.
-    static drogon::Task<SemanticInferenceBundle> generateGlobalSemantics(
-        const SceneInput& scene,
-        const ImageQualityResult& quality,
+    static SemanticInferenceBundle generateGlobalSemantics(
+        int globalWidth,
+        int globalHeight,
+        const std::vector<std::shared_ptr<TileRequest>>& tiles,
         const SemanticInferenceConfig& config);
 };

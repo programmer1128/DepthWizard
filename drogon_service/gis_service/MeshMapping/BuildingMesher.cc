@@ -3,6 +3,19 @@
 #include <algorithm>
 #include <limits>
 #include <cstdint>
+#include <stdexcept>
+
+double BuildingMesher::signedArea(const std::vector<LocalPoint>& ring)
+{
+     double twiceArea = 0.0;
+     for (std::size_t index = 0; index < ring.size(); ++index)
+     {
+         const LocalPoint& current = ring[index];
+         const LocalPoint& next = ring[(index + 1) % ring.size()];
+         twiceArea += current.x * next.z - next.x * current.z;
+     }
+     return 0.5 * twiceArea;
+}
 
 //ear clipping triangulator
 float BuildingMesher::crossProduct(const LocalPoint& a, const LocalPoint& b, const LocalPoint& c) 
@@ -13,30 +26,44 @@ float BuildingMesher::crossProduct(const LocalPoint& a, const LocalPoint& b, con
 bool BuildingMesher::isPointInsideTriangle(const LocalPoint& pt, 
      const LocalPoint& v1, const LocalPoint& v2,const LocalPoint& v3) 
 {
-     bool b1 = crossProduct(pt, v1, v2) < 0.0f;
-     bool b2 = crossProduct(pt, v2, v3) < 0.0f;
-     bool b3 = crossProduct(pt, v3, v1) < 0.0f;
-     return ((b1 == b2) && (b2 == b3));
+     const float c1 = crossProduct(v1, v2, pt);
+     const float c2 = crossProduct(v2, v3, pt);
+     const float c3 = crossProduct(v3, v1, pt);
+     const bool hasNegative = c1 < -1.0e-6f || c2 < -1.0e-6f || c3 < -1.0e-6f;
+     const bool hasPositive = c1 > 1.0e-6f || c2 > 1.0e-6f || c3 > 1.0e-6f;
+     return !(hasNegative && hasPositive);
 }
 
-std::vector<uint32_t> BuildingMesher::triangulate(
+BuildingMesher::TriangulationResult BuildingMesher::triangulate(
      const std::vector<LocalPoint>& outerRing, 
      const std::vector<std::vector<LocalPoint>>& holes) 
 {
-     std::vector<uint32_t> indices;
+     TriangulationResult result;
      if (outerRing.size() < 3) 
      {
-         return indices;
+         return result;
      }
 
-     // Merge holes into the outer ring using "bridge" edges
      std::vector<LocalPoint> poly = outerRing;
-     for (const auto& hole : holes) 
+     // The projected-to-local transform reflects northing into -Z, so never
+     // assume the projected polygon winding survived. Ear clipping operates
+     // on a canonical CCW outer ring and CW holes.
+     if (signedArea(poly) < 0.0)
      {
-         if (hole.empty()) 
+         std::reverse(poly.begin(), poly.end());
+     }
+
+     for (auto hole : holes)
+     {
+         if (hole.size() < 3)
          {
              continue;
-         } 
+         }
+         if (signedArea(hole) > 0.0)
+         {
+             std::reverse(hole.begin(), hole.end());
+         }
+
          // Find the rightmost point of the hole
          size_t holeRightMostIdx = 0;
          for (size_t i = 1; i < hole.size(); ++i)
@@ -47,17 +74,37 @@ std::vector<uint32_t> BuildingMesher::triangulate(
              }
          }
         
-         // Find closest mutually visible point on the outer polygon to bridge to
+         // Prefer the closest outer vertex to the right. If none exists,
+         // choose the globally closest vertex instead of silently using zero.
          size_t polyBridgeIdx = 0;
-         float minDist = std::numeric_limits<float>::max();
+         double minDistSquared = std::numeric_limits<double>::max();
+         bool foundRightSideCandidate = false;
          for (size_t i = 0; i < poly.size(); ++i) 
          {
-             if (poly[i].x > hole[holeRightMostIdx].x) 
+             if (poly[i].x >= hole[holeRightMostIdx].x)
              {
-                 float dist = static_cast<float>(std::abs(poly[i].x - hole[holeRightMostIdx].x) + std::abs(poly[i].z - hole[holeRightMostIdx].z));
-                 if (dist < minDist) 
+                 const double dx = poly[i].x - hole[holeRightMostIdx].x;
+                 const double dz = poly[i].z - hole[holeRightMostIdx].z;
+                 const double distanceSquared = dx * dx + dz * dz;
+                 if (distanceSquared < minDistSquared)
                  {
-                     minDist = dist;
+                     minDistSquared = distanceSquared;
+                     polyBridgeIdx = i;
+                     foundRightSideCandidate = true;
+                 }
+             }
+         }
+
+         if (!foundRightSideCandidate)
+         {
+             for (size_t i = 0; i < poly.size(); ++i)
+             {
+                 const double dx = poly[i].x - hole[holeRightMostIdx].x;
+                 const double dz = poly[i].z - hole[holeRightMostIdx].z;
+                 const double distanceSquared = dx * dx + dz * dz;
+                 if (distanceSquared < minDistSquared)
+                 {
+                     minDistSquared = distanceSquared;
                      polyBridgeIdx = i;
                  }
              }
@@ -72,6 +119,13 @@ std::vector<uint32_t> BuildingMesher::triangulate(
          merged.insert(merged.end(), poly.begin() + polyBridgeIdx + 1, poly.end());
          poly = merged;
      }
+
+     if (signedArea(poly) < 0.0)
+     {
+         std::reverse(poly.begin(), poly.end());
+     }
+
+     result.vertices = poly;
 
      // Ear clipping O(N^2)
      std::vector<uint32_t> remaining;
@@ -93,7 +147,7 @@ std::vector<uint32_t> BuildingMesher::triangulate(
              uint32_t iNext = remaining[next];
 
              // Convex check (cross product > 0 for CCW polygon in XZ plane)
-             if (crossProduct(poly[iPrev], poly[iCurr], poly[iNext]) >= 0.0f) 
+             if (crossProduct(poly[iPrev], poly[iCurr], poly[iNext]) > 1.0e-6f)
              {
                  bool isEar = true;
                  // Verify no other points fall inside this ear
@@ -103,7 +157,19 @@ std::vector<uint32_t> BuildingMesher::triangulate(
                      { 
                          continue;
                      } 
-                     if (isPointInsideTriangle(poly[remaining[j]], poly[iPrev], poly[iCurr], poly[iNext])) {
+                     const LocalPoint& candidate = poly[remaining[j]];
+                     const auto samePoint = [](const LocalPoint& lhs, const LocalPoint& rhs)
+                     {
+                         return std::abs(lhs.x - rhs.x) <= 1.0e-8 &&
+                             std::abs(lhs.z - rhs.z) <= 1.0e-8;
+                     };
+                     if (samePoint(candidate, poly[iPrev]) ||
+                         samePoint(candidate, poly[iCurr]) ||
+                         samePoint(candidate, poly[iNext]))
+                     {
+                         continue;
+                     }
+                     if (isPointInsideTriangle(candidate, poly[iPrev], poly[iCurr], poly[iNext])) {
                          isEar = false;
                          break;
                      }
@@ -111,9 +177,11 @@ std::vector<uint32_t> BuildingMesher::triangulate(
                 
                  if (isEar) 
                  {
-                     indices.push_back(iPrev);
-                     indices.push_back(iCurr);
-                     indices.push_back(iNext);
+                     // Ear clipping works in CCW XZ order. Reverse each
+                     // triangle so its glTF face normal points toward +Y.
+                     result.indices.push_back(iPrev);
+                     result.indices.push_back(iNext);
+                     result.indices.push_back(iCurr);
                      remaining.erase(remaining.begin() + i);
                      earFound = true;
                      break;
@@ -128,11 +196,23 @@ std::vector<uint32_t> BuildingMesher::triangulate(
 
      if (remaining.size() == 3) 
      {
-         indices.push_back(remaining[0]);
-          indices.push_back(remaining[1]);
-        indices.push_back(remaining[2]);
+         result.indices.push_back(remaining[0]);
+         result.indices.push_back(remaining[2]);
+         result.indices.push_back(remaining[1]);
      }
-     return indices;
+
+     const std::size_t expectedIndexCount =
+         result.vertices.size() >= 3
+             ? (result.vertices.size() - 2) * 3
+             : 0;
+     if (result.indices.size() != expectedIndexCount)
+     {
+         // Partial triangulation is more dangerous than no building: walls
+         // would remain as detached lines and roof indices could span the
+         // wrong bridge vertices.
+         result.indices.clear();
+     }
+     return result;
 }
 
 
@@ -144,6 +224,11 @@ BuildingMesh BuildingMesher::generate(
      const BuildingMeshConfig& config)
 {
      BuildingMesh result;
+
+     if (!config.validate())
+     {
+         throw std::invalid_argument("BuildingMesher: invalid mesh configuration");
+     }
     
      // Initialize Roof Primitive
      result.roofPrimitive.topology = PrimitiveTopology::TRIANGLES;
@@ -174,6 +259,30 @@ BuildingMesh BuildingMesher::generate(
          {
              localOuter.push_back(LocalFrameTransformer::toLocal(pt, frame));
          }
+
+         std::vector<float> localOuterBaseY;
+         if (bldg.baseElevationPerVertex.size() == localOuter.size())
+         {
+             localOuterBaseY.reserve(localOuter.size());
+             for (float elevation : bldg.baseElevationPerVertex)
+             {
+                 localOuterBaseY.push_back(
+                     LocalFrameTransformer::toLocalElevation(
+                         elevation - config.wallTerrainEmbedDepthMetres,
+                         frame));
+             }
+         }
+
+         // Restore canonical XZ winding after the projected-to-local axis
+         // reflection. Keep per-vertex wall bases aligned with their vertices.
+         if (signedArea(localOuter) < 0.0)
+         {
+             std::reverse(localOuter.begin(), localOuter.end());
+             if (!localOuterBaseY.empty())
+             {
+                 std::reverse(localOuterBaseY.begin(), localOuterBaseY.end());
+             }
+         }
         
          std::vector<std::vector<LocalPoint>> localHoles;
          for (const auto& hole : bldg.projectedFootprint.holes) 
@@ -183,19 +292,34 @@ BuildingMesh BuildingMesher::generate(
              {
                  lHole.push_back(LocalFrameTransformer::toLocal(pt, frame));
              }
+             if (signedArea(lHole) > 0.0)
+             {
+                 std::reverse(lHole.begin(), lHole.end());
+             }
              localHoles.push_back(lHole);
          }
 
          float localRoofY = LocalFrameTransformer::toLocalElevation(bldg.roofElevation, frame);
-         float localBaseY = LocalFrameTransformer::toLocalElevation(bldg.representativeBaseElevation, frame);
+         float localBaseY = LocalFrameTransformer::toLocalElevation(
+             bldg.representativeBaseElevation -
+                 config.wallTerrainEmbedDepthMetres,
+             frame);
 
          /*
          *Roof Generation of building
          */
+         const TriangulationResult triangulation =
+             triangulate(localOuter, localHoles);
+         if (triangulation.indices.empty())
+         {
+             // Never emit walls without a valid roof. That failure mode is
+             // exactly the thin cyan contour seen when roof triangulation
+             // silently failed after the local-axis winding reflection.
+             continue;
+         }
+
          uint32_t roofIndexOffset = static_cast<uint32_t>(result.roofPrimitive.positions.size() / 3);
-         
-         std::vector<uint32_t> localIndices = triangulate(localOuter, localHoles);
-         for (uint32_t idx : localIndices) 
+         for (uint32_t idx : triangulation.indices)
          {
              result.roofPrimitive.indices.push_back(roofIndexOffset + idx);
          }
@@ -210,7 +334,8 @@ BuildingMesh BuildingMesher::generate(
              result.roofPrimitive.normals->push_back(1.0f); // Hard normal straight up
              result.roofPrimitive.normals->push_back(0.0f);
             
-             result.roofPrimitive.featureIds->push_back(bldg.buildingId);
+             result.roofPrimitive.featureIds->push_back(
+                 static_cast<float>(bldg.buildingId));
 
              roofBounds.isInitialized = true;
 
@@ -219,23 +344,17 @@ BuildingMesh BuildingMesher::generate(
              roofBounds.minZ = std::min(roofBounds.minZ, pt.z); roofBounds.maxZ = std::max(roofBounds.maxZ, pt.z);
          };
 
-         for (const auto& pt : localOuter) 
+         for (const auto& pt : triangulation.vertices)
          {
              addRoofVertex(pt);
-         }
-         for (const auto& hole : localHoles) 
-         {
-             for (const auto& pt : hole) 
-             {
-                 addRoofVertex(pt);
-             }
          }
 
        
          /*
          *Wall generation
          */
-         auto extrudeRing = [&](const std::vector<LocalPoint>& ring) 
+         auto extrudeRing = [&](const std::vector<LocalPoint>& ring,
+                                const std::vector<float>* vertexBaseY)
          {
              for (size_t i = 0; i < ring.size(); ++i) 
              {
@@ -255,6 +374,12 @@ BuildingMesh BuildingMesher::generate(
                  }
 
                  uint32_t wallIdxBase = static_cast<uint32_t>(result.wallPrimitive.positions.size() / 3);
+                 const float baseA = vertexBaseY != nullptr
+                     ? (*vertexBaseY)[i]
+                     : localBaseY;
+                 const float baseB = vertexBaseY != nullptr
+                     ? (*vertexBaseY)[nextIdx]
+                     : localBaseY;
 
                  // Push 4 independent vertices per wall quad to guarantee crisp corners
                  auto pushWallVertex = [&](double vx, float vy, double vz) 
@@ -267,7 +392,8 @@ BuildingMesh BuildingMesher::generate(
                      result.wallPrimitive.normals->push_back(0.0f);
                      result.wallPrimitive.normals->push_back(nz);
                     
-                     result.wallPrimitive.featureIds->push_back(bldg.buildingId);
+                     result.wallPrimitive.featureIds->push_back(
+                         static_cast<float>(bldg.buildingId));
 
                      wallBounds.isInitialized = true;
 
@@ -276,26 +402,28 @@ BuildingMesh BuildingMesher::generate(
                      wallBounds.minZ = std::min(wallBounds.minZ, vz); wallBounds.maxZ = std::max(wallBounds.maxZ, vz);
                  };
 
-                 pushWallVertex(ptA.x, localBaseY, ptA.z); // Base A (Index 0)
+                 pushWallVertex(ptA.x, baseA, ptA.z); // Base A (Index 0)
                  pushWallVertex(ptA.x, localRoofY, ptA.z); // Roof A (Index 1)
                  pushWallVertex(ptB.x, localRoofY, ptB.z); // Roof B (Index 2)
-                 pushWallVertex(ptB.x, localBaseY, ptB.z); // Base B (Index 3)
+                 pushWallVertex(ptB.x, baseB, ptB.z); // Base B (Index 3)
 
                  // Two triangles per wall
                  result.wallPrimitive.indices.push_back(wallIdxBase + 0);
-                 result.wallPrimitive.indices.push_back(wallIdxBase + 2);
                  result.wallPrimitive.indices.push_back(wallIdxBase + 1);
+                 result.wallPrimitive.indices.push_back(wallIdxBase + 2);
 
                  result.wallPrimitive.indices.push_back(wallIdxBase + 0);
-                 result.wallPrimitive.indices.push_back(wallIdxBase + 3);
                  result.wallPrimitive.indices.push_back(wallIdxBase + 2);
+                 result.wallPrimitive.indices.push_back(wallIdxBase + 3);
              }
          };
 
-         extrudeRing(localOuter);
+         extrudeRing(
+             localOuter,
+             localOuterBaseY.empty() ? nullptr : &localOuterBaseY);
          for (const auto& hole : localHoles) 
          {
-             extrudeRing(hole);
+             extrudeRing(hole, nullptr);
          }
      }
 

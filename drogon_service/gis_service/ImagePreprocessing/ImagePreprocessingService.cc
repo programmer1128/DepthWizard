@@ -47,10 +47,21 @@ ImageQualityResult ImagePreprocessingService::process(const SceneInput &scene)
     const size_t totalPixels = static_cast<size_t>(width) * height;
     std::vector<uint8_t> rawR(totalPixels), rawG(totalPixels), rawB(totalPixels);
 
-    // (void) cast added to suppress GCC warnings
-    (void)poDS->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height, rawR.data(), width, height, GDT_Byte, 0, 0);
-    (void)poDS->GetRasterBand(numBands >= 2 ? 2 : 1)->RasterIO(GF_Read, 0, 0, width, height, rawG.data(), width, height, GDT_Byte, 0, 0);
-    (void)poDS->GetRasterBand(numBands >= 3 ? 3 : 1)->RasterIO(GF_Read, 0, 0, width, height, rawB.data(), width, height, GDT_Byte, 0, 0);
+    const CPLErr redRead = poDS->GetRasterBand(1)->RasterIO(
+        GF_Read, 0, 0, width, height, rawR.data(), width, height,
+        GDT_Byte, 0, 0);
+    const CPLErr greenRead = poDS->GetRasterBand(numBands >= 2 ? 2 : 1)->RasterIO(
+        GF_Read, 0, 0, width, height, rawG.data(), width, height,
+        GDT_Byte, 0, 0);
+    const CPLErr blueRead = poDS->GetRasterBand(numBands >= 3 ? 3 : 1)->RasterIO(
+        GF_Read, 0, 0, width, height, rawB.data(), width, height,
+        GDT_Byte, 0, 0);
+
+    if (redRead != CE_None || greenRead != CE_None || blueRead != CE_None)
+    {
+        throw std::runtime_error(
+            "ImagePreprocessingService: Failed to read one or more RGB bands.");
+    }
 
     // GDALClose(poDS);
 
@@ -103,8 +114,11 @@ ImageQualityResult ImagePreprocessingService::process(const SceneInput &scene)
          normG[i] = ((g / 255.0f) - MEAN_G) / STD_G;
          normB[i] = ((b / 255.0f) - MEAN_B) / STD_B;
 
-         // Saturation Mask
-         if (r >= 254.0f || g >= 254.0f || b >= 254.0f || r <= 1.0f || g <= 1.0f || b <= 1.0f)
+         // Do not reject a valid coloured pixel merely because one channel is
+         // clipped. Treat only a complete black/white triplet as unusable.
+         const bool allChannelsLow = r <= 1.0f && g <= 1.0f && b <= 1.0f;
+         const bool allChannelsHigh = r >= 254.0f && g >= 254.0f && b >= 254.0f;
+         if (allChannelsLow || allChannelsHigh)
          {
              pSat[i] = 1;
              satCount++;
@@ -143,8 +157,11 @@ ImageQualityResult ImagePreprocessingService::process(const SceneInput &scene)
 
          bool isBorderPadding = (r == 0.0f && g == 0.0f && b == 0.0f); // detecting artificial black border padding used in GeoTIFFs
 
-         // Master Valid Pixel Gate -> explicit wire-up of isBorderPadding
-         if (isCloud || isShadow || pSat[i] == 1 || isBorderPadding)
+         // Shadows are real observed terrain, not missing sensor data. Keep
+         // them available to both inference models so shaded slopes do not
+         // become holes in the reconstructed surface. shadowMask remains a
+         // diagnostic/calibration exclusion mask.
+         if (isCloud || pSat[i] == 1 || isBorderPadding)
          {
              pValid[i] = 0;
          }
@@ -155,7 +172,11 @@ ImageQualityResult ImagePreprocessingService::process(const SceneInput &scene)
      }
 
      result.qualityScore = static_cast<float>(validCount) / static_cast<float>(totalPixels);
-     LOG_INFO << "[ImagePreprocessingService] Quality Score: " << (result.qualityScore * 100.0f) << "%";
+     LOG_INFO << "[ImagePreprocessingService] Quality Score: "
+              << (result.qualityScore * 100.0f) << "%"
+              << "; clouds=" << cloudCount
+              << "; shadows=" << shadowCount
+              << "; saturation/no-data=" << satCount;
 
      return result;
 }

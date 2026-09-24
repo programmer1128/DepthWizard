@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <sstream>
 
 float BuildingHeightEstimator::calculateRobustMedian(std::vector<float>& samples) 
 {
@@ -31,7 +32,10 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
          return result;
      }
 
-     if (!surface.dtm.isValid() || !surface.ndsm.isValid() || !semantics.finalClassMap.isValid()) 
+     if (!surface.dtm.isValid() || !surface.ndsm.isValid() ||
+         !surface.validMask.isValid() ||
+         !semantics.finalClassMap.isValid() ||
+         !semantics.buildingProbability.isValid())
      {
          result.errorMessage = "Invalid surface or semantic grids.";
          return result;
@@ -39,6 +43,23 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
 
      int width = metadata.width;
      int height = metadata.height;
+
+     const auto hasExpectedShape =
+         [width, height](const auto& grid)
+         {
+             return grid.width == width && grid.height == height && grid.isValid();
+         };
+
+     if (width <= 0 || height <= 0 ||
+         !hasExpectedShape(surface.dtm) ||
+         !hasExpectedShape(surface.ndsm) ||
+         !hasExpectedShape(surface.validMask) ||
+         !hasExpectedShape(semantics.finalClassMap) ||
+         !hasExpectedShape(semantics.buildingProbability))
+     {
+         result.errorMessage = "Surface, semantic, and metadata dimensions do not match.";
+         return result;
+     }
 
      //Calculate Bounding Box of the Polygon to create a localized ROI
      int minX = width, minY = height, maxX = 0, maxY = 0;
@@ -106,6 +127,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
 
      //Sample the Grids
      std::vector<float> groundSamples;
+     std::vector<float> footprintDtmSamples;
      std::vector<float> roofSamples;
 
      for (int r = 0; r < roiH;r++) 
@@ -129,18 +151,35 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
 
              SemanticClass pixelClass = semantics.finalClassMap.data[idx];
 
+             if (footprintMask.at<uint8_t>(r, c) > 0 &&
+                 std::isfinite(surface.dtm.data[idx]))
+             {
+                 footprintDtmSamples.push_back(surface.dtm.data[idx]);
+             }
+
              // Sample Exterior Ground (strictly ignoring trees/water/buildings)
              if (extRow[c] > 0) 
              {
-                 if (pixelClass == SemanticClass::GROUND || pixelClass == SemanticClass::ROAD) {
+                 if ((pixelClass == SemanticClass::GROUND ||
+                      pixelClass == SemanticClass::ROAD) &&
+                     std::isfinite(surface.dtm.data[idx])) {
                      groundSamples.push_back(surface.dtm.data[idx]);
                  }
              }
 
-             // Sample Interior Roof (strictly inside the eroded core, semantically confirmed)
+             const bool supportsBuildingHeight =
+                 pixelClass == SemanticClass::BUILDING ||
+                 (pixelClass == SemanticClass::UNKNOWN &&
+                  semantics.buildingProbability.data[idx] >=
+                      config.buildingRecoveryProbabilityThreshold);
+
+             // Sample Interior Roof from strict or metric-recovered building
+             // evidence. Requiring only the final class here would discard
+             // every candidate recovered from a softmax margin failure.
              if (intRow[c] > 0) 
              {
-                 if (pixelClass == SemanticClass::BUILDING) {
+                 if (supportsBuildingHeight &&
+                     std::isfinite(surface.ndsm.data[idx])) {
                      roofSamples.push_back(surface.ndsm.data[idx]);
                  }
              }
@@ -151,9 +190,60 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
      result.validGroundSampleCount = static_cast<int>(groundSamples.size());
      result.validRoofSampleCount = static_cast<int>(roofSamples.size());
 
+     // Validate terrain beneath the footprint, not the exterior semantic
+     // ground ring. The exterior can legitimately include a road cut or an
+     // adjacent terrace, while the footprint support itself is the physical
+     // surface on which the building would have to stand.
+     if (static_cast<int>(footprintDtmSamples.size()) >=
+         config.minRequiredSamples)
+     {
+         std::vector<float> orderedTerrain = footprintDtmSamples;
+         std::sort(orderedTerrain.begin(), orderedTerrain.end());
+
+         const std::size_t last = orderedTerrain.size() - 1;
+         const std::size_t lowerIndex = static_cast<std::size_t>(
+             std::floor(0.10 * static_cast<double>(last)));
+         const std::size_t upperIndex = static_cast<std::size_t>(
+             std::ceil(0.90 * static_cast<double>(last)));
+
+         result.footprintElevationDeltaMetres =
+             orderedTerrain[upperIndex] - orderedTerrain[lowerIndex];
+
+         if (!std::isfinite(result.footprintElevationDeltaMetres) ||
+             result.footprintElevationDeltaMetres >
+                 config.maxFootprintElevationDeltaMetres)
+         {
+             std::ostringstream message;
+             message << "Footprint terrain relief "
+                     << result.footprintElevationDeltaMetres
+                     << " m exceeds the configured "
+                     << config.maxFootprintElevationDeltaMetres
+                     << " m limit.";
+             result.errorMessage = message.str();
+             return result;
+         }
+     }
+
      if (result.validGroundSampleCount < config.minRequiredSamples) 
      {
-         result.warnings.push_back("Insufficient clean ground samples around building. Base elevation may be inaccurate.");
+         // The reference DTM represents bare earth beneath structures. When
+         // semantic ground is unavailable around a footprint (dense urban or
+         // vegetated edge), use finite DTM samples beneath the footprint. A
+         // default elevation of zero is never physically valid here.
+         if (static_cast<int>(footprintDtmSamples.size()) <
+             config.minRequiredSamples)
+         {
+             result.errorMessage =
+                 "Insufficient terrain samples to establish building base elevation.";
+             return result;
+         }
+
+         result.representativeBaseElevation =
+             calculateRobustMedian(footprintDtmSamples);
+         result.validGroundSampleCount =
+             static_cast<int>(footprintDtmSamples.size());
+         result.warnings.push_back(
+             "Exterior ground unavailable; base elevation derived from footprint DTM.");
      } 
      else 
      {
@@ -164,6 +254,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
     {
          result.warnings.push_back("Insufficient clean interior building samples. Height derived from footprint edges.");
          // Fallback: If erosion destroyed the mask, compute from the un-eroded footprint
+         roofSamples.clear();
          for (int r = 0; r < roiH; ++r) 
          {
              uint8_t* footRow = footprintMask.ptr<uint8_t>(r);
@@ -171,26 +262,91 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
              for (int c = 0; c < roiW; ++c) 
              {
                  std::size_t idx = offset + (roiX + c);
-                 if (footRow[c] > 0 && surface.validMask.data[idx] != 0 && semantics.finalClassMap.data[idx] == SemanticClass::BUILDING) 
+                 const bool supportsBuildingHeight =
+                     semantics.finalClassMap.data[idx] == SemanticClass::BUILDING ||
+                     (semantics.finalClassMap.data[idx] == SemanticClass::UNKNOWN &&
+                      semantics.buildingProbability.data[idx] >=
+                          config.buildingRecoveryProbabilityThreshold);
+                 if (footRow[c] > 0 && surface.validMask.data[idx] != 0 &&
+                     supportsBuildingHeight &&
+                     std::isfinite(surface.ndsm.data[idx]))
                  {
                      roofSamples.push_back(surface.ndsm.data[idx]);
                  }
              }
          }
-         result.heightAboveGround = calculateRobustMedian(roofSamples);
          result.validRoofSampleCount = static_cast<int>(roofSamples.size());
+
+         if (result.validRoofSampleCount < config.minRequiredSamples)
+         {
+             result.errorMessage =
+                 "Insufficient valid nDSM samples to estimate building height.";
+             return result;
+         }
+
+         result.heightAboveGround = calculateRobustMedian(roofSamples);
      } 
      else 
      {
          result.heightAboveGround = calculateRobustMedian(roofSamples);
      }
 
-     //Final Physics Physics Resolution
-     // A building cannot be negatively tall. Enforce physical reality.
-     result.heightAboveGround = std::max(0.1f, result.heightAboveGround);
+     // Fail closed instead of turning zero/noise into a synthetic 10 cm
+     // building or allowing implausible cliffs to become structures.
+     if (!std::isfinite(result.representativeBaseElevation) ||
+         !std::isfinite(result.heightAboveGround) ||
+         result.heightAboveGround < config.minBuildingHeightMetres ||
+         result.heightAboveGround > config.maxBuildingHeightMetres)
+     {
+         result.errorMessage =
+             "Estimated building height violates configured physical limits.";
+         return result;
+     }
     
      // Flat roof assumption
      result.roofElevation = result.representativeBaseElevation + result.heightAboveGround;
+
+     // Sample a small DTM neighbourhood around every polygon vertex. Polygon
+     // vertices lie on pixel edges, so a neighbourhood median is more stable
+     // than selecting one side of the edge. Missing samples safely fall back
+     // to the representative base.
+     result.baseElevationPerOuterVertex.reserve(
+         pixelFootprint.outerRing.size());
+     for (const PixelPoint& vertex : pixelFootprint.outerRing)
+     {
+         const int centerColumn = static_cast<int>(std::lround(vertex.column));
+         const int centerRow = static_cast<int>(std::lround(vertex.row));
+         std::vector<float> vertexTerrainSamples;
+         vertexTerrainSamples.reserve(9);
+
+         for (int rowOffset = -1; rowOffset <= 1; ++rowOffset)
+         {
+             const int row = centerRow + rowOffset;
+             if (row < 0 || row >= height)
+                 continue;
+
+             for (int columnOffset = -1; columnOffset <= 1; ++columnOffset)
+             {
+                 const int column = centerColumn + columnOffset;
+                 if (column < 0 || column >= width)
+                     continue;
+
+                 const std::size_t index =
+                     static_cast<std::size_t>(row) * width + column;
+                 const float elevation = surface.dtm.data[index];
+                 if (surface.validMask.data[index] != 0 &&
+                     std::isfinite(elevation))
+                 {
+                     vertexTerrainSamples.push_back(elevation);
+                 }
+             }
+         }
+
+         result.baseElevationPerOuterVertex.push_back(
+             vertexTerrainSamples.empty()
+                 ? result.representativeBaseElevation
+                 : calculateRobustMedian(vertexTerrainSamples));
+     }
 
      // Confidence metric (0.0 to 1.0)
      float sampleConf = std::min(1.0f, static_cast<float>(result.validRoofSampleCount) / (config.minRequiredSamples * 4.0f));

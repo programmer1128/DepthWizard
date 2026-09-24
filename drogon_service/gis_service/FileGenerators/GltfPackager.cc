@@ -21,6 +21,7 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     // 1. Register Global Extensions
     model.extensionsUsed.push_back("KHR_draco_mesh_compression");
     model.extensionsRequired.push_back("KHR_draco_mesh_compression");
+    model.extensionsUsed.push_back("KHR_materials_unlit");
 
     // 2. Metadata Injection (Asset Extras)
     tinygltf::Value::Object extras;
@@ -114,12 +115,20 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
             mat.pbrMetallicRoughness.baseColorTexture.index = textureImageIndex;
             mat.name = "Terrain_Optical";
         } else if (role == MaterialRole::BUILDING_WALL) {
-            // Teal/Cyan solid hologram block[cite: 10]
-            mat.pbrMetallicRoughness.baseColorFactor = {0.2, 0.8, 0.7, 1.0}; 
+            // Unlit and emissive keeps the hologram color crisp regardless of
+            // the viewer's lights, exposure, or environment map.
+            mat.pbrMetallicRoughness.baseColorFactor = {0.015, 0.10, 0.42, 1.0};
+            mat.emissiveFactor = {0.015, 0.10, 0.42};
+            mat.extensions["KHR_materials_unlit"] =
+                tinygltf::Value(tinygltf::Value::Object{});
             mat.name = "Hologram_Wall";
         } else if (role == MaterialRole::BUILDING_ROOF) {
-            // Lighter Salmon/Gray solid block for roofs to distinguish from walls[cite: 10]
-            mat.pbrMetallicRoughness.baseColorFactor = {0.9, 0.6, 0.5, 1.0};
+            // Slightly brighter blue separates roofs from the darker walls
+            // without reintroducing the pink/cyan palette.
+            mat.pbrMetallicRoughness.baseColorFactor = {0.025, 0.24, 0.72, 1.0};
+            mat.emissiveFactor = {0.025, 0.24, 0.72};
+            mat.extensions["KHR_materials_unlit"] =
+                tinygltf::Value(tinygltf::Value::Object{});
             mat.name = "Hologram_Roof";
         }
         
@@ -192,7 +201,7 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
         if (prim.featureIdAttrId >= 0) {
             tinygltf::Accessor featAcc;
             featAcc.bufferView = -1;
-            featAcc.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
+            featAcc.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
             featAcc.type = TINYGLTF_TYPE_SCALAR;
             featAcc.count = prim.vertexCount;
             model.accessors.push_back(featAcc);

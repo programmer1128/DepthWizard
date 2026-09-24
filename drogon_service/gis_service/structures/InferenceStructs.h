@@ -18,12 +18,12 @@ struct ModelCollection
 
 struct SemanticLogits 
 {
+    RasterGrid<float> otherLogits;
     RasterGrid<float> groundLogits;
+    RasterGrid<float> lowVegetationLogits;
     RasterGrid<float> buildingLogits;
-    RasterGrid<float> roadLogits;
-    RasterGrid<float> vegetationLogits;
     RasterGrid<float> waterLogits;
-    RasterGrid<float> unknownLogits; 
+    RasterGrid<float> roadLogits;
     int classCount{6};         
     TensorLayout layout{TensorLayout::CHW};
 };
@@ -86,6 +86,8 @@ struct TileRequest
     // normalized colors (RGB) for the model
     std::vector<float> normalizedRgbBytes;
     
-    // the black-and-white safety map (1 = safe, 0 = cloud/shadow)
+    // Binary usability map (1 = usable, 0 = cloud/saturation/padding/NoData).
+    // Natural shadows remain usable geometry and are represented separately
+    // by ImageQualityResult::shadowMask.
     std::vector<uint8_t> validMaskBytes;
 };

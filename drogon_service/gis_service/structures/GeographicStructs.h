@@ -1,5 +1,6 @@
 #pragma once
 #include "CommonTypes.h"
+#include <cstddef>
 #include <optional>
 #include <cstdint>
 #include <vector>
@@ -59,7 +60,9 @@ struct BuildingInstance
     
     float representativeBaseElevation{0.0f};
     std::optional<GroundPlane> groundPlane;                
-    std::vector<float> baseElevationPerVertex;             
+    // One DTM elevation per outer-ring vertex. Empty means use the
+    // representative flat base.
+    std::vector<float> baseElevationPerVertex;
     
     float roofElevation{0.0f}; // Assumes flat roof
     float heightAboveGround{0.0f};
@@ -72,4 +75,12 @@ struct BuildingInstance
 struct BuildingCollection 
 {
     std::vector<BuildingInstance> buildings;
+
+    // Reconstruction-stage diagnostics. These are data, not a separate
+    // report file, so the orchestrator can log and expose them consistently.
+    std::size_t semanticCandidateCount{0};
+    std::size_t recoveredCandidatePixelCount{0};
+    std::size_t componentRejectedCount{0};
+    std::size_t vectorizationRejectedCount{0};
+    std::size_t physicsRejectedCount{0};
 };

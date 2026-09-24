@@ -1,19 +1,24 @@
 #include "SemanticInferenceService.h"
 #include "SemanticTileDispatcher.h"
-//#include "OutputStitching/SemanticOutputStitcher.h"
+#include "../OutputStitching/SemanticOutputStitcher.h"
 
 #include <trantor/utils/Logger.h>
 #include <stdexcept>
 
-drogon::Task<SemanticInferenceBundle> SemanticInferenceService::generateGlobalSemantics(
-    const SceneInput& scene,
-    const ImageQualityResult& quality,
+SemanticInferenceBundle SemanticInferenceService::generateGlobalSemantics(
+    int globalWidth,
+    int globalHeight,
+    const std::vector<std::shared_ptr<TileRequest>>& tiles,
     const SemanticInferenceConfig& config)
 {
     LOG_INFO << "SemanticInferenceService: Starting multi-threaded Semantic AI Dispatch...";
 
     // 1. Dispatch tiles to Python workers concurrently and wait for completion
-    SemanticTiledPayload payload = co_await SemanticTileDispatcher::dispatch(scene, quality, config);
+    SemanticTiledPayload payload = SemanticTileDispatcher::dispatch(
+        globalWidth,
+        globalHeight,
+        tiles,
+        config);
 
     if (payload.tiles.empty()) 
     {
@@ -23,14 +28,12 @@ drogon::Task<SemanticInferenceBundle> SemanticInferenceService::generateGlobalSe
     LOG_INFO << "SemanticInferenceService: Successfully received " 
              << payload.tiles.size() << " semantic tiles. Commencing Stitching...";
 
-    // 2. Stitch the overlapping 6-channel tiles into seamless global matrices
-    //SemanticInferenceBundle globalBundle = SemanticOutputStitcher::stitch(payload, config);
-
-
-    //TO BE INTEGRATED
-    SemanticInferenceBundle globalBundle;
+    // 2. Stitch overlapping raw logits before the postprocessor applies
+    // softmax. This avoids probability seams at tile boundaries.
+    SemanticInferenceBundle globalBundle =
+        SemanticOutputStitcher::stitch(payload, config);
     LOG_INFO << "SemanticInferenceService: Global Semantic Surface successfully stitched.";
 
     // 3. Return the fully assembled bundle
-    co_return globalBundle;
+    return globalBundle;
 }

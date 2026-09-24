@@ -1,8 +1,6 @@
 #include "SemanticTileDispatcher.h"
 #include "SemanticInferenceClient.h"
-#include <cmath>
 #include <algorithm>
-#include <cstring>
 #include <stdexcept>
 #include <trantor/utils/Logger.h>
 
@@ -58,12 +56,25 @@ static SemanticTileResult inferWithRetry(
                              " attempts. Last error: " + lastError);
 }
 
-drogon::Task<SemanticTiledPayload> SemanticTileDispatcher::dispatch(
-    const SceneInput& scene,
-    const ImageQualityResult& quality,
+SemanticTiledPayload SemanticTileDispatcher::dispatch(
+    int globalWidth,
+    int globalHeight,
+    const std::vector<std::shared_ptr<TileRequest>>& tiles,
     const SemanticInferenceConfig& config)
 {
     config.validate();
+
+    if (globalWidth <= 0 || globalHeight <= 0)
+    {
+        throw std::invalid_argument(
+            "SemanticTileDispatcher: Global dimensions must be positive.");
+    }
+
+    if (tiles.empty())
+    {
+        throw std::invalid_argument(
+            "SemanticTileDispatcher: Shared tile batch is empty.");
+    }
 
     std::vector<SemanticWorkerEndpoint> enabledEndpoints;
     for (const auto& ep : config.endpoints)
@@ -80,14 +91,10 @@ drogon::Task<SemanticTiledPayload> SemanticTileDispatcher::dispatch(
     }
 
     SemanticTiledPayload payload;
-    payload.globalWidth = scene.width;
-    payload.globalHeight = scene.height;
+    payload.globalWidth = static_cast<uint32_t>(globalWidth);
+    payload.globalHeight = static_cast<uint32_t>(globalHeight);
     payload.model.modelName = config.expectedModelName;
     payload.model.modelVersion = config.acceptedVersions.empty() ? "1.0" : config.acceptedVersions.front();
-
-    const int tileSize = static_cast<int>(config.expectedTileSize);
-    // 20% overlap stride for smooth Hann-window blending
-    const int stride = std::max(1, static_cast<int>(std::round(tileSize * 0.8f)));
 
     struct PendingTask
     {
@@ -96,46 +103,31 @@ drogon::Task<SemanticTiledPayload> SemanticTileDispatcher::dispatch(
     };
 
     std::vector<PendingTask> inFlight;
-    uint32_t currentTileId = 0;
     const size_t maxInFlight = static_cast<size_t>(config.maxConcurrentRequests);
 
-    for (int y = 0; y < scene.height; y += stride)
+    for (const auto& request : tiles)
     {
-        int actualY = std::max(0, std::min(y, scene.height - tileSize));
-        int validH = std::min(tileSize, scene.height - actualY);
-
-        for (int x = 0; x < scene.width; x += stride)
+        if (!request)
         {
-            int actualX = std::max(0, std::min(x, scene.width - tileSize));
-            int validW = std::min(tileSize, scene.width - actualX);
-
-            std::shared_ptr<TileRequest> request = extractTileMemory(
-                actualX, actualY, validW, validH, tileSize, currentTileId, scene, quality);
-
-            // Dispatch asynchronous inference
-            std::future<SemanticTileResult> fut = std::async(
-                std::launch::async,
-                [request, enabledEndpoints, &config]() {
-                    return inferWithRetry(request, enabledEndpoints, config);
-                });
-
-            inFlight.push_back({currentTileId, std::move(fut)});
-
-            // Bounded concurrency throttling: wait for oldest task when queue is saturated
-            if (inFlight.size() >= maxInFlight)
-            {
-                payload.tiles.push_back(inFlight.front().futureResult.get());
-                inFlight.erase(inFlight.begin());
-            }
-
-            currentTileId++;
-
-            if (actualX >= scene.width - tileSize)
-                break;
+            throw std::invalid_argument(
+                "SemanticTileDispatcher: Shared tile batch contains a null tile.");
         }
 
-        if (actualY >= scene.height - tileSize)
-            break;
+        std::future<SemanticTileResult> futureResult = std::async(
+            std::launch::async,
+            [request, enabledEndpoints, &config]() {
+                return inferWithRetry(request, enabledEndpoints, config);
+            });
+
+        inFlight.push_back({request->tileId, std::move(futureResult)});
+
+        // Bounded concurrency: collect the oldest request before submitting
+        // more work than the configured worker pool can sustain.
+        if (inFlight.size() >= maxInFlight)
+        {
+            payload.tiles.push_back(inFlight.front().futureResult.get());
+            inFlight.erase(inFlight.begin());
+        }
     }
 
     // Drain remaining in-flight tasks
@@ -155,55 +147,5 @@ drogon::Task<SemanticTiledPayload> SemanticTileDispatcher::dispatch(
     LOG_INFO << "SemanticTileDispatcher: Finished dispatching "
              << payload.successfulTileCount << " semantic tiles.";
 
-    co_return payload;
-}
-
-std::shared_ptr<TileRequest> SemanticTileDispatcher::extractTileMemory(
-    int start_x, int start_y, int valid_w, int valid_h, int tile_size, uint32_t tile_id,
-    const SceneInput& scene, const ImageQualityResult& quality)
-{
-    auto request = std::make_shared<TileRequest>();
-    request->tileId = tile_id;
-    request->xOffset = start_x;
-    request->yOffset = start_y;
-    request->width = tile_size;
-    request->height = tile_size;
-    request->validWidth = valid_w;
-    request->validHeight = valid_h;
-
-    const size_t totalTilePixels = static_cast<size_t>(tile_size) * tile_size;
-    request->normalizedRgbBytes.assign(totalTilePixels * 3, 0.0f);
-    request->validMaskBytes.assign(totalTilePixels, 0);
-
-    float* destRgb = request->normalizedRgbBytes.data();
-    uint8_t* destMask = request->validMaskBytes.data();
-
-    const float* srcRgb = quality.normalizedRgbTensor.data.data();
-    const uint8_t* srcMask = quality.validPixelMask.data.data();
-
-    const size_t globalChannelArea = static_cast<size_t>(scene.width) * scene.height;
-    const size_t tileChannelArea = totalTilePixels;
-
-    // Planar CHW tensor extraction: Channel-by-Channel
-    for (int c = 0; c < 3; ++c)
-    {
-        for (int r = 0; r < valid_h; ++r)
-        {
-            size_t globalIdx = (c * globalChannelArea) + ((start_y + r) * scene.width) + start_x;
-            size_t tileIdx = (c * tileChannelArea) + (r * tile_size);
-
-            std::memcpy(&destRgb[tileIdx], &srcRgb[globalIdx], valid_w * sizeof(float));
-        }
-    }
-
-    // Single-channel mask extraction
-    for (int r = 0; r < valid_h; ++r)
-    {
-        size_t globalIdx = ((start_y + r) * scene.width) + start_x;
-        size_t tileIdx = r * tile_size;
-
-        std::memcpy(&destMask[tileIdx], &srcMask[globalIdx], valid_w * sizeof(uint8_t));
-    }
-
-    return request;
+    return payload;
 }

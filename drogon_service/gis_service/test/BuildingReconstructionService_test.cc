@@ -72,12 +72,15 @@ TEST(BuildingReconstructionServiceTest, ReconstructsBuildingFromSemanticMaskToPh
     ASSERT_EQ(collection.buildings.size(), 1U);
     const BuildingInstance& building = collection.buildings.front();
     EXPECT_EQ(building.buildingId, 1U);
-    EXPECT_EQ(building.baseModel, BaseElevationModel::FLAT);
+    EXPECT_EQ(building.baseModel, BaseElevationModel::PER_VERTEX);
     EXPECT_FLOAT_EQ(building.representativeBaseElevation, 100.0F);
+    EXPECT_EQ(
+        building.baseElevationPerVertex.size(),
+        building.projectedFootprint.outerRing.size());
     EXPECT_FLOAT_EQ(building.heightAboveGround, 12.0F);
     EXPECT_FLOAT_EQ(building.roofElevation, 112.0F);
     EXPECT_GT(building.footprintAreaSquareMetres, 0.0F);
-    EXPECT_NEAR(building.semanticConfidence, 0.9F, 1.0e-5F);
+    EXPECT_NEAR(building.semanticConfidence, 0.95F, 1.0e-5F);
     EXPECT_GT(building.heightConfidence, 0.0F);
     EXPECT_GE(building.pixelFootprint.outerRing.size(), 4U);
     EXPECT_EQ(

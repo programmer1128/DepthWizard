@@ -105,60 +105,112 @@ static void validatePreprocessing(const SceneInput& scene,
      }
 }
 
-// The tiling service must return full-resolution metric nDSM, confidence,
-// validity, and six semantic-logit planes on exactly the same pixel grid.
-static void validateInference(const InferenceBundle& inference,
-                              int width,
-                              int height)
+// Model A returns a full-resolution metric nDSM, its own confidence and its
+// own validity mask. These values must never be confused with Model B output.
+static void validateNdsmInference(const NdsmInferenceBundle& inference,
+                                  int width,
+                                  int height)
 {
-     requireGridShape(inference.globalNdsm, width, height, "nDSM");
+     requireGridShape(inference.globalMetricNdsm, width, height, "nDSM");
      requireGridShape(inference.globalNdsmConfidence, width, height,
-                     "AI confidence");
-     requireGridShape(inference.globalValidMask, width, height, "AI valid mask");
+                     "nDSM confidence");
+     requireGridShape(inference.globalValidMask, width, height,
+                     "nDSM valid mask");
+}
+
+// Model B independently returns six CHW logit planes, semantic confidence and
+// a semantic validity mask on the source-image grid.
+static void validateSemanticInference(const SemanticInferenceBundle& inference,
+                                      int width,
+                                      int height)
+{
+     if (inference.semanticSchemaId != DEPTHWIZARD_SEMANTIC_SCHEMA_ID)
+     {
+         throw std::runtime_error("PipelineService: incompatible semantic schema");
+     }
+
+     requireGridShape(inference.globalConfidence, width, height,
+                     "semantic confidence");
+     requireGridShape(inference.globalValidMask, width, height,
+                     "semantic valid mask");
 
      const SemanticLogits& logits = inference.globalSemanticLogits;
-     
      if (logits.classCount != 6 || logits.layout != TensorLayout::CHW)
      {
          throw std::runtime_error("PipelineService: incompatible semantic contract");
      }
 
-     requireGridShape(logits.unknownLogits, width, height, "unknown logits");
+     requireGridShape(logits.otherLogits, width, height, "other logits");
      requireGridShape(logits.groundLogits, width, height, "ground logits");
+     requireGridShape(logits.lowVegetationLogits, width, height,
+                     "low vegetation logits");
      requireGridShape(logits.buildingLogits, width, height, "building logits");
      requireGridShape(logits.roadLogits, width, height, "road logits");
-     requireGridShape(logits.vegetationLogits, width, height, "vegetation logits");
      requireGridShape(logits.waterLogits, width, height, "water logits");
 }
 
-// Invalid optical pixels must remain invalid even if a model tile predicts
-// values there. The semantic and surface services consume this final mask.
-static void applyPreprocessingMask(InferenceBundle& inference,
+static void applyPreprocessingMask(NdsmInferenceBundle& inference,
                                    const ImageQualityResult& quality)
 {
-     const size_t pixels = inference.globalNdsm.data.size();
- 
+     const size_t pixels = inference.globalMetricNdsm.data.size();
+
      for (size_t i = 0; i < pixels; ++i)
      {
          if (inference.globalValidMask.data[i] == 0 ||
              quality.validPixelMask.data[i] == 0)
          {
              inference.globalValidMask.data[i] = 0;
-             inference.globalNdsm.data[i] =
+             inference.globalMetricNdsm.data[i] =
                  std::numeric_limits<float>::quiet_NaN();
              inference.globalNdsmConfidence.data[i] = 0.0f;
              continue;
          }
 
-         const float height = inference.globalNdsm.data[i];
+         const float height = inference.globalMetricNdsm.data[i];
          const float confidence = inference.globalNdsmConfidence.data[i];
-         
          if (!std::isfinite(height) || !std::isfinite(confidence) ||
-            confidence < 0.0f || confidence > 1.0f)
+             confidence < 0.0f || confidence > 1.0f)
          {
-             throw std::runtime_error("PipelineService: invalid AI output values");
+             throw std::runtime_error("PipelineService: invalid nDSM output values");
          }
-    }
+     }
+}
+
+static void applyPreprocessingMask(SemanticInferenceBundle& inference,
+                                   const ImageQualityResult& quality)
+{
+     SemanticLogits& logits = inference.globalSemanticLogits;
+     const size_t pixels = inference.globalValidMask.data.size();
+
+     for (size_t i = 0; i < pixels; ++i)
+     {
+         if (inference.globalValidMask.data[i] == 0 ||
+             quality.validPixelMask.data[i] == 0)
+         {
+             inference.globalValidMask.data[i] = 0;
+             inference.globalConfidence.data[i] = 0.0f;
+             logits.otherLogits.data[i] = 0.0f;
+             logits.groundLogits.data[i] = 0.0f;
+             logits.lowVegetationLogits.data[i] = 0.0f;
+             logits.buildingLogits.data[i] = 0.0f;
+             logits.roadLogits.data[i] = 0.0f;
+             logits.waterLogits.data[i] = 0.0f;
+             continue;
+         }
+
+         const float confidence = inference.globalConfidence.data[i];
+         if (!std::isfinite(confidence) || confidence < 0.0f || confidence > 1.0f ||
+             !std::isfinite(logits.otherLogits.data[i]) ||
+             !std::isfinite(logits.groundLogits.data[i]) ||
+             !std::isfinite(logits.lowVegetationLogits.data[i]) ||
+             !std::isfinite(logits.buildingLogits.data[i]) ||
+             !std::isfinite(logits.roadLogits.data[i]) ||
+             !std::isfinite(logits.waterLogits.data[i]))
+         {
+             throw std::runtime_error(
+                 "PipelineService: invalid semantic output values");
+         }
+     }
 }
 
 // GLB publication remains on the request path: the frontend must receive a
@@ -208,11 +260,14 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          ImageQualityResult quality = ImagePreprocessingService::process(scene);
          validatePreprocessing(scene, quality);
 
-         // 3. Run tiled model inference and stitch metric nDSM plus semantics.
-         InferenceBundle inference =
-             co_await TilingService::generateStitchedMetricInference(scene, quality);
-         validateInference(inference, scene.width, scene.height);
-         applyPreprocessingMask(inference, quality);
+         // 3. Build one shared tile plan, execute the two independent models,
+         //    and stitch each branch using its own validity and confidence.
+         DualModelInferenceBundle inference =
+             co_await TilingService::generateStitchedInference(scene, quality);
+         validateNdsmInference(inference.ndsm, scene.width, scene.height);
+         validateSemanticInference(inference.semantics, scene.width, scene.height);
+         applyPreprocessingMask(inference.ndsm, quality);
+         applyPreprocessingMask(inference.semantics, quality);
 
          // 4. Fetch and align the low-resolution DEM. This supplies absolute
          //    ground elevation; the AI nDSM supplies above-ground height.
@@ -226,15 +281,17 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          // 5. Decode semantic classes, locate trustworthy ground pixels, and
          //    remove any residual ground bias from the predicted metric nDSM.
          SemanticScene semantics = SemanticPostProcessor::buildScene(
-             inference.globalSemanticLogits,
-             inference.globalNdsmConfidence,
-             inference.globalValidMask);
+             inference.semantics.globalSemanticLogits,
+             inference.semantics.globalConfidence,
+             inference.semantics.globalValidMask);
         
          GroundMask ground = GroundSurfaceService::buildGroundMask(
             semantics, quality, reference);
      
         NdsmCorrectionResult correction = NdsmGroundBiasCorrector::correct(
-            inference.globalNdsm, ground, inference.globalNdsmConfidence);
+            inference.ndsm.globalMetricNdsm,
+            ground,
+            inference.ndsm.globalNdsmConfidence);
 
          // 6. Fuse terrain and corrected above-ground height into metric DSM.
          GeoreferencedSurfaceBundle surface =
@@ -253,9 +310,30 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          //    then assemble terrain, roofs, and walls into one Draco GLB.
          BuildingCollection buildings = BuildingReconstructionService::reconstruct(
              semantics, surface, metadata);
+
+         LOG_INFO << "PipelineService: reconstruction summary for " << jobId
+                  << "; semantic_candidates=" << buildings.semanticCandidateCount
+                  << "; recovered_candidate_pixels="
+                  << buildings.recoveredCandidatePixelCount
+                  << "; component_rejected=" << buildings.componentRejectedCount
+                  << "; vectorization_rejected="
+                  << buildings.vectorizationRejectedCount
+                  << "; physics_rejected=" << buildings.physicsRejectedCount
+                  << "; accepted_buildings=" << buildings.buildings.size();
          
          GlbBuildResult glb = SceneMeshService::generateGlb(
             scene, surface, buildings, metadata);
+
+         LOG_INFO << "PipelineService: mesh summary for " << jobId
+                  << "; terrain_triangles=" << glb.terrainTriangleCount
+                  << "; roof_triangles=" << glb.roofTriangleCount
+                  << "; wall_triangles=" << glb.wallTriangleCount
+                  << "; glb_bytes=" << glb.compressedGlbByteBuffer.size();
+
+         for (const std::string& warning : glb.geometryWarnings)
+         {
+             LOG_WARN << "PipelineService: " << jobId << ": " << warning;
+         }
 
          // 8. Upload the finished GLB before replying to the frontend.
          std::string glbUrl = uploadGlb(jobId, glb);

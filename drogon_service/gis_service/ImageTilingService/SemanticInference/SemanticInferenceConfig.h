@@ -29,7 +29,8 @@ public:
     std::vector<std::string> acceptedVersions{"1.0"};
     uint32_t expectedProtocolVersion{1};
     uint32_t expectedTileSize{518};
-    uint32_t expectedClassCount{6}; // Ground, Building, Road, Vegetation, Water, Unknown
+    // Deployed ONNX order: other, ground, low vegetation, building, water, road.
+    uint32_t expectedClassCount{6};
 
     // Stitching Configuration
     bool hannWindowEnabled{true};

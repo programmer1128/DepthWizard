@@ -190,6 +190,32 @@ add_depthwizard_grid_test(
     ../SurfaceFusion/SurfaceFusionService.cc
 )
 
+add_executable(
+    dual_model_stitchers_test
+    DualModelStitchers_test.cc
+    ../ImageTilingService/OutputStitching/NdsmOutputStitcher.cc
+    ../ImageTilingService/OutputStitching/SemanticOutputStitcher.cc
+    ../ImageTilingService/Tiling/TileDispatcher.cc
+    ../ImageTilingService/InferenceProtocol/InferenceClient.cc
+    ../SemanticContext/SemanticPostProcessor.cc
+)
+
+configure_depthwizard_test(dual_model_stitchers_test)
+
+target_link_libraries(
+    dual_model_stitchers_test
+    PRIVATE
+    GTest::gtest_main
+    Drogon::Drogon
+    OpenMP::OpenMP_CXX
+)
+
+gtest_discover_tests(
+    dual_model_stitchers_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    DISCOVERY_MODE PRE_TEST
+)
+
 add_depthwizard_grid_test(
     image_preprocessing_service_test
     ImagePreprocessingService_test.cc
@@ -277,4 +303,37 @@ add_building_reconstruction_test(
     ../BuildingReconstruction/BuildingInstanceExtractor.cc
     ../BuildingReconstruction/FootprintVectorizer.cc
     ../BuildingReconstruction/BuildingHeightEstimator.cc
+)
+
+add_executable(
+    mesh_pipeline_test
+    MeshPipeline_test.cc
+    ../CompressionLib/DracoCompressor.cc
+    ../FileGenerators/GltfPackager.cc
+    ../MeshMapping/BuildingMesher.cc
+    ../MeshMapping/LocalFrameTransformers.cc
+    ../MeshMapping/TerrainMesher.cc
+    ../MeshMapping/TerrainSurfaceComposer.cc
+)
+
+configure_depthwizard_test(mesh_pipeline_test)
+
+target_include_directories(
+    mesh_pipeline_test
+    PRIVATE
+    ${OpenCV_INCLUDE_DIRS}
+)
+
+target_link_libraries(
+    mesh_pipeline_test
+    PRIVATE
+    GTest::gtest_main
+    draco
+    ${OpenCV_LIBS}
+)
+
+gtest_discover_tests(
+    mesh_pipeline_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    DISCOVERY_MODE PRE_TEST
 )

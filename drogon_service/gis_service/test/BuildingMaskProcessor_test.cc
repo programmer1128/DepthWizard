@@ -23,6 +23,10 @@ TEST(BuildingMaskProcessorTest, ConfigurationValidatorRejectsInvalidValues)
     EXPECT_FALSE(config.validate());
     config.buildingProbabilityThreshold = 0.5F;
 
+    config.maxFootprintElevationDeltaMetres = 0.0F;
+    EXPECT_FALSE(config.validate());
+    config.maxFootprintElevationDeltaMetres = 8.0F;
+
     config.openingRadiusMetres =
         std::numeric_limits<float>::quiet_NaN();
     EXPECT_FALSE(config.validate());
@@ -39,6 +43,8 @@ TEST(BuildingMaskProcessorTest, ThresholdsMock4x4ProbabilityAndAppliesValidityMa
     RasterGrid<uint8_t> validMask =
         makeConstantGrid<uint8_t>(4, 4, uint8_t{1});
     validMask.data[3] = 0;
+    semantics.finalClassMap =
+        makeConstantGrid<SemanticClass>(4, 4, SemanticClass::BUILDING);
 
     BuildingReconstructionConfig config = noMorphologyConfig();
     config.buildingProbabilityThreshold = 0.5F;
@@ -72,6 +78,7 @@ TEST(BuildingMaskProcessorTest, OpeningRemovesIsolatedBuildingPixel)
 {
     SemanticScene semantics = makeSemanticScene(7, 7);
     semantics.buildingProbability.data[3 * 7 + 3] = 1.0F;
+    semantics.finalClassMap.data[3 * 7 + 3] = SemanticClass::BUILDING;
     const RasterGrid<uint8_t> validMask =
         makeConstantGrid<uint8_t>(7, 7, uint8_t{1});
 
@@ -97,6 +104,14 @@ TEST(BuildingMaskProcessorTest, RejectsSmallComponentsUsingPhysicalArea)
     SemanticScene semantics = makeSemanticScene(8, 8);
     semantics.buildingProbability.data[1 * 8 + 1] = 1.0F;
     fillRectangle(semantics.buildingProbability, 4, 4, 6, 6, 1.0F);
+    semantics.finalClassMap.data[1 * 8 + 1] = SemanticClass::BUILDING;
+    fillRectangle(
+        semantics.finalClassMap,
+        4,
+        4,
+        6,
+        6,
+        SemanticClass::BUILDING);
     const RasterGrid<uint8_t> validMask =
         makeConstantGrid<uint8_t>(8, 8, uint8_t{1});
 
@@ -154,6 +169,108 @@ TEST(BuildingMaskProcessorTest, RejectsInvalidProbabilityWithoutProcessing)
 
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(result.errorMessage.empty());
+}
+
+TEST(BuildingMaskProcessorTest, RejectsProbabilityWhenFinalClassIsNotBuilding)
+{
+    SemanticScene semantics = makeSemanticScene(4, 4, SemanticClass::GROUND);
+    semantics.buildingProbability.data.assign(16, 0.99F);
+    semantics.semanticConfidence.data.assign(16, 0.99F);
+    const RasterGrid<uint8_t> validMask =
+        makeConstantGrid<uint8_t>(4, 4, uint8_t{1});
+
+    BuildingReconstructionConfig config = noMorphologyConfig();
+    const BuildingMaskResult result = BuildingMaskProcessor::createCleanMask(
+        semantics,
+        validMask,
+        makeProjectedMetadata(4, 4),
+        config);
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_EQ(
+        std::count(result.cleanMask.data.begin(), result.cleanMask.data.end(), uint8_t{1}),
+        0);
+}
+
+TEST(BuildingMaskProcessorTest, RejectsLowConfidenceBuildingDecision)
+{
+    SemanticScene semantics =
+        makeSemanticScene(4, 4, SemanticClass::BUILDING);
+    semantics.buildingProbability.data.assign(16, 0.99F);
+    semantics.semanticConfidence.data.assign(16, 0.20F);
+    const RasterGrid<uint8_t> validMask =
+        makeConstantGrid<uint8_t>(4, 4, uint8_t{1});
+
+    BuildingReconstructionConfig config = noMorphologyConfig();
+    config.minBuildingSemanticConfidence = 0.60F;
+    const BuildingMaskResult result = BuildingMaskProcessor::createCleanMask(
+        semantics,
+        validMask,
+        makeProjectedMetadata(4, 4),
+        config);
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_EQ(
+        std::count(result.cleanMask.data.begin(), result.cleanMask.data.end(), uint8_t{1}),
+        0);
+}
+
+TEST(BuildingMaskProcessorTest, RecoversUnknownRoofUsingProbabilityAndMetricNdsm)
+{
+    SemanticScene semantics =
+        makeSemanticScene(6, 6, SemanticClass::UNKNOWN);
+    semantics.buildingProbability.data.assign(36, 0.40F);
+    semantics.semanticConfidence.data.assign(36, 0.0F);
+    const RasterGrid<float> ndsm = makeConstantGrid(6, 6, 8.0F);
+    const RasterGrid<uint8_t> validMask =
+        makeConstantGrid<uint8_t>(6, 6, uint8_t{1});
+
+    BuildingReconstructionConfig config = noMorphologyConfig();
+    config.buildingProbabilityThreshold = 0.50F;
+    config.buildingRecoveryProbabilityThreshold = 0.35F;
+    config.minRecoveryNdsmHeightMetres = 2.0F;
+
+    const BuildingMaskResult result = BuildingMaskProcessor::createCleanMask(
+        semantics,
+        ndsm,
+        validMask,
+        makeProjectedMetadata(6, 6),
+        config);
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_EQ(result.recoveredCandidatePixelCount, 36);
+    EXPECT_EQ(
+        std::count(
+            result.cleanMask.data.begin(),
+            result.cleanMask.data.end(),
+            uint8_t{1}),
+        36);
+}
+
+TEST(BuildingMaskProcessorTest, DoesNotRecoverKnownVegetationAsBuilding)
+{
+    SemanticScene semantics =
+        makeSemanticScene(6, 6, SemanticClass::VEGETATION);
+    semantics.buildingProbability.data.assign(36, 0.40F);
+    const RasterGrid<float> ndsm = makeConstantGrid(6, 6, 8.0F);
+    const RasterGrid<uint8_t> validMask =
+        makeConstantGrid<uint8_t>(6, 6, uint8_t{1});
+
+    const BuildingMaskResult result = BuildingMaskProcessor::createCleanMask(
+        semantics,
+        ndsm,
+        validMask,
+        makeProjectedMetadata(6, 6),
+        noMorphologyConfig());
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_EQ(result.recoveredCandidatePixelCount, 0);
+    EXPECT_EQ(
+        std::count(
+            result.cleanMask.data.begin(),
+            result.cleanMask.data.end(),
+            uint8_t{1}),
+        0);
 }
 
 } // namespace

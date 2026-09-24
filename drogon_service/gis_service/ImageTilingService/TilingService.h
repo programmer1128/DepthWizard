@@ -5,10 +5,8 @@
 #include <drogon/drogon.h>
 #include <drogon/utils/coroutine.h>
 #include "../structures/IngestionStructs.h"
-#include "../structures/InferenceStructs.h"
+#include "../structures/DualModelInferenceTypes.h"
 #include "Tiling/TileDispatcher.h"
-#include "InferenceProtocol/InferenceClient.h"
-#include "OutputStitching/MetricOutputStitcher.h"
 
 class TilingService 
 {
@@ -19,7 +17,7 @@ class TilingService
     // inputs: scene & quality metrics
     // outputs: TiledInferencePayload - collection of raw AI tiles to be stitched
 
-    static drogon::Task<InferenceBundle> generateStitchedMetricInference(
+    static drogon::Task<DualModelInferenceBundle> generateStitchedInference(
         const SceneInput& scene, 
         const ImageQualityResult& quality);
 };

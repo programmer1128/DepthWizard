@@ -68,6 +68,7 @@ TEST(GroundSurfaceServiceTest, AppliesExactMultiCriteriaRulesToMock4x4Scene)
 
     scene.groundProbability.data[7] = 0.80F;
     scene.semanticConfidence.data[7] = 0.40F;
+    quality.shadowMask.data[7] = 1;
 
     const GroundMask result = timedCall(
         "GroundSurfaceService::buildGroundMask 4x4",
@@ -77,14 +78,14 @@ TEST(GroundSurfaceServiceTest, AppliesExactMultiCriteriaRulesToMock4x4Scene)
         result.isValidGround,
         4,
         4,
-        {1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0});
+        {1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
     expectGridNear(
         result.weights,
         4,
         4,
-        {0.9F, 0.8F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.4F,
+        {0.9F, 0.8F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F,
          0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F});
-    EXPECT_EQ(result.validGroundCount, 3U);
+    EXPECT_EQ(result.validGroundCount, 2U);
 }
 
 TEST(GroundSurfaceServiceTest, RejectsMismatchedInputGridShapes)

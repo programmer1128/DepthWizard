@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <stdexcept>
 #include <omp.h> // for multi-threading across all CPU cores
+#include <array>
+#include <iostream>
 
 SemanticScene SemanticPostProcessor::buildScene(
     const SemanticLogits& logits,
@@ -24,14 +26,14 @@ SemanticScene SemanticPostProcessor::buildScene(
             "SemanticPostProcessor: Expected CHW semantic-logit layout.");
     }
 
-    if (!logits.groundLogits.isValid())
+    if (!logits.otherLogits.isValid())
     {
         throw std::invalid_argument(
-            "SemanticPostProcessor: Invalid ground-logit grid.");
+            "SemanticPostProcessor: Invalid other-logit grid.");
     }
 
-    const int w = logits.groundLogits.width;
-    const int h = logits.groundLogits.height;
+    const int w = logits.otherLogits.width;
+    const int h = logits.otherLogits.height;
 
     const auto matchesReferenceShape =
         [w, h](const auto& grid)
@@ -41,11 +43,11 @@ SemanticScene SemanticPostProcessor::buildScene(
                 grid.height == h;
         };
 
-    if (!matchesReferenceShape(logits.buildingLogits) ||
+    if (!matchesReferenceShape(logits.groundLogits) ||
+        !matchesReferenceShape(logits.buildingLogits) ||
+        !matchesReferenceShape(logits.lowVegetationLogits) ||
         !matchesReferenceShape(logits.roadLogits) ||
-        !matchesReferenceShape(logits.vegetationLogits) ||
         !matchesReferenceShape(logits.waterLogits) ||
-        !matchesReferenceShape(logits.unknownLogits) ||
         !matchesReferenceShape(confidence) ||
         !matchesReferenceShape(validMask))
     {
@@ -96,8 +98,11 @@ SemanticScene SemanticPostProcessor::buildScene(
     {
         if (maskPtr[i] == 1) 
         {
-            // multiply the two percentages (eg: 90% soft-max * 90% model = 81% total confidence)
-            semConfPtr[i] = semConfPtr[i] * modConfPtr[i];
+            // The current worker confidence is the maximum softmax
+            // probability calculated from these same logits. Multiplication
+            // would square one observation and incorrectly reject otherwise
+            // reliable building pixels. Use the conservative minimum instead.
+            semConfPtr[i] = std::min(semConfPtr[i], modConfPtr[i]);
         } 
         else 
         {
@@ -106,6 +111,33 @@ SemanticScene SemanticPostProcessor::buildScene(
             scene.finalClassMap.data[i] = SemanticClass::UNKNOWN;
         }
     }
+
+    std::array<std::size_t, 6> classCounts{};
+    std::size_t invalidCount = 0;
+    for (std::size_t i = 0; i < totalPixels; ++i)
+    {
+        if (maskPtr[i] == 0)
+        {
+            ++invalidCount;
+            continue;
+        }
+
+        const std::size_t classIndex =
+            static_cast<std::size_t>(scene.finalClassMap.data[i]);
+        if (classIndex < classCounts.size())
+        {
+            ++classCounts[classIndex];
+        }
+    }
+
+    std::clog << "[SemanticPostProcessor] Class pixels:"
+              << " unknown=" << classCounts[static_cast<std::size_t>(SemanticClass::UNKNOWN)]
+              << " ground=" << classCounts[static_cast<std::size_t>(SemanticClass::GROUND)]
+              << " building=" << classCounts[static_cast<std::size_t>(SemanticClass::BUILDING)]
+              << " road=" << classCounts[static_cast<std::size_t>(SemanticClass::ROAD)]
+              << " vegetation=" << classCounts[static_cast<std::size_t>(SemanticClass::VEGETATION)]
+              << " water=" << classCounts[static_cast<std::size_t>(SemanticClass::WATER)]
+              << " invalid=" << invalidCount << '\n';
 
     return scene;
 }
@@ -117,11 +149,11 @@ void SemanticPostProcessor::applySoftmaxAndThresholding(
     size_t totalPixels)
 {
     // extract raw pointers for the inputs (un-normalized scores)
-    const float* in_unk = raw.unknownLogits.data.data();
+    const float* in_other = raw.otherLogits.data.data();
     const float* in_gnd = raw.groundLogits.data.data();
+    const float* in_low_veg = raw.lowVegetationLogits.data.data();
     const float* in_bldg = raw.buildingLogits.data.data();
     const float* in_road = raw.roadLogits.data.data();
-    const float* in_veg = raw.vegetationLogits.data.data();
     const float* in_wat = raw.waterLogits.data.data();
 
     // extract raw pointers for our outputs (the probabilities 0.0 to 1.0)
@@ -140,14 +172,18 @@ void SemanticPostProcessor::applySoftmaxAndThresholding(
     // the winning class must beat the runner-up by at least 15% probability
     // if it doesnt, the AI is confused and we mark the pixel as UNKNOWN to be safe
     const float CONFIDENCE_MARGIN = 0.15f;
+    const float MIN_CLASS_PROBABILITY = 0.50f;
 
     // multi-thread across all pixels
     #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < totalPixels; ++i) 
     {
         // gather the 6 raw scores for this specific pixel
+        // Exact deployed ONNX order. The checkpoint retained original GAMUS
+        // labels 0..5; it did not remove OTHER or include TREE.
         float scores[6] = {
-            in_unk[i], in_gnd[i], in_bldg[i], in_road[i], in_veg[i], in_wat[i]
+            in_other[i], in_gnd[i], in_low_veg[i],
+            in_bldg[i], in_wat[i], in_road[i]
         };
 
         // Softmax Step 1: find the highest score (for numerical stability to prevent infinity errors)
@@ -169,39 +205,52 @@ void SemanticPostProcessor::applySoftmaxAndThresholding(
 
         // Softmax Step 3: divide by sum to get exact percentages
         float probs[6];
-        float highest_prob = -1.0f;
-        float second_highest_prob = -1.0f;
-        int winning_index = 0;
-
         for (int c = 0; c < 6; ++c) 
         {
             probs[c] = exps[c] / sum_exp;
-            
-            // track the winner and the runner-up
-            if (probs[c] > highest_prob) 
-            {
-                second_highest_prob = highest_prob;
-                highest_prob = probs[c];
-                winning_index = c;
-            } 
-            else if (probs[c] > second_highest_prob) 
-            {
-                second_highest_prob = probs[c];
-            }
         }
 
-        // save the probabilities to the final output maps
         out_unk[i] = probs[0];
         out_gnd[i] = probs[1];
-        out_bldg[i] = probs[2];
-        out_road[i] = probs[3];
-        out_veg[i] = probs[4];
-        out_wat[i] = probs[5];
+        out_veg[i] = probs[2];
+        out_bldg[i] = probs[3];
+        out_wat[i] = probs[4];
+        out_road[i] = probs[5];
+
+        const float classProbabilities[6] = {
+            0.0f,
+            out_gnd[i],
+            out_bldg[i],
+            out_road[i],
+            out_veg[i],
+            out_wat[i]
+        };
+
+        float highest_prob = -1.0f;
+        float second_highest_prob = -1.0f;
+        int winning_index = static_cast<int>(SemanticClass::UNKNOWN);
+        for (int semanticIndex = static_cast<int>(SemanticClass::UNKNOWN);
+             semanticIndex <= static_cast<int>(SemanticClass::WATER);
+             ++semanticIndex)
+        {
+            const float probability = classProbabilities[semanticIndex];
+            if (probability > highest_prob)
+            {
+                second_highest_prob = highest_prob;
+                highest_prob = probability;
+                winning_index = semanticIndex;
+            }
+            else if (probability > second_highest_prob)
+            {
+                second_highest_prob = probability;
+            }
+        }
 
         
         // Entropy & Margin Thresholding Logic
         // if the winner didnt beat the runner-up by our safety margin -> force it to UNKNOWN
-        if ((highest_prob - second_highest_prob) < CONFIDENCE_MARGIN) 
+        if (highest_prob < MIN_CLASS_PROBABILITY ||
+            (highest_prob - second_highest_prob) < CONFIDENCE_MARGIN)
         {
             out_class[i] = SemanticClass::UNKNOWN;
             out_conf[i] = 0.0f; // zero confidence because its a guessing game

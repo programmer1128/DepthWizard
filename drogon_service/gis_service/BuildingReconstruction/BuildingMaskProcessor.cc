@@ -3,8 +3,11 @@
 #include <cmath>
 #include <algorithm>
 
-BuildingMaskResult BuildingMaskProcessor::createCleanMask(
+namespace
+{
+BuildingMaskResult createCleanMaskImpl(
      const SemanticScene& semantics,
+     const RasterGrid<float>* metricNdsm,
      const RasterGrid<uint8_t>& validMask,
      const SpatialMetadata& metadata,
      const BuildingReconstructionConfig& config)
@@ -23,10 +26,21 @@ BuildingMaskResult BuildingMaskProcessor::createCleanMask(
      int height = metadata.height;
 
      //strict Input/Invariant Validation
-     if (width <= 0 || height <= 0 ||semantics.buildingProbability.width != width || 
-         semantics.buildingProbability.height != height ||validMask.width != width || 
-         validMask.height != height ||!semantics.buildingProbability.isValid() || 
-         !validMask.isValid()) 
+     if (width <= 0 || height <= 0 ||
+         semantics.buildingProbability.width != width ||
+         semantics.buildingProbability.height != height ||
+         semantics.semanticConfidence.width != width ||
+         semantics.semanticConfidence.height != height ||
+         semantics.finalClassMap.width != width ||
+         semantics.finalClassMap.height != height ||
+         validMask.width != width || validMask.height != height ||
+         !semantics.buildingProbability.isValid() ||
+         !semantics.semanticConfidence.isValid() ||
+         !semantics.finalClassMap.isValid() ||
+         !validMask.isValid() ||
+         (metricNdsm != nullptr &&
+          (!metricNdsm->isValid() ||
+           metricNdsm->width != width || metricNdsm->height != height)))
      {
         
          result.errorMessage = "Grid dimension mismatch or invalid memory buffers.";
@@ -39,6 +53,16 @@ BuildingMaskResult BuildingMaskProcessor::createCleanMask(
          if (!std::isfinite(p) || p < 0.0f || p > 1.0f) 
          {
              result.errorMessage = "Building probabilities contain non-finite values or exceed [0,1].";
+             return result;
+         }
+     }
+
+     for (float confidence : semantics.semanticConfidence.data)
+     {
+         if (!std::isfinite(confidence) || confidence < 0.0f || confidence > 1.0f)
+         {
+             result.errorMessage =
+                 "Semantic confidence contains non-finite values or exceeds [0,1].";
              return result;
          }
      }
@@ -61,11 +85,44 @@ BuildingMaskResult BuildingMaskProcessor::createCleanMask(
      }
 
      //OpenCV Matrices copied from C++ vectors
-     cv::Mat probMat(height, width, CV_32FC1, const_cast<float*>(semantics.buildingProbability.data.data()));
      cv::Mat validMat(height, width, CV_8UC1, const_cast<uint8_t*>(validMask.data.data()));
 
-     //Probability Thresholding
-     cv::Mat binaryMask = (probMat >= config.buildingProbabilityThreshold);
+     // Primary candidates satisfy the strict semantic decision. Recovery
+     // candidates are permitted only when the class is UNKNOWN (not another
+     // positively identified class), the building probability remains
+     // credible, and the metric nDSM confirms an above-ground object.
+     const std::size_t totalPixels =
+         static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+     std::vector<uint8_t> candidateBytes(totalPixels, 0);
+     for (std::size_t index = 0; index < totalPixels; ++index)
+     {
+         const bool isBuilding =
+             semantics.finalClassMap.data[index] == SemanticClass::BUILDING;
+         const bool probabilityAccepted =
+             semantics.buildingProbability.data[index] >=
+             config.buildingProbabilityThreshold;
+         const bool confidenceAccepted =
+             semantics.semanticConfidence.data[index] >=
+             config.minBuildingSemanticConfidence;
+
+         const bool recoveredBuilding =
+             metricNdsm != nullptr &&
+             semantics.finalClassMap.data[index] == SemanticClass::UNKNOWN &&
+             semantics.buildingProbability.data[index] >=
+                 config.buildingRecoveryProbabilityThreshold &&
+             std::isfinite(metricNdsm->data[index]) &&
+             metricNdsm->data[index] >= config.minRecoveryNdsmHeightMetres;
+
+         if (recoveredBuilding)
+         {
+             ++result.recoveredCandidatePixelCount;
+         }
+
+         candidateBytes[index] = static_cast<uint8_t>(
+             ((isBuilding && probabilityAccepted && confidenceAccepted) ||
+              recoveredBuilding) ? 255 : 0);
+     }
+     cv::Mat binaryMask(height, width, CV_8UC1, candidateBytes.data());
 
      //Explicit Valid Mask Normalization (Guarantees 0/255)
      cv::Mat validMat255;
@@ -134,7 +191,6 @@ BuildingMaskResult BuildingMaskProcessor::createCleanMask(
      result.cleanMask.height = height;
     
      // Cast to size_t to prevent overflow on massive grids
-     std::size_t totalPixels = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
      result.cleanMask.data.resize(totalPixels, 0);
 
      // Iterate using row pointers to guarantee safety even if memory is not perfectly continuous
@@ -150,4 +206,26 @@ BuildingMaskResult BuildingMaskProcessor::createCleanMask(
 
      result.success = true;
      return result;
+}
+} // namespace
+
+BuildingMaskResult BuildingMaskProcessor::createCleanMask(
+     const SemanticScene& semantics,
+     const RasterGrid<uint8_t>& validMask,
+     const SpatialMetadata& metadata,
+     const BuildingReconstructionConfig& config)
+{
+     return createCleanMaskImpl(
+         semantics, nullptr, validMask, metadata, config);
+}
+
+BuildingMaskResult BuildingMaskProcessor::createCleanMask(
+     const SemanticScene& semantics,
+     const RasterGrid<float>& metricNdsm,
+     const RasterGrid<uint8_t>& validMask,
+     const SpatialMetadata& metadata,
+     const BuildingReconstructionConfig& config)
+{
+     return createCleanMaskImpl(
+         semantics, &metricNdsm, validMask, metadata, config);
 }

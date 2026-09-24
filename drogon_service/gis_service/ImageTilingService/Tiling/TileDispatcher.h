@@ -19,6 +19,15 @@ class TileDispatcher
 {
     public:
 
+    // Builds the single authoritative tile batch consumed by both inference
+    // branches. Reusing these requests guarantees identical IDs, placement,
+    // padding and preprocessing masks for nDSM and semantic predictions.
+    static std::vector<std::shared_ptr<TileRequest>> buildTileRequests(
+        const SceneInput& scene,
+        const ImageQualityResult& quality,
+        int tileSize,
+        int stride);
+
     // main orchestrator that manages the sliding window and multi-threading
     // inputs: SceneInput and ImageQualityResult -> complete image
     // outputs: task that returns the fully populated TiledInferencePayload

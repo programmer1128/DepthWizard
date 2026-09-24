@@ -19,12 +19,12 @@ SemanticLogits makeLogits(
     const std::array<float, 6>& values)
 {
     SemanticLogits logits;
-    logits.unknownLogits = makeConstantGrid(width, height, values[0]);
+    logits.otherLogits = makeConstantGrid(width, height, values[0]);
     logits.groundLogits = makeConstantGrid(width, height, values[1]);
-    logits.buildingLogits = makeConstantGrid(width, height, values[2]);
-    logits.roadLogits = makeConstantGrid(width, height, values[3]);
-    logits.vegetationLogits = makeConstantGrid(width, height, values[4]);
-    logits.waterLogits = makeConstantGrid(width, height, values[5]);
+    logits.lowVegetationLogits = makeConstantGrid(width, height, values[2]);
+    logits.buildingLogits = makeConstantGrid(width, height, values[3]);
+    logits.waterLogits = makeConstantGrid(width, height, values[4]);
+    logits.roadLogits = makeConstantGrid(width, height, values[5]);
     logits.classCount = 6;
     logits.layout = TensorLayout::CHW;
     return logits;
@@ -53,8 +53,10 @@ TEST(SemanticPostProcessorTest, DominantGroundLogitProducesExact4x4Probabilities
                    std::vector<float>(16, expectedGround));
     expectGridNear(scene.buildingProbability, width, height,
                    std::vector<float>(16, expectedOther));
+    expectGridNear(scene.vegetationProbability, width, height,
+                   std::vector<float>(16, expectedOther));
     expectGridNear(scene.semanticConfidence, width, height,
-                   std::vector<float>(16, expectedGround * 0.8F));
+                   std::vector<float>(16, expectedGround));
     expectGridEqual(scene.finalClassMap, width, height,
                     std::vector<SemanticClass>(16, SemanticClass::GROUND));
 
@@ -91,7 +93,7 @@ TEST(SemanticPostProcessorTest, EqualLogitsBecomeUnknownBecauseMarginIsInsuffici
 TEST(SemanticPostProcessorTest, InvalidPixelForcesUnknownAndZeroConfidence)
 {
     const SemanticLogits logits =
-        makeLogits(4, 4, {0.0F, 0.0F, 4.0F, 0.0F, 0.0F, 0.0F});
+        makeLogits(4, 4, {0.0F, 0.0F, 0.0F, 4.0F, 0.0F, 0.0F});
     const RasterGrid<float> confidence = makeConstantGrid(4, 4, 0.9F);
     RasterGrid<uint8_t> mask = makeConstantGrid<uint8_t>(4, 4, uint8_t{1});
     mask.data[5] = 0;
@@ -106,10 +108,43 @@ TEST(SemanticPostProcessorTest, InvalidPixelForcesUnknownAndZeroConfidence)
     EXPECT_GT(scene.semanticConfidence.data[6], 0.0F);
 }
 
+TEST(SemanticPostProcessorTest, MapsDeployedOnnxChannelsToBackendSuperclasses)
+{
+    // Deployed ONNX order: other, ground, low vegetation, building, water,
+    // road. The current checkpoint has no separate tree output.
+    SemanticLogits logits =
+        makeLogits(6, 1, {0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F});
+    logits.otherLogits.data[0] = 10.0F;
+    logits.groundLogits.data[1] = 10.0F;
+    logits.lowVegetationLogits.data[2] = 10.0F;
+    logits.buildingLogits.data[3] = 10.0F;
+    logits.waterLogits.data[4] = 10.0F;
+    logits.roadLogits.data[5] = 10.0F;
+
+    const RasterGrid<float> confidence = makeConstantGrid(6, 1, 1.0F);
+    const RasterGrid<uint8_t> mask =
+        makeConstantGrid<uint8_t>(6, 1, uint8_t{1});
+
+    const SemanticScene scene = SemanticPostProcessor::buildScene(
+        logits,
+        confidence,
+        mask);
+
+    EXPECT_EQ(
+        scene.finalClassMap.data,
+        (std::vector<SemanticClass>{
+            SemanticClass::UNKNOWN,
+            SemanticClass::GROUND,
+            SemanticClass::VEGETATION,
+            SemanticClass::BUILDING,
+            SemanticClass::WATER,
+            SemanticClass::ROAD}));
+}
+
 TEST(SemanticPostProcessorTest, RejectsMismatchedRasterShapeAndClassContract)
 {
     SemanticLogits logits =
-        makeLogits(4, 4, {0.0F, 2.0F, 0.0F, 0.0F, 0.0F, 0.0F});
+        makeLogits(4, 4, {2.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F});
     logits.buildingLogits.width = 3;
     logits.classCount = 5;
 

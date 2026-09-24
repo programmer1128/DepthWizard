@@ -10,16 +10,40 @@ TerrainMesh TerrainMesher::generate(
     const LocalSceneFrame& frame,
     const TerrainMeshConfig& config)
 {
+    RasterGrid<uint8_t> noAcceptedBuildings;
+    noAcceptedBuildings.width = metadata.width;
+    noAcceptedBuildings.height = metadata.height;
+    if (metadata.width > 0 && metadata.height > 0)
+    {
+        noAcceptedBuildings.data.assign(
+            static_cast<std::size_t>(metadata.width) * metadata.height,
+            uint8_t{0});
+    }
+    return generate(
+        surface, noAcceptedBuildings, metadata, frame, config);
+}
+
+TerrainMesh TerrainMesher::generate(
+    const GeoreferencedSurfaceBundle& surface,
+    const RasterGrid<uint8_t>& acceptedBuildingMask,
+    const SpatialMetadata& metadata,
+    const LocalSceneFrame& frame,
+    const TerrainMeshConfig& config)
+{
     TerrainMesh result;
     result.terrainPrimitive.topology = PrimitiveTopology::TRIANGLES;
     result.terrainPrimitive.materialRole = MaterialRole::TERRAIN_TEXTURE;
 
     int width = metadata.width;
     int height = metadata.height;
-    if (width < 2 || height < 2 || config.maxGridSize < 2 ||
-        !surface.dtm.isValid() || !surface.validMask.isValid() ||
+    if (width < 2 || height < 2 || !config.validate() ||
+        !surface.dtm.isValid() || !surface.dsm.isValid() ||
+        !surface.validMask.isValid() || !acceptedBuildingMask.isValid() ||
         surface.dtm.width != width || surface.dtm.height != height ||
-        surface.validMask.width != width || surface.validMask.height != height)
+        surface.dsm.width != width || surface.dsm.height != height ||
+        surface.validMask.width != width || surface.validMask.height != height ||
+        acceptedBuildingMask.width != width ||
+        acceptedBuildingMask.height != height)
         throw std::invalid_argument("TerrainMesher: invalid terrain dimensions or grid");
 
     //Dynamic Decimation (Stride)
@@ -54,9 +78,18 @@ TerrainMesh TerrainMesher::generate(
              int origX = std::min(x * stride, width - 1);
              int origY = std::min(y * stride, height - 1);
              
-             // Sample DTM (Bare Earth) instead of DSM
-             float elevation = surface.dtm.data[origY * width + origX];
-             bool valid = surface.validMask.data[origY * width + origX] != 0 &&
+             const std::size_t sourceIndex =
+                 static_cast<std::size_t>(origY) * width + origX;
+
+             // Keep the detailed DSM for natural terrain and vegetation, but
+             // remove each accepted building from this textured primitive.
+             // Its sharp roof and walls are emitted by BuildingMesher instead.
+             const bool useBareEarth =
+                 acceptedBuildingMask.data[sourceIndex] != 0;
+             float elevation = useBareEarth
+                 ? surface.dtm.data[sourceIndex]
+                 : surface.dsm.data[sourceIndex];
+             bool valid = surface.validMask.data[sourceIndex] != 0 &&
                           std::isfinite(elevation);
              sampledValid[static_cast<size_t>(y) * gridWidth + x] = valid;
              

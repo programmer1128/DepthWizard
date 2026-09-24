@@ -7,12 +7,14 @@
 #include "../structures/SurfaceStructs.h"
 #include "../structures/GeographicStructs.h"
 #include "../ReferenceTerrainService/ReferenceDemPreprocessor.h"
+#include "SurfaceFusionConfig.h"
 
 class SurfaceFusionService 
 {
     public:
     
-    // computes DSM = DTM + nDSM and calculates the unified master confidence
+    // Computes DSM = DTM + semantically valid nDSM and calculates unified
+    // confidence. Ground, roads and water receive zero above-ground height.
     
     // correctedNdsm: the above-ground heights after Ground Bias correction
     // reference: the prepared bare-earth DTM (Raster grids and metadata)
@@ -27,5 +29,6 @@ class SurfaceFusionService
         const ReferenceTerrainBundle& reference,
         const SemanticScene& semantics,
         const RasterGrid<float>& aiConfidence,
-        const SpatialMetadata& metadata);
+        const SpatialMetadata& metadata,
+        const SurfaceFusionConfig& config = SurfaceFusionConfig{});
 };
