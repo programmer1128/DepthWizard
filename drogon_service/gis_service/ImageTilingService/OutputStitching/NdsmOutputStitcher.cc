@@ -11,7 +11,7 @@
 NdsmInferenceBundle NdsmOutputStitcher::stitch(const NdsmTiledPayload &payload)
 {
     // failsafe to prevent segmentation faults from empty arrays
-    if (payload.tiles.empty() || payload.globalWidth <= 0 || payload.globalHeight <= 0) // struct mapping updated[cite: 15]
+    if (payload.tiles.empty() || payload.globalWidth <= 0 || payload.globalHeight <= 0)
     {
         throw std::runtime_error("NdsmOutputStitcher: Invalid or empty inference payload provided.");
     }
@@ -20,17 +20,32 @@ NdsmInferenceBundle NdsmOutputStitcher::stitch(const NdsmTiledPayload &payload)
     const int gh = payload.globalHeight; // global height
     const size_t globalPixels = static_cast<size_t>(gw) * gh;
 
-    // FIX 1 : Strict Validation Pass
+    // FIX 1 : Strict Validation Pass (Checks all arrays against expected sizes)
     for (const auto &tile : payload.tiles)
     {
-        size_t expected_size = static_cast<size_t>(tile.placement.paddedWidth) * tile.placement.paddedHeight;
-        if (tile.metricNdsm.data.size() != expected_size)
+        const int tw = tile.placement.paddedWidth;
+        const int th = tile.placement.paddedHeight;
+
+        if (tw <= 0 || th <= 0)
+            throw std::invalid_argument("NdsmOutputStitcher: Tile dimensions must be positive.");
+
+        size_t expected_size = static_cast<size_t>(tw) * th;
+        if (tile.metricNdsm.data.size() != expected_size ||
+            tile.ndsmConfidence.data.size() != expected_size ||
+            tile.validMask.data.size() != expected_size)
         {
             throw std::invalid_argument("NdsmOutputStitcher: Tile grid dimensions mismatch.");
         }
+
+        const auto &p = tile.placement;
+        if (p.validStartX < 0 || p.validStartY < 0 || p.validWidth < 0 || p.validHeight < 0 ||
+            p.validStartX + p.validWidth > tw || p.validStartY + p.validHeight > th)
+        {
+            throw std::invalid_argument("NdsmOutputStitcher: Invalid tile valid-region placement.");
+        }
     }
 
-    NdsmInferenceBundle bundle; // 3 raster grids -> nDSM, confidence, valid mask
+    NdsmInferenceBundle bundle;
 
     // lambdas to initialize the existing RasterGrid struct safely
     auto initGridFloat = [&](RasterGrid<float> &grid)
@@ -47,7 +62,7 @@ NdsmInferenceBundle NdsmOutputStitcher::stitch(const NdsmTiledPayload &payload)
         grid.data.assign(globalPixels, 0);
     };
 
-    // initialising core structural grids[cite: 15]
+    // initialising core structural grids
     initGridFloat(bundle.globalMetricNdsm);     // final blended physical height of above-ground structures in meters
     initGridFloat(bundle.globalNdsmConfidence); // normalized statistical probability of how much the model trusts its own elevation prediction -> [0.0, 1.0]
     initGridUint8(bundle.globalValidMask);      // boolean flags -> to identify whether the pixel contains clear data or clouds/deep shadows
@@ -66,7 +81,7 @@ NdsmInferenceBundle NdsmOutputStitcher::stitch(const NdsmTiledPayload &payload)
     LOG_INFO << "[NdsmOutputStitcher] Initiating Hann-blending for " << payload.tiles.size() << " structural tiles.";
 
     // accum for numerators and weights
-    for (const auto &tile : payload.tiles) // itr through input vector
+    for (const auto &tile : payload.tiles)
     {
         // dimensions
         const int tw = tile.placement.paddedWidth;
@@ -74,6 +89,12 @@ NdsmInferenceBundle NdsmOutputStitcher::stitch(const NdsmTiledPayload &payload)
         // starting pixels coordinates (top-left corner)
         const int tx = tile.placement.sourceX;
         const int ty = tile.placement.sourceY;
+
+        // Explicit valid bounds padding logic applied to structural stitcher
+        const int vStartX = tile.placement.validStartX;
+        const int vStartY = tile.placement.validStartY;
+        const int vEndX = vStartX + tile.placement.validWidth;
+        const int vEndY = vStartY + tile.placement.validHeight;
 
         // FIX 2 : Prevention of division-by-zero on 1x1 tiles
         float div_w = (tw > 1) ? static_cast<float>(tw - 1) : 1.0f;
@@ -94,7 +115,7 @@ NdsmInferenceBundle NdsmOutputStitcher::stitch(const NdsmTiledPayload &payload)
 
 // parallel row operations within curr tile -> as we process tiles sequentially, no two threads will ever write to the same global pixel at the same time
 #pragma omp parallel for schedule(dynamic)
-        for (int r = 0; r < th; ++r)
+        for (int r = vStartY; r < vEndY; ++r)
         {
             float hann_y = hann_y_cache[r]; // read from cache
             int global_r = ty + r;
@@ -102,7 +123,7 @@ NdsmInferenceBundle NdsmOutputStitcher::stitch(const NdsmTiledPayload &payload)
             if (global_r < 0 || global_r >= gh)
                 continue;
 
-            for (int c = 0; c < tw; ++c)
+            for (int c = vStartX; c < vEndX; ++c)
             {
                 int global_c = tx + c;
                 if (global_c < 0 || global_c >= gw)
@@ -163,7 +184,7 @@ NdsmInferenceBundle NdsmOutputStitcher::stitch(const NdsmTiledPayload &payload)
         }
     }
 
-    // Assign mapped structural model[cite: 15]
+    // Assign mapped structural model
     bundle.model.modelName = payload.model.modelName;
     bundle.model.modelVersion = payload.model.modelVersion;
 

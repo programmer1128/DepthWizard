@@ -3,7 +3,6 @@
 #include <omp.h>
 #include <stdexcept>
 #include <algorithm>
-#include <array>
 #include <trantor/utils/Logger.h>
 
 #ifndef M_PI
@@ -13,7 +12,7 @@
 SemanticInferenceBundle SemanticOutputStitcher::stitch(const SemanticTiledPayload &payload)
 {
     // failsafe to prevent segmentation faults from empty arrays
-    if (payload.tiles.empty() || payload.globalWidth <= 0 || payload.globalHeight <= 0) // Updated to payload.tiles[cite: 15]
+    if (payload.tiles.empty() || payload.globalWidth <= 0 || payload.globalHeight <= 0)
     {
         throw std::runtime_error("SemanticOutputStitcher: Invalid or empty semantic payload provided.");
     }
@@ -24,7 +23,7 @@ SemanticInferenceBundle SemanticOutputStitcher::stitch(const SemanticTiledPayloa
 
     const int expectedSemanticClassCount = 6; // number of semantic categories (6 for GAMUS)
 
-    // FIX 1 : Strict Validation Pass
+    // FIX 1 : Strict Validation Pass (Checks all logic buffers)
     for (const auto &tile : payload.tiles)
     {
         const int tw = tile.placement.paddedWidth;
@@ -39,6 +38,23 @@ SemanticInferenceBundle SemanticOutputStitcher::stitch(const SemanticTiledPayloa
             throw std::invalid_argument("SemanticOutputStitcher: Inconsistent semantic class count or layout.");
         }
 
+        size_t expected_size = static_cast<size_t>(tw) * th;
+        if (tile.semanticLogits.groundLogits.data.size() != expected_size ||
+            tile.semanticLogits.buildingLogits.data.size() != expected_size ||
+            tile.semanticLogits.roadLogits.data.size() != expected_size ||
+            tile.semanticLogits.vegetationLogits.data.size() != expected_size ||
+            tile.semanticLogits.waterLogits.data.size() != expected_size ||
+            tile.semanticLogits.unknownLogits.data.size() != expected_size ||
+            tile.validMask.data.size() != expected_size)
+        {
+            throw std::invalid_argument("SemanticOutputStitcher: Semantic grid dimensions mismatch.");
+        }
+
+        if (tile.confidence.isValid() && tile.confidence.data.size() != expected_size)
+        {
+            throw std::invalid_argument("SemanticOutputStitcher: Confidence grid dimensions mismatch.");
+        }
+
         const auto &p = tile.placement;
         // Explicitly honor valid bounds padding logic so we don't accidentally stitch bad edge pixels
         if (p.validStartX < 0 || p.validStartY < 0 || p.validWidth < 0 || p.validHeight < 0 ||
@@ -49,10 +65,9 @@ SemanticInferenceBundle SemanticOutputStitcher::stitch(const SemanticTiledPayloa
     }
 
     SemanticInferenceBundle bundle;
-    bundle.semanticSchemaId = DEPTHWIZARD_SEMANTIC_SCHEMA_ID; // Explicit schema tag[cite: 15]
+    bundle.semanticSchemaId = DEPTHWIZARD_SEMANTIC_SCHEMA_ID; // Explicit schema tag
 
-    // Using the channelIndex param exactly as requested[cite: 14]
-    auto initGrid = [&](RasterGrid<float> &grid, size_t channelIndex)
+    auto initGridFloat = [&](RasterGrid<float> &grid)
     {
         grid.width = gw;
         grid.height = gh;
@@ -66,25 +81,18 @@ SemanticInferenceBundle SemanticOutputStitcher::stitch(const SemanticTiledPayloa
         grid.data.assign(globalPixels, 0);
     };
 
-    std::array<RasterGrid<float> *, 6> logitGrids = {
-        &bundle.globalSemanticLogits.unknownLogits,
-        &bundle.globalSemanticLogits.groundLogits,
-        &bundle.globalSemanticLogits.buildingLogits,
-        &bundle.globalSemanticLogits.roadLogits,
-        &bundle.globalSemanticLogits.vegetationLogits,
-        &bundle.globalSemanticLogits.waterLogits};
-
-    // Apply initGrid mapping across array
-    for (size_t ch = 0; ch < 6; ++ch)
-    {
-        initGrid(*logitGrids[ch], ch);
-    }
+    // initialising continuous semantic logit grids securely
+    initGridFloat(bundle.globalSemanticLogits.unknownLogits);
+    initGridFloat(bundle.globalSemanticLogits.groundLogits);
+    initGridFloat(bundle.globalSemanticLogits.buildingLogits);
+    initGridFloat(bundle.globalSemanticLogits.roadLogits);
+    initGridFloat(bundle.globalSemanticLogits.vegetationLogits);
+    initGridFloat(bundle.globalSemanticLogits.waterLogits);
 
     bundle.globalSemanticLogits.classCount = expectedSemanticClassCount;
     bundle.globalSemanticLogits.layout = TensorLayout::CHW; // Channel-Height-Width
 
-    // Updated struct names from SemanticInferenceTypes.h[cite: 15]
-    initGrid(*(&bundle.globalConfidence), 0);
+    initGridFloat(bundle.globalConfidence);
     initGridUint8(bundle.globalValidMask);
 
     // weight accum for denominator of blending equation (weighted avg) : sum(pred_val*wts)/sum(wts)
@@ -135,7 +143,7 @@ SemanticInferenceBundle SemanticOutputStitcher::stitch(const SemanticTiledPayloa
         for (int r = 0; r < th; ++r)
             hann_y_cache[r] = 0.5f * (1.0f - std::cos((2.0f * M_PI * r) / div_h));
 
-        bool hasSemanticConf = tile.confidence.isValid(); // Struct name is tile.confidence[cite: 15]
+        bool hasSemanticConf = tile.confidence.isValid();
 
 // parallel row operations within curr tile -> as we process tiles sequentially, no two threads will ever write to the same global pixel at the same time
 #pragma omp parallel for schedule(dynamic)
@@ -167,7 +175,7 @@ SemanticInferenceBundle SemanticOutputStitcher::stitch(const SemanticTiledPayloa
                 float conf_mult = hasSemanticConf ? tile.confidence.data[localIdx] : 1.0f;
                 float active_weight = w_hann * conf_mult;
 
-                // continuous semantic logits accumulation explicitly restored
+                // continuous semantic logits accumulation explicitly mapped
                 pUnknown[globalIdx] += (tile.semanticLogits.unknownLogits.data[localIdx] * active_weight);
                 pGround[globalIdx] += (tile.semanticLogits.groundLogits.data[localIdx] * active_weight);
                 pBldg[globalIdx] += (tile.semanticLogits.buildingLogits.data[localIdx] * active_weight);
@@ -229,7 +237,7 @@ SemanticInferenceBundle SemanticOutputStitcher::stitch(const SemanticTiledPayloa
         }
     }
 
-    bundle.model.modelName = payload.model.modelName; // Updated struct naming[cite: 15]
+    bundle.model.modelName = payload.model.modelName;
     bundle.model.modelVersion = payload.model.modelVersion;
 
     LOG_INFO << "[SemanticOutputStitcher] Finalized global semantic logit inference.";
