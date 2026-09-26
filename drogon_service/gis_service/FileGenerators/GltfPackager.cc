@@ -41,6 +41,8 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     tinygltf::Buffer mainBuffer;
     size_t currentOffset = 0;
     
+    const bool hasEdgeLines = scene.edgePrimitive.positions.size() >= 6 && !scene.edgePrimitive.indices.empty();
+
     // First Pass: Calculate total required memory to avoid reallocations
     size_t totalMemoryRequired = 0;
     for (const auto& prim : compressedPrimitives) {
@@ -50,6 +52,18 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     if (scene.texture.has_value()) {
         size_t bytes = scene.texture->bytes.size();
         totalMemoryRequired += bytes + ((4 - (bytes % 4)) % 4);
+    }
+    if (hasEdgeLines) {
+        size_t posBytes = scene.edgePrimitive.positions.size() * sizeof(float);
+        totalMemoryRequired += posBytes + ((4 - (posBytes % 4)) % 4);
+
+        if (scene.edgePrimitive.colors.has_value() && !scene.edgePrimitive.colors->empty()) {
+            size_t colBytes = scene.edgePrimitive.colors->size() * sizeof(float);
+            totalMemoryRequired += colBytes + ((4 - (colBytes % 4)) % 4);
+        }
+
+        size_t idxBytes = scene.edgePrimitive.indices.size() * sizeof(uint32_t);
+        totalMemoryRequired += idxBytes + ((4 - (idxBytes % 4)) % 4);
     }
     
     mainBuffer.data.resize(totalMemoryRequired);
@@ -110,6 +124,91 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
         model.textures.push_back(tex);
         textureImageIndex = 0;
     }
+
+    // 5b. Embed Uncompressed Line Edge Primitive (Mode: LINES)
+    int edgePosAccIdx = -1;
+    int edgeColorAccIdx = -1;
+    int edgeIdxAccIdx = -1;
+
+    if (hasEdgeLines) {
+        // Edge Positions BufferView & Accessor
+        size_t posBytes = scene.edgePrimitive.positions.size() * sizeof(float);
+        size_t posPad = (4 - (posBytes % 4)) % 4;
+        std::memcpy(mainBuffer.data.data() + currentOffset, scene.edgePrimitive.positions.data(), posBytes);
+        if (posPad > 0) std::memset(mainBuffer.data.data() + currentOffset + posBytes, 0, posPad);
+
+        tinygltf::BufferView posView;
+        posView.buffer = 0;
+        posView.byteOffset = currentOffset;
+        posView.byteLength = posBytes;
+        posView.target = TINYGLTF_TARGET_ARRAY_BUFFER;
+        model.bufferViews.push_back(posView);
+        int posViewIdx = static_cast<int>(model.bufferViews.size() - 1);
+        currentOffset += posBytes + posPad;
+
+        tinygltf::Accessor posAcc;
+        posAcc.bufferView = posViewIdx;
+        posAcc.byteOffset = 0;
+        posAcc.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+        posAcc.type = TINYGLTF_TYPE_VEC3;
+        posAcc.count = scene.edgePrimitive.positions.size() / 3;
+        if (scene.edgePrimitive.localBounds.isInitialized) {
+            posAcc.minValues = { scene.edgePrimitive.localBounds.minX, scene.edgePrimitive.localBounds.minY, scene.edgePrimitive.localBounds.minZ };
+            posAcc.maxValues = { scene.edgePrimitive.localBounds.maxX, scene.edgePrimitive.localBounds.maxY, scene.edgePrimitive.localBounds.maxZ };
+        }
+        model.accessors.push_back(posAcc);
+        edgePosAccIdx = static_cast<int>(model.accessors.size() - 1);
+
+        // Edge Colors BufferView & Accessor
+        if (scene.edgePrimitive.colors.has_value() && !scene.edgePrimitive.colors->empty()) {
+            size_t colBytes = scene.edgePrimitive.colors->size() * sizeof(float);
+            size_t colPad = (4 - (colBytes % 4)) % 4;
+            std::memcpy(mainBuffer.data.data() + currentOffset, scene.edgePrimitive.colors->data(), colBytes);
+            if (colPad > 0) std::memset(mainBuffer.data.data() + currentOffset + colBytes, 0, colPad);
+
+            tinygltf::BufferView colView;
+            colView.buffer = 0;
+            colView.byteOffset = currentOffset;
+            colView.byteLength = colBytes;
+            colView.target = TINYGLTF_TARGET_ARRAY_BUFFER;
+            model.bufferViews.push_back(colView);
+            int colViewIdx = static_cast<int>(model.bufferViews.size() - 1);
+            currentOffset += colBytes + colPad;
+
+            tinygltf::Accessor colAcc;
+            colAcc.bufferView = colViewIdx;
+            colAcc.byteOffset = 0;
+            colAcc.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+            colAcc.type = TINYGLTF_TYPE_VEC4;
+            colAcc.count = scene.edgePrimitive.colors->size() / 4;
+            model.accessors.push_back(colAcc);
+            edgeColorAccIdx = static_cast<int>(model.accessors.size() - 1);
+        }
+
+        // Edge Indices BufferView & Accessor
+        size_t idxBytes = scene.edgePrimitive.indices.size() * sizeof(uint32_t);
+        size_t idxPad = (4 - (idxBytes % 4)) % 4;
+        std::memcpy(mainBuffer.data.data() + currentOffset, scene.edgePrimitive.indices.data(), idxBytes);
+        if (idxPad > 0) std::memset(mainBuffer.data.data() + currentOffset + idxBytes, 0, idxPad);
+
+        tinygltf::BufferView idxView;
+        idxView.buffer = 0;
+        idxView.byteOffset = currentOffset;
+        idxView.byteLength = idxBytes;
+        idxView.target = TINYGLTF_TARGET_ELEMENT_ARRAY_BUFFER;
+        model.bufferViews.push_back(idxView);
+        int idxViewIdx = static_cast<int>(model.bufferViews.size() - 1);
+        currentOffset += idxBytes + idxPad;
+
+        tinygltf::Accessor idxAcc;
+        idxAcc.bufferView = idxViewIdx;
+        idxAcc.byteOffset = 0;
+        idxAcc.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
+        idxAcc.type = TINYGLTF_TYPE_SCALAR;
+        idxAcc.count = scene.edgePrimitive.indices.size();
+        model.accessors.push_back(idxAcc);
+        edgeIdxAccIdx = static_cast<int>(model.accessors.size() - 1);
+    }
     
     model.buffers.push_back(mainBuffer);
 
@@ -126,19 +225,28 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
             mat.pbrMetallicRoughness.baseColorTexture.index = textureImageIndex;
             mat.name = "Terrain_Optical";
         } else if (role == MaterialRole::BUILDING_WALL) {
-            // Shaded, untextured walls: hard normals provide directional depth
-            // cues. The viewer must supply lights/environment for PBR shading.
-            mat.pbrMetallicRoughness.baseColorFactor = {0.015, 0.10, 0.42, 1.0};
-            mat.pbrMetallicRoughness.metallicFactor = 0.0;
-            mat.pbrMetallicRoughness.roughnessFactor = 0.6;
-            mat.name = "Hologram_Wall";
+            // Untextured walls with Mapflow-style hypsometric COLOR_0 vertex colors.
+            // White neutral baseColorFactor passes vertex colors at 100% saturation.
+            mat.pbrMetallicRoughness.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
+            mat.pbrMetallicRoughness.metallicFactor = 0.10;
+            mat.pbrMetallicRoughness.roughnessFactor = 0.40;
+            mat.alphaMode = "BLEND";
+            mat.doubleSided = true;
+            mat.name = "Building_Wall";
         } else if (role == MaterialRole::BUILDING_ROOF) {
-            // Slightly brighter blue separates roofs from the darker walls
-            // without reintroducing the pink/cyan palette.
-            mat.pbrMetallicRoughness.baseColorFactor = {0.025, 0.24, 0.72, 1.0};
-            mat.pbrMetallicRoughness.metallicFactor = 0.0;
-            mat.pbrMetallicRoughness.roughnessFactor = 0.65;
-            mat.name = "Hologram_Roof";
+            // Roof caps with Mapflow-style hypsometric COLOR_0 vertex colors.
+            // White neutral baseColorFactor passes vertex colors at 100% saturation.
+            mat.pbrMetallicRoughness.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
+            mat.pbrMetallicRoughness.metallicFactor = 0.10;
+            mat.pbrMetallicRoughness.roughnessFactor = 0.40;
+            mat.alphaMode = "BLEND";
+            mat.doubleSided = true;
+            mat.name = "Building_Roof";
+        } else if (role == MaterialRole::BUILDING_EDGE) {
+            mat.pbrMetallicRoughness.baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f}; // Pure white crisp line
+            mat.pbrMetallicRoughness.metallicFactor = 0.0f;
+            mat.pbrMetallicRoughness.roughnessFactor = 0.1f;
+            mat.name = "Building_Edge_Highlight";
         }
         
         model.materials.push_back(mat);
@@ -206,6 +314,19 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
             dracoAttrs["TEXCOORD_0"] = tinygltf::Value(prim.uvAttrId);
         }
 
+        // Optional Color Accessor (COLOR_0)
+        if (prim.colorAttrId >= 0) {
+            tinygltf::Accessor colorAcc;
+            colorAcc.bufferView = -1; // Must be -1 for Draco compression
+            colorAcc.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+            colorAcc.type = TINYGLTF_TYPE_VEC4;
+            colorAcc.count = prim.vertexCount;
+            model.accessors.push_back(colorAcc);
+            int colorAccIdx = static_cast<int>(model.accessors.size() - 1);
+            gltfPrim.attributes["COLOR_0"] = colorAccIdx;
+            dracoAttrs["COLOR_0"] = tinygltf::Value(prim.colorAttrId);
+        }
+
         // Optional Feature ID Accessor (For WebGL clicking)
         if (prim.featureIdAttrId >= 0) {
             tinygltf::Accessor featAcc;
@@ -233,6 +354,23 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
         gltfPrim.indices = static_cast<int>(model.accessors.size() - 1);
 
         mesh.primitives.push_back(gltfPrim);
+    }
+
+    // Append Edge Highlight Line Primitive (Uncompressed LINES mode 1)
+    if (hasEdgeLines && edgePosAccIdx >= 0 && edgeIdxAccIdx >= 0) {
+        tinygltf::Primitive linePrim;
+        linePrim.mode = TINYGLTF_MODE_LINE;
+        if (materialMap.find(MaterialRole::BUILDING_EDGE) != materialMap.end()) {
+            linePrim.material = materialMap[MaterialRole::BUILDING_EDGE];
+        } else {
+            linePrim.material = createMaterial(MaterialRole::BUILDING_EDGE);
+        }
+        linePrim.attributes["POSITION"] = edgePosAccIdx;
+        if (edgeColorAccIdx >= 0) {
+            linePrim.attributes["COLOR_0"] = edgeColorAccIdx;
+        }
+        linePrim.indices = edgeIdxAccIdx;
+        mesh.primitives.push_back(linePrim);
     }
     
     model.meshes.push_back(mesh);

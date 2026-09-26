@@ -4,6 +4,7 @@
 #include <limits>
 #include <cstdint>
 #include <stdexcept>
+#include <numbers>
 
 double BuildingMesher::signedArea(const std::vector<LocalPoint>& ring)
 {
@@ -235,12 +236,19 @@ BuildingMesh BuildingMesher::generate(
      result.roofPrimitive.materialRole = MaterialRole::BUILDING_ROOF;
      result.roofPrimitive.featureIds.emplace(); // Activate feature tracking
      result.roofPrimitive.normals.emplace();
+     result.roofPrimitive.colors.emplace();
      
      // Initialize Wall Primitive
      result.wallPrimitive.topology = PrimitiveTopology::TRIANGLES;
      result.wallPrimitive.materialRole = MaterialRole::BUILDING_WALL;
      result.wallPrimitive.featureIds.emplace();
      result.wallPrimitive.normals.emplace();
+     result.wallPrimitive.colors.emplace();
+
+     // Initialize Edge Primitive (Mode: LINES)
+     result.edgePrimitive.topology = PrimitiveTopology::LINES;
+     result.edgePrimitive.materialRole = MaterialRole::BUILDING_EDGE;
+     result.edgePrimitive.colors.emplace();
     
      if (config.generateRoofUVs) result.roofPrimitive.uvs.emplace();
      if (config.generateWallUVs) result.wallPrimitive.uvs.emplace();
@@ -250,6 +258,7 @@ BuildingMesh BuildingMesher::generate(
      roofBounds.maxX = roofBounds.maxY = roofBounds.maxZ = std::numeric_limits<double>::lowest();
 
      AxisAlignedBounds wallBounds = roofBounds;
+     AxisAlignedBounds edgeBounds = roofBounds;
 
      for (const auto& bldg : buildings.buildings) 
      {
@@ -314,6 +323,24 @@ BuildingMesh BuildingMesher::generate(
              std::fill(localOuterBaseY.begin(), localOuterBaseY.end(), localBaseY);
          }
 
+         // Mapflow-style hypsometric height color ramp (Two-class palette)
+         float wallR, wallG, wallB, wallA;
+         float roofR, roofG, roofB, roofA;
+
+         const float h = bldg.heightAboveGround;
+         if (h >= 28.0f)
+         {
+             // High-Rise Towers (height >= 28.0m / 9+ floors): Sunset Coral / Crimson
+             wallR = 0.95f; wallG = 0.28f; wallB = 0.35f; wallA = 0.65f;
+             roofR = 0.80f; roofG = 0.18f; roofB = 0.25f; roofA = 0.75f;
+         }
+         else
+         {
+             // Standard Urban Buildings (height < 28.0m / up to 8 floors): Electric Cyan / Teal
+             wallR = 0.00f; wallG = 0.82f; wallB = 0.95f; wallA = 0.65f;
+             roofR = 0.00f; roofG = 0.65f; roofB = 0.85f; roofA = 0.75f;
+         }
+
          /*
          *Roof Generation of building
          */
@@ -346,6 +373,14 @@ BuildingMesh BuildingMesher::generate(
             
              result.roofPrimitive.featureIds->push_back(
                  static_cast<float>(bldg.buildingId));
+
+             if (result.roofPrimitive.colors.has_value())
+             {
+                 result.roofPrimitive.colors->push_back(roofR);
+                 result.roofPrimitive.colors->push_back(roofG);
+                 result.roofPrimitive.colors->push_back(roofB);
+                 result.roofPrimitive.colors->push_back(roofA);
+             }
 
              roofBounds.isInitialized = true;
 
@@ -405,6 +440,14 @@ BuildingMesh BuildingMesher::generate(
                      result.wallPrimitive.featureIds->push_back(
                          static_cast<float>(bldg.buildingId));
 
+                     if (result.wallPrimitive.colors.has_value())
+                     {
+                         result.wallPrimitive.colors->push_back(wallR);
+                         result.wallPrimitive.colors->push_back(wallG);
+                         result.wallPrimitive.colors->push_back(wallB);
+                         result.wallPrimitive.colors->push_back(wallA);
+                     }
+
                      wallBounds.isInitialized = true;
 
                      wallBounds.minX = std::min(wallBounds.minX, vx); wallBounds.maxX = std::max(wallBounds.maxX, vx);
@@ -438,11 +481,122 @@ BuildingMesh BuildingMesher::generate(
          {
              extrudeRing(hole, nullptr);
          }
+
+         /*
+          * Wireframe Edge Highlight Generation (Mode: LINES)
+          */
+         auto pushEdgeSegment = [&](double x1, float y1, double z1,
+                                    double x2, float y2, double z2)
+         {
+             uint32_t baseIdx = static_cast<uint32_t>(result.edgePrimitive.positions.size() / 3);
+             result.edgePrimitive.positions.push_back(static_cast<float>(x1));
+             result.edgePrimitive.positions.push_back(y1);
+             result.edgePrimitive.positions.push_back(static_cast<float>(z1));
+
+             result.edgePrimitive.positions.push_back(static_cast<float>(x2));
+             result.edgePrimitive.positions.push_back(y2);
+             result.edgePrimitive.positions.push_back(static_cast<float>(z2));
+
+             if (result.edgePrimitive.colors.has_value())
+             {
+                 result.edgePrimitive.colors->push_back(1.0f);
+                 result.edgePrimitive.colors->push_back(1.0f);
+                 result.edgePrimitive.colors->push_back(1.0f);
+                 result.edgePrimitive.colors->push_back(0.90f);
+
+                 result.edgePrimitive.colors->push_back(1.0f);
+                 result.edgePrimitive.colors->push_back(1.0f);
+                 result.edgePrimitive.colors->push_back(1.0f);
+                 result.edgePrimitive.colors->push_back(0.90f);
+             }
+
+             result.edgePrimitive.indices.push_back(baseIdx);
+             result.edgePrimitive.indices.push_back(baseIdx + 1);
+
+             edgeBounds.isInitialized = true;
+             edgeBounds.minX = std::min({edgeBounds.minX, x1, x2});
+             edgeBounds.maxX = std::max({edgeBounds.maxX, x1, x2});
+             edgeBounds.minY = std::min({edgeBounds.minY, static_cast<double>(y1), static_cast<double>(y2)});
+             edgeBounds.maxY = std::max({edgeBounds.maxY, static_cast<double>(y1), static_cast<double>(y2)});
+             edgeBounds.minZ = std::min({edgeBounds.minZ, z1, z2});
+             edgeBounds.maxZ = std::max({edgeBounds.maxZ, z1, z2});
+         };
+
+         // Outer roof perimeter and vertical corner seams
+         const size_t outerCount = localOuter.size();
+         for (size_t i = 0; i < outerCount; ++i)
+         {
+             size_t prevIdx = (i + outerCount - 1) % outerCount;
+             size_t nextIdx = (i + 1) % outerCount;
+             const auto& ptPrev = localOuter[prevIdx];
+             const auto& ptCurr = localOuter[i];
+             const auto& ptNext = localOuter[nextIdx];
+
+             pushEdgeSegment(ptCurr.x, localRoofY, ptCurr.z, ptNext.x, localRoofY, ptNext.z);
+
+             // Vertical corner seam at ptCurr only if it represents a genuine architectural corner
+             const double inX = ptCurr.x - ptPrev.x;
+             const double inZ = ptCurr.z - ptPrev.z;
+             const double inLen = std::hypot(inX, inZ);
+
+             const double outX = ptNext.x - ptCurr.x;
+             const double outZ = ptNext.z - ptCurr.z;
+             const double outLen = std::hypot(outX, outZ);
+
+             if (inLen > 1e-4 && outLen > 1e-4)
+             {
+                 const double cross = (inX * outZ - inZ * outX) / (inLen * outLen);
+                 const double dot = (inX * outX + inZ * outZ) / (inLen * outLen);
+                 const double turnAngleDeg = std::acos(std::clamp(dot, -1.0, 1.0)) * 180.0 / std::numbers::pi;
+                 if (turnAngleDeg >= 65.0 && turnAngleDeg <= 115.0 && std::abs(cross) > 0.5)
+                 {
+                     const float baseA = !localOuterBaseY.empty() ? localOuterBaseY[i] : localBaseY;
+                     pushEdgeSegment(ptCurr.x, baseA, ptCurr.z, ptCurr.x, localRoofY, ptCurr.z);
+                 }
+             }
+         }
+
+         // Hole roof perimeters and vertical seams
+         for (const auto& hole : localHoles)
+         {
+             const size_t holeCount = hole.size();
+             for (size_t i = 0; i < holeCount; ++i)
+             {
+                 size_t prevIdx = (i + holeCount - 1) % holeCount;
+                 size_t nextIdx = (i + 1) % holeCount;
+                 const auto& ptPrev = hole[prevIdx];
+                 const auto& ptCurr = hole[i];
+                 const auto& ptNext = hole[nextIdx];
+
+                 pushEdgeSegment(ptCurr.x, localRoofY, ptCurr.z, ptNext.x, localRoofY, ptNext.z);
+
+                 const double inX = ptCurr.x - ptPrev.x;
+                 const double inZ = ptCurr.z - ptPrev.z;
+                 const double inLen = std::hypot(inX, inZ);
+
+                 const double outX = ptNext.x - ptCurr.x;
+                 const double outZ = ptNext.z - ptCurr.z;
+                 const double outLen = std::hypot(outX, outZ);
+
+                 if (inLen > 1e-4 && outLen > 1e-4)
+                 {
+                     const double cross = (inX * outZ - inZ * outX) / (inLen * outLen);
+                     const double dot = (inX * outX + inZ * outZ) / (inLen * outLen);
+                     const double turnAngleDeg = std::acos(std::clamp(dot, -1.0, 1.0)) * 180.0 / std::numbers::pi;
+                     if (turnAngleDeg >= 65.0 && turnAngleDeg <= 115.0 && std::abs(cross) > 0.5)
+                     {
+                         pushEdgeSegment(ptCurr.x, localBaseY, ptCurr.z, ptCurr.x, localRoofY, ptCurr.z);
+                     }
+                 }
+             }
+         }
+
          result.emittedBuildingIds.push_back(bldg.buildingId);
      }
 
      result.roofPrimitive.localBounds = roofBounds;
      result.wallPrimitive.localBounds = wallBounds; 
+     result.edgePrimitive.localBounds = edgeBounds;
 
      return result;
 }

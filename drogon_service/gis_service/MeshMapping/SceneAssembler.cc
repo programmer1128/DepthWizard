@@ -14,6 +14,7 @@ SceneMesh SceneAssembler::assemble(
      sceneMesh.terrainPrimitive = terrain.terrainPrimitive;
      sceneMesh.roofPrimitive = buildings.roofPrimitive;
      sceneMesh.wallPrimitive = buildings.wallPrimitive;
+     sceneMesh.edgePrimitive = buildings.edgePrimitive;
 
      //Compute Global Scene Bounding Box
      auto mergeBounds = [](AxisAlignedBounds& global, const AxisAlignedBounds& local) 
@@ -41,13 +42,15 @@ SceneMesh SceneAssembler::assemble(
      mergeBounds(sceneMesh.sceneBounds, sceneMesh.terrainPrimitive.localBounds);
      mergeBounds(sceneMesh.sceneBounds, sceneMesh.roofPrimitive.localBounds);
      mergeBounds(sceneMesh.sceneBounds, sceneMesh.wallPrimitive.localBounds);
+     mergeBounds(sceneMesh.sceneBounds, sceneMesh.edgePrimitive.localBounds);
 
      //Declare Global Materials
      // This tells the glTF packager exactly which materials to instantiate
      sceneMesh.materials = {
          MaterialRole::TERRAIN_TEXTURE,
          MaterialRole::BUILDING_ROOF,
-         MaterialRole::BUILDING_WALL
+         MaterialRole::BUILDING_WALL,
+         MaterialRole::BUILDING_EDGE
      };
 
      //Attach the Original Optical Texture

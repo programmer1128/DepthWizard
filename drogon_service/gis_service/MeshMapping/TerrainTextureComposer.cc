@@ -35,6 +35,7 @@ TextureAsset TerrainTextureComposer::concealAcceptedRoofs(
         static_cast<std::size_t>(metadata.width) * metadata.height;
     if (buildingPixels == 0 || static_cast<std::size_t>(buildingPixels) == totalPixels)
         return original;
+    const cv::Mat exactRepairMask = repairMask.clone();
 
     const double columnResolution = std::hypot(
         metadata.geoTransform[1], metadata.geoTransform[4]);
@@ -44,19 +45,22 @@ TextureAsset TerrainTextureComposer::concealAcceptedRoofs(
         !std::isfinite(rowResolution) || rowResolution <= 0.0)
         throw std::invalid_argument("TerrainTextureComposer: invalid pixel resolution");
 
-    if (haloMetres > 0.0f)
-    {
-        const int radiusX = static_cast<int>(std::ceil(haloMetres / columnResolution));
-        const int radiusY = static_cast<int>(std::ceil(haloMetres / rowResolution));
-        const cv::Mat kernel = cv::getStructuringElement(
-            cv::MORPH_ELLIPSE, cv::Size(radiusX * 2 + 1, radiusY * 2 + 1));
-        cv::dilate(repairMask, repairMask, kernel);
-    }
+    const int radiusX = std::clamp(
+        static_cast<int>(std::ceil(haloMetres > 0.0f ? (haloMetres / columnResolution) : 2.0)),
+        2, 3);
+    const int radiusY = std::clamp(
+        static_cast<int>(std::ceil(haloMetres > 0.0f ? (haloMetres / rowResolution) : 2.0)),
+        2, 3);
+    const cv::Mat kernel = cv::getStructuringElement(
+        cv::MORPH_RECT, cv::Size(radiusX * 2 + 1, radiusY * 2 + 1));
+    cv::dilate(repairMask, repairMask, kernel);
 
-    // A border-touching building can cover the whole tiny fixture after
-    // dilation. In a real image this is also an unobservable ground texture.
+    // A large or border-touching roof can cover the entire texture only after
+    // adding the visual halo. Keep the exact accepted footprint in that case;
+    // returning the original image would reintroduce the photographic roof
+    // beneath the untextured LOD1 building.
     if (static_cast<std::size_t>(cv::countNonZero(repairMask)) == totalPixels)
-        return original;
+        repairMask = exactRepairMask;
 
     const cv::Mat decoded = cv::imdecode(original.bytes, cv::IMREAD_COLOR);
     if (decoded.empty() || decoded.cols != metadata.width ||

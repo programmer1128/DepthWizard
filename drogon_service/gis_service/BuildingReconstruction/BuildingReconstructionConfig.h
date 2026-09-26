@@ -1,50 +1,53 @@
 #pragma once
 #include <cmath>
 
-struct BuildingReconstructionConfig 
+struct BuildingReconstructionConfig
 {
      //Mask Processor Thresholds
-     float buildingProbabilityThreshold{0.50f};
+     float buildingProbabilityThreshold{0.40f};
      float minBuildingSemanticConfidence{0.40f};
 
      // Recovery path for roof pixels that have credible building evidence
      // and metric height but were marked UNKNOWN by the global softmax margin.
-     float buildingRecoveryProbabilityThreshold{0.35f};
-     float minRecoveryNdsmHeightMetres{2.0f};
+     float buildingRecoveryProbabilityThreshold{0.05f};
+     float minRecoveryNdsmHeightMetres{1.8f};
 
-     // A large opening kernel erased narrow urban buildings. Cleanup remains
-     // metric-aware but is deliberately conservative.
-     float openingRadiusMetres{0.5f};
-     float closingRadiusMetres{0.5f};
+     // A large opening kernel erased narrow urban buildings. Setting to 0.0f
+     // preserves thin building wings, corridors, and pavilions.
+     float openingRadiusMetres{0.0f};
+     // LOD1 urban fusion: bridge tree/UNKNOWN interruptions inside a complex.
+     // Confident road, ground, water and unsupported vegetation pixels remain
+     // barriers in BuildingMaskProcessor, so this is not unconstrained growth.
+     float closingRadiusMetres{1.5f};
      // Recovery may extend a strong roof by this distance, never create an
      // isolated low-confidence object or cross confidently non-building land.
-     float recoveryDistanceMetres{2.0f};
+     float recoveryDistanceMetres{12.0f};
      bool splitSupportedInstances{true};
      float instanceSeedProbability{0.70f};
-     float instanceHeightStepMetres{3.0f};
-     float minInstanceSeedAreaSquareMetres{4.0f};
-    
+     float instanceHeightStepMetres{3.5f};
+     float minInstanceSeedAreaSquareMetres{15.0f};
+
      //Instance Extractor Thresholds
      // Pixel-edge polygons require edge-connected regions: diagonally
      // touching roofs must remain separate instances, not multipart rings.
      int connectivity{4};
-    
+
      //Footprint Vectorizer Thresholds
      float minBuildingAreaSquareMetres{12.0f};
      float minHoleAreaSquareMetres{5.0f};                // Preserves valid courtyards
      // Initial RDP epsilon. The vectorizer retries smaller values when the
      // proposed simplification changes ring area or topology excessively.
-     float footprintSimplificationToleranceMetres{1.25f};
-     float footprintAreaDeviationTolerance{0.2f};        // Max 20% area loss allowed
+     float footprintSimplificationToleranceMetres{1.0f};
+     float footprintAreaDeviationTolerance{0.25f};       // Max 25% area deviation allowed
      // Fill ratio only nominates a rectangle: concavity, displacement and
      // area guards must also pass. Courtyards never become bounding boxes.
      bool regularizeRectangularFootprints{true};
-     float minimumRectangleFillRatio{0.90f};
+     float minimumRectangleFillRatio{0.88f};
      bool regularizeSupportedEdges{true};
-     float maxCornerAdjustmentMetres{1.0f};
+     float maxCornerAdjustmentMetres{2.5f};
      // Measure the final polygon against the pixels of its own instance.
-     // A visually sharp outline is not useful if it moves off the roof.
-     float minimumFootprintMaskIoU{0.93f};
+     // A regularized CAD box or simplified polygon typically achieves 80-88% IoU.
+     float minimumFootprintMaskIoU{0.60f};
 
      //Height Estimator Thresholds
      float groundBufferRadiusMetres{3.0f};               // How far out to search for ground
@@ -56,9 +59,11 @@ struct BuildingReconstructionConfig
      // footprint. This rejects long cliff/ridge components hallucinated as
      // buildings without letting one noisy DEM pixel reject a real building.
      float maxFootprintElevationDeltaMetres{25.0f};
+     float footprintDilationMetres{0.5f}; // Dilates footprint outward to compensate for ViT patch blur
+     float heightScaleMultiplier{2.4f};  // Compensates for GAMUS ground-bias over-subtraction
 
      // Universal Configuration Validator
-     bool validate() const 
+     bool validate() const
      {
          return std::isfinite(buildingProbabilityThreshold) && buildingProbabilityThreshold >= 0.0f && buildingProbabilityThreshold <= 1.0f &&
              std::isfinite(minBuildingSemanticConfidence) && minBuildingSemanticConfidence >= 0.0f && minBuildingSemanticConfidence <= 1.0f &&
@@ -66,7 +71,7 @@ struct BuildingReconstructionConfig
              std::isfinite(minRecoveryNdsmHeightMetres) && minRecoveryNdsmHeightMetres >= 0.0f && minRecoveryNdsmHeightMetres <= maxBuildingHeightMetres &&
              std::isfinite(openingRadiusMetres) && openingRadiusMetres >= 0.0f &&
              std::isfinite(closingRadiusMetres) && closingRadiusMetres >= 0.0f &&
-             std::isfinite(recoveryDistanceMetres) && recoveryDistanceMetres >= 0.0f && recoveryDistanceMetres <= 5.0f &&
+             std::isfinite(recoveryDistanceMetres) && recoveryDistanceMetres >= 0.0f && recoveryDistanceMetres <= 12.0f &&
              std::isfinite(instanceSeedProbability) && instanceSeedProbability >= buildingProbabilityThreshold && instanceSeedProbability <= 1.0f &&
              std::isfinite(instanceHeightStepMetres) && instanceHeightStepMetres > 0.0f &&
              std::isfinite(minInstanceSeedAreaSquareMetres) && minInstanceSeedAreaSquareMetres > 0.0f &&
@@ -75,7 +80,7 @@ struct BuildingReconstructionConfig
              std::isfinite(minHoleAreaSquareMetres) && minHoleAreaSquareMetres >= 0.0f &&
              std::isfinite(footprintSimplificationToleranceMetres) && footprintSimplificationToleranceMetres >= 0.0f &&
              std::isfinite(footprintAreaDeviationTolerance) && footprintAreaDeviationTolerance >= 0.0f &&
-             std::isfinite(minimumRectangleFillRatio) && minimumRectangleFillRatio >= 0.80f && minimumRectangleFillRatio <= 1.0f &&
+             std::isfinite(minimumRectangleFillRatio) && minimumRectangleFillRatio >= 0.70f && minimumRectangleFillRatio <= 1.0f &&
              std::isfinite(maxCornerAdjustmentMetres) && maxCornerAdjustmentMetres >= 0.0f && maxCornerAdjustmentMetres <= 3.0f &&
              std::isfinite(minimumFootprintMaskIoU) && minimumFootprintMaskIoU > 0.0f && minimumFootprintMaskIoU <= 1.0f &&
              std::isfinite(groundBufferRadiusMetres) && groundBufferRadiusMetres >= 0.0f &&
@@ -83,6 +88,8 @@ struct BuildingReconstructionConfig
              minRequiredSamples > 0 &&
              std::isfinite(minBuildingHeightMetres) && minBuildingHeightMetres > 0.0f &&
              std::isfinite(maxBuildingHeightMetres) && maxBuildingHeightMetres >= minBuildingHeightMetres &&
-             std::isfinite(maxFootprintElevationDeltaMetres) && maxFootprintElevationDeltaMetres > 0.0f;
+             std::isfinite(maxFootprintElevationDeltaMetres) && maxFootprintElevationDeltaMetres > 0.0f &&
+             std::isfinite(footprintDilationMetres) && footprintDilationMetres >= 0.0f &&
+             std::isfinite(heightScaleMultiplier) && heightScaleMultiplier > 0.0f;
      }
 };

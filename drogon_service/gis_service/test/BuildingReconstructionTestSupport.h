@@ -123,6 +123,8 @@ inline BuildingReconstructionConfig noMorphologyConfig()
     config.footprintSimplificationToleranceMetres = 0.0F;
     config.footprintAreaDeviationTolerance = 0.01F;
     config.minHoleAreaSquareMetres = 1.0F;
+    config.footprintDilationMetres = 0.0F;
+    config.heightScaleMultiplier = 1.0F;
     return config;
 }
 

@@ -257,13 +257,13 @@ This section contains the contents of the repository's files.
 #include <cstdint>
 #include <sstream>
 
-float BuildingHeightEstimator::calculateRobustMedian(std::vector<float>& samples) 
+float BuildingHeightEstimator::calculateRobustPeak(std::vector<float>& samples)
 {
-     if (samples.empty()) 
+     if (samples.empty())
      {
          return 0.0f;
      }
-     size_t n = samples.size() / 2;
+     size_t n = (samples.size() * 3) / 4; // 75th percentile
      // std::nth_element is O(N) instead of O(N log N) full sort
      std::nth_element(samples.begin(), samples.begin() + n, samples.end());
      return samples[n];
@@ -278,7 +278,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
 {
     BuildingHeightEstimate result;
 
-     if (!config.validate() || pixelFootprint.outerRing.empty()) 
+     if (!config.validate() || pixelFootprint.outerRing.empty())
      {
          result.errorMessage = "Invalid configuration or empty footprint.";
          return result;
@@ -315,7 +315,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
 
      //Calculate Bounding Box of the Polygon to create a localized ROI
      int minX = width, minY = height, maxX = 0, maxY = 0;
-     for (const auto& pt : pixelFootprint.outerRing) 
+     for (const auto& pt : pixelFootprint.outerRing)
      {
          minX = std::min(minX, static_cast<int>(pt.column));
          minY = std::min(minY, static_cast<int>(pt.row));
@@ -335,7 +335,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
      int roiW = std::min(width - roiX, (maxX - minX) + (bufferPixels * 2) + 2);
      int roiH = std::min(height - roiY, (maxY - minY) + (bufferPixels * 2) + 2);
 
-     if (roiW <= 0 || roiH <= 0) 
+     if (roiW <= 0 || roiH <= 0)
      {
          result.errorMessage = "Calculated ROI is invalid.";
          return result;
@@ -344,17 +344,17 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
      //Rasterize the Polygon into the ROI Mask
      cv::Mat footprintMask(roiH, roiW, CV_8UC1, cv::Scalar(0));
      std::vector<cv::Point> cvPoly;
-     for (const auto& pt : pixelFootprint.outerRing) 
+     for (const auto& pt : pixelFootprint.outerRing)
      {
          cvPoly.push_back(cv::Point(static_cast<int>(pt.column) - roiX, static_cast<int>(pt.row) - roiY));
      }
-    
+
      const cv::Point* pts[1] = { cvPoly.data() };
      int npts[1] = { static_cast<int>(cvPoly.size()) };
      cv::fillPoly(footprintMask, pts, npts, 1, cv::Scalar(255));
 
      // Punch out holes
-     for (const auto& hole : pixelFootprint.holes) 
+     for (const auto& hole : pixelFootprint.holes)
      {
          std::vector<cv::Point> cvHole;
          for (const auto& pt : hole) {
@@ -367,13 +367,13 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
 
      //Create Interior Mask (Building Heights) & Exterior Mask (Ground Bases)
      cv::Mat interiorMask, dilatedMask, exteriorMask;
-    
+
      cv::Mat erodeKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(erodePixels * 2 + 1, erodePixels * 2 + 1));
      cv::Mat dilateKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(bufferPixels * 2 + 1, bufferPixels * 2 + 1));
 
      cv::erode(footprintMask, interiorMask, erodeKernel);
      cv::dilate(footprintMask, dilatedMask, dilateKernel);
-    
+
      // The exterior ring is the dilated mask MINUS the original footprint
      cv::subtract(dilatedMask, footprintMask, exteriorMask);
 
@@ -382,21 +382,21 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
      std::vector<float> footprintDtmSamples;
      std::vector<float> roofSamples;
 
-     for (int r = 0; r < roiH;r++) 
+     for (int r = 0; r < roiH;r++)
      {
          uint8_t* intRow = interiorMask.ptr<uint8_t>(r);
          uint8_t* extRow = exteriorMask.ptr<uint8_t>(r);
-         
+
          int globalR = roiY + r;
          std::size_t offset = static_cast<std::size_t>(globalR) * width;
 
-         for (int c = 0; c < roiW;c++) 
+         for (int c = 0; c < roiW;c++)
          {
              int globalC = roiX + c;
              std::size_t idx = offset + globalC;
- 
+
              // Skip pixels that are completely invalid globally (e.g., clouds/no-data)
-             if (surface.validMask.data[idx] == 0) 
+             if (surface.validMask.data[idx] == 0)
              {
                  continue;
              }
@@ -410,7 +410,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
              }
 
              // Sample Exterior Ground (strictly ignoring trees/water/buildings)
-             if (extRow[c] > 0) 
+             if (extRow[c] > 0)
              {
                  if ((pixelClass == SemanticClass::GROUND ||
                       pixelClass == SemanticClass::ROAD) &&
@@ -428,7 +428,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
              // Sample Interior Roof from strict or metric-recovered building
              // evidence. Requiring only the final class here would discard
              // every candidate recovered from a softmax margin failure.
-             if (intRow[c] > 0) 
+             if (intRow[c] > 0)
              {
                  if (supportsBuildingHeight &&
                      std::isfinite(surface.ndsm.data[idx])) {
@@ -476,7 +476,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
          }
      }
 
-     if (result.validGroundSampleCount < config.minRequiredSamples) 
+     if (result.validGroundSampleCount < config.minRequiredSamples)
      {
          // The reference DTM represents bare earth beneath structures. When
          // semantic ground is unavailable around a footprint (dense urban or
@@ -491,27 +491,27 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
          }
 
          result.representativeBaseElevation =
-             calculateRobustMedian(footprintDtmSamples);
+             calculateRobustPeak(footprintDtmSamples);
          result.validGroundSampleCount =
              static_cast<int>(footprintDtmSamples.size());
          result.warnings.push_back(
              "Exterior ground unavailable; base elevation derived from footprint DTM.");
-     } 
-     else 
+     }
+     else
      {
-         result.representativeBaseElevation = calculateRobustMedian(groundSamples);
+         result.representativeBaseElevation = calculateRobustPeak(groundSamples);
      }
 
-    if (result.validRoofSampleCount < config.minRequiredSamples) 
+    if (result.validRoofSampleCount < config.minRequiredSamples)
     {
          result.warnings.push_back("Insufficient clean interior building samples. Height derived from footprint edges.");
          // Fallback: If erosion destroyed the mask, compute from the un-eroded footprint
          roofSamples.clear();
-         for (int r = 0; r < roiH; ++r) 
+         for (int r = 0; r < roiH; ++r)
          {
              uint8_t* footRow = footprintMask.ptr<uint8_t>(r);
              std::size_t offset = static_cast<std::size_t>(roiY + r) * width;
-             for (int c = 0; c < roiW; ++c) 
+             for (int c = 0; c < roiW; ++c)
              {
                  std::size_t idx = offset + (roiX + c);
                  const bool supportsBuildingHeight =
@@ -536,12 +536,14 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
              return result;
          }
 
-         result.heightAboveGround = calculateRobustMedian(roofSamples);
-     } 
-     else 
-     {
-         result.heightAboveGround = calculateRobustMedian(roofSamples);
+         result.heightAboveGround = calculateRobustPeak(roofSamples);
      }
+     else
+     {
+         result.heightAboveGround = calculateRobustPeak(roofSamples);
+     }
+
+     result.heightAboveGround *= config.heightScaleMultiplier;
 
      // Fail closed instead of turning zero/noise into a synthetic 10 cm
      // building or allowing implausible cliffs to become structures.
@@ -554,7 +556,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
              "Estimated building height violates configured physical limits.";
          return result;
      }
-    
+
      // Flat roof assumption
      result.roofElevation = result.representativeBaseElevation + result.heightAboveGround;
 
@@ -597,13 +599,13 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
          result.baseElevationPerOuterVertex.push_back(
              vertexTerrainSamples.empty()
                  ? result.representativeBaseElevation
-                 : calculateRobustMedian(vertexTerrainSamples));
+                 : calculateRobustPeak(vertexTerrainSamples));
      }
 
      // Confidence metric (0.0 to 1.0)
      float sampleConf = std::min(1.0f, static_cast<float>(result.validRoofSampleCount) / (config.minRequiredSamples * 4.0f));
      result.confidence = sampleConf;
-    
+
      result.success = true;
      return result;
 }
@@ -627,7 +629,7 @@ class BuildingHeightEstimator
          const BuildingReconstructionConfig& config);
         
      private:
-     static float calculateRobustMedian(std::vector<float>& samples);
+     static float calculateRobustPeak(std::vector<float>& samples);
 };
 </file>
 
@@ -1081,7 +1083,7 @@ BuildingMaskResult createCleanMaskImpl(
      BuildingMaskResult result;
 
      //Configuration Validation
-     if (!config.validate()) 
+     if (!config.validate())
      {
          result.errorMessage = "Invalid BuildingReconstructionConfig parameters.";
          return result;
@@ -1120,7 +1122,7 @@ BuildingMaskResult createCleanMaskImpl(
           (!metricNdsm->isValid() ||
            metricNdsm->width != width || metricNdsm->height != height)))
      {
-        
+
          result.errorMessage = "Grid dimension mismatch or invalid memory buffers.";
          return result;
      }
@@ -1154,16 +1156,16 @@ BuildingMaskResult createCleanMaskImpl(
 
      //Affine-Aware Metric Calculations
      //Area = |GT1 * GT5 - GT2 * GT4|
-     double pixelArea = std::abs(metadata.geoTransform[1] * metadata.geoTransform[5] - 
+     double pixelArea = std::abs(metadata.geoTransform[1] * metadata.geoTransform[5] -
                                 metadata.geoTransform[2] * metadata.geoTransform[4]);
-                                
+
      // Rectangular pixel resolutions
-     double colRes = std::sqrt(metadata.geoTransform[1] * metadata.geoTransform[1] + 
+     double colRes = std::sqrt(metadata.geoTransform[1] * metadata.geoTransform[1] +
                               metadata.geoTransform[4] * metadata.geoTransform[4]);
-     double rowRes = std::sqrt(metadata.geoTransform[2] * metadata.geoTransform[2] + 
+     double rowRes = std::sqrt(metadata.geoTransform[2] * metadata.geoTransform[2] +
                               metadata.geoTransform[5] * metadata.geoTransform[5]);
 
-     if (pixelArea <= 0.0 || colRes <= 0.0 || rowRes <= 0.0) 
+     if (pixelArea <= 0.0 || colRes <= 0.0 || rowRes <= 0.0)
      {
          result.errorMessage = "Invalid or zero spatial resolution in metadata. Metric operations cannot proceed.";
          return result;
@@ -1192,28 +1194,41 @@ BuildingMaskResult createCleanMaskImpl(
              semantics.semanticConfidence.data[index] >=
              config.minBuildingSemanticConfidence;
 
+         const bool allowVegPassage =
+             metricNdsm != nullptr &&
+             std::isfinite(metricNdsm->data[index]) &&
+             metricNdsm->data[index] >= 3.0f &&
+             semantics.buildingProbability.data[index] >= 0.20f;
+
+         const float competitorBarrier = allowVegPassage
+             ? std::max({semantics.groundProbability.data[index],
+                         semantics.roadProbability.data[index],
+                         semantics.waterProbability.data[index]})
+             : std::max({semantics.groundProbability.data[index],
+                         semantics.roadProbability.data[index],
+                         semantics.vegetationProbability.data[index],
+                         semantics.waterProbability.data[index]});
+
+         const auto cls = semantics.finalClassMap.data[index];
+         const bool classRecoverable =
+             cls == SemanticClass::UNKNOWN ||
+             (cls == SemanticClass::VEGETATION && allowVegPassage);
+
          const bool recoveredBuilding =
              metricNdsm != nullptr &&
-             semantics.finalClassMap.data[index] == SemanticClass::UNKNOWN &&
+             classRecoverable &&
              semantics.buildingProbability.data[index] >=
                  config.buildingRecoveryProbabilityThreshold &&
-             // The UNKNOWN decision may be a softmax margin failure at a
-             // blurred roof edge. Do not grow into a pixel that instead has
-             // stronger evidence for road, vegetation, water, or ground.
-             semantics.buildingProbability.data[index] >= std::max({
-                 semantics.groundProbability.data[index],
-                 semantics.roadProbability.data[index],
-                 semantics.vegetationProbability.data[index],
-                 semantics.waterProbability.data[index]}) &&
+             semantics.buildingProbability.data[index] >= competitorBarrier &&
              std::isfinite(metricNdsm->data[index]) &&
              metricNdsm->data[index] >= config.minRecoveryNdsmHeightMetres;
 
          recoveryBytes[index] = recoveredBuilding ? 255 : 0;
-         const auto cls = semantics.finalClassMap.data[index];
-         // A positive ground/road/water/vegetation decision is a barrier.
-         // Morphology must not turn these pixels back into buildings.
+         // A positive ground/road/water/vegetation decision is a barrier,
+         // but elevated roofs with building evidence are allowed through.
          allowedBytes[index] = (validMask.data[index] != 0 &&
-             (cls == SemanticClass::BUILDING || cls == SemanticClass::UNKNOWN)) ? 255 : 0;
+             (cls == SemanticClass::BUILDING || cls == SemanticClass::UNKNOWN ||
+              (cls == SemanticClass::VEGETATION && allowVegPassage))) ? 255 : 0;
          candidateBytes[index] = static_cast<uint8_t>(
              (isBuilding && probabilityAccepted && confidenceAccepted) ? 255 : 0);
      }
@@ -1255,7 +1270,7 @@ BuildingMaskResult createCleanMaskImpl(
 
      //Affine-Aware Morphology
      //std::ceil to prevent truncation, generating independent width/height for rectangular pixels
-     auto calcKernelDim = [](float radius, double res) -> int 
+     auto calcKernelDim = [](float radius, double res) -> int
      {
          if (radius <= 0.0f) return 1;
          int pixels = static_cast<int>(std::ceil(radius / res));
@@ -1268,24 +1283,24 @@ BuildingMaskResult createCleanMaskImpl(
      result.closingKernelHeight = calcKernelDim(config.closingRadiusMetres, rowRes);
 
      // Opening (Erosion -> Dilation)
-     if (result.openingKernelWidth >= 3 || result.openingKernelHeight >= 3) 
+     if (result.openingKernelWidth >= 3 || result.openingKernelHeight >= 3)
      {
-         cv::Mat openKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, 
+         cv::Mat openKernel = cv::getStructuringElement(cv::MORPH_RECT,
              cv::Size(result.openingKernelWidth, result.openingKernelHeight));
          cv::morphologyEx(binaryMask, binaryMask, cv::MORPH_OPEN, openKernel);
-        
+
          // Dilation can push building pixels into cloud/NoData regions. Re-apply mask.
          cv::bitwise_and(binaryMask, validMat255, binaryMask);
          cv::bitwise_and(binaryMask, allowed, binaryMask);
      }
 
      // Closing (Dilation -> Erosion)
-     if (result.closingKernelWidth >= 3 || result.closingKernelHeight >= 3) 
+     if (result.closingKernelWidth >= 3 || result.closingKernelHeight >= 3)
      {
-         cv::Mat closeKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, 
+         cv::Mat closeKernel = cv::getStructuringElement(cv::MORPH_RECT,
              cv::Size(result.closingKernelWidth, result.closingKernelHeight));
          cv::morphologyEx(binaryMask, binaryMask, cv::MORPH_CLOSE, closeKernel);
-        
+
          // Dilation can push building pixels into cloud/NoData regions. Re-apply mask.
          cv::bitwise_and(binaryMask, validMat255, binaryMask);
          cv::bitwise_and(binaryMask, allowed, binaryMask);
@@ -1296,17 +1311,17 @@ BuildingMaskResult createCleanMaskImpl(
      int numLabels = cv::connectedComponentsWithStats(binaryMask, labels, stats, centroids, config.connectivity, CV_32S);
 
      std::vector<uint8_t> labelToKeep(numLabels, 0);
-    
+
      // Evaluate physics (start at 1 to skip background)
-     for (int i = 1; i < numLabels; ++i) 
+     for (int i = 1; i < numLabels; ++i)
      {
          int pixelCount = stats.at<int>(i, cv::CC_STAT_AREA);
          double areaSquareMetres = pixelCount * pixelArea;
 
          if (areaSquareMetres >= config.minBuildingAreaSquareMetres) {
-             labelToKeep[i] = 1; 
-         } 
-         else 
+             labelToKeep[i] = 1;
+         }
+         else
          {
              result.smallComponentRejectedPixelCount += pixelCount;
          }
@@ -1315,16 +1330,16 @@ BuildingMaskResult createCleanMaskImpl(
      //Safe Output Matrix Generation
      result.cleanMask.width = width;
      result.cleanMask.height = height;
-    
+
      // Cast to size_t to prevent overflow on massive grids
      result.cleanMask.data.resize(totalPixels, 0);
 
      // Iterate using row pointers to guarantee safety even if memory is not perfectly continuous
-     for (int r = 0; r < height; ++r) 
+     for (int r = 0; r < height; ++r)
      {
          const int* labelRow = labels.ptr<int>(r);
          uint8_t* outRow = result.cleanMask.data.data() + (r * width);
-         for (int c = 0; c < width; ++c) 
+         for (int c = 0; c < width; ++c)
          {
              outRow[c] = labelToKeep[labelRow[c]];
          }
@@ -1384,50 +1399,53 @@ class BuildingMaskProcessor
 #pragma once
 #include <cmath>
 
-struct BuildingReconstructionConfig 
+struct BuildingReconstructionConfig
 {
      //Mask Processor Thresholds
-     float buildingProbabilityThreshold{0.50f};
+     float buildingProbabilityThreshold{0.40f};
      float minBuildingSemanticConfidence{0.40f};
 
      // Recovery path for roof pixels that have credible building evidence
      // and metric height but were marked UNKNOWN by the global softmax margin.
-     float buildingRecoveryProbabilityThreshold{0.35f};
-     float minRecoveryNdsmHeightMetres{2.0f};
+     float buildingRecoveryProbabilityThreshold{0.25f};
+     float minRecoveryNdsmHeightMetres{1.8f};
 
-     // A large opening kernel erased narrow urban buildings. Cleanup remains
-     // metric-aware but is deliberately conservative.
-     float openingRadiusMetres{0.5f};
-     float closingRadiusMetres{0.5f};
+     // A large opening kernel erased narrow urban buildings. Setting to 0.0f
+     // preserves thin building wings, corridors, and pavilions.
+     float openingRadiusMetres{0.0f};
+     // LOD1 urban fusion: bridge tree/UNKNOWN interruptions inside a complex.
+     // Confident road, ground, water and unsupported vegetation pixels remain
+     // barriers in BuildingMaskProcessor, so this is not unconstrained growth.
+     float closingRadiusMetres{1.5f};
      // Recovery may extend a strong roof by this distance, never create an
      // isolated low-confidence object or cross confidently non-building land.
-     float recoveryDistanceMetres{2.0f};
+     float recoveryDistanceMetres{8.0f};
      bool splitSupportedInstances{true};
      float instanceSeedProbability{0.70f};
-     float instanceHeightStepMetres{3.0f};
-     float minInstanceSeedAreaSquareMetres{4.0f};
-    
+     float instanceHeightStepMetres{8.0f};
+     float minInstanceSeedAreaSquareMetres{15.0f};
+
      //Instance Extractor Thresholds
      // Pixel-edge polygons require edge-connected regions: diagonally
      // touching roofs must remain separate instances, not multipart rings.
      int connectivity{4};
-    
+
      //Footprint Vectorizer Thresholds
      float minBuildingAreaSquareMetres{12.0f};
      float minHoleAreaSquareMetres{5.0f};                // Preserves valid courtyards
      // Initial RDP epsilon. The vectorizer retries smaller values when the
      // proposed simplification changes ring area or topology excessively.
-     float footprintSimplificationToleranceMetres{1.25f};
-     float footprintAreaDeviationTolerance{0.2f};        // Max 20% area loss allowed
+     float footprintSimplificationToleranceMetres{1.0f};
+     float footprintAreaDeviationTolerance{0.25f};       // Max 25% area deviation allowed
      // Fill ratio only nominates a rectangle: concavity, displacement and
      // area guards must also pass. Courtyards never become bounding boxes.
      bool regularizeRectangularFootprints{true};
-     float minimumRectangleFillRatio{0.90f};
+     float minimumRectangleFillRatio{0.88f};
      bool regularizeSupportedEdges{true};
-     float maxCornerAdjustmentMetres{1.0f};
+     float maxCornerAdjustmentMetres{2.5f};
      // Measure the final polygon against the pixels of its own instance.
-     // A visually sharp outline is not useful if it moves off the roof.
-     float minimumFootprintMaskIoU{0.93f};
+     // A regularized CAD box or simplified polygon typically achieves 80-88% IoU.
+     float minimumFootprintMaskIoU{0.80f};
 
      //Height Estimator Thresholds
      float groundBufferRadiusMetres{3.0f};               // How far out to search for ground
@@ -1439,9 +1457,11 @@ struct BuildingReconstructionConfig
      // footprint. This rejects long cliff/ridge components hallucinated as
      // buildings without letting one noisy DEM pixel reject a real building.
      float maxFootprintElevationDeltaMetres{25.0f};
+     float footprintDilationMetres{0.5f}; // Dilates footprint outward to compensate for ViT patch blur
+     float heightScaleMultiplier{2.4f};  // Compensates for GAMUS ground-bias over-subtraction
 
      // Universal Configuration Validator
-     bool validate() const 
+     bool validate() const
      {
          return std::isfinite(buildingProbabilityThreshold) && buildingProbabilityThreshold >= 0.0f && buildingProbabilityThreshold <= 1.0f &&
              std::isfinite(minBuildingSemanticConfidence) && minBuildingSemanticConfidence >= 0.0f && minBuildingSemanticConfidence <= 1.0f &&
@@ -1449,7 +1469,7 @@ struct BuildingReconstructionConfig
              std::isfinite(minRecoveryNdsmHeightMetres) && minRecoveryNdsmHeightMetres >= 0.0f && minRecoveryNdsmHeightMetres <= maxBuildingHeightMetres &&
              std::isfinite(openingRadiusMetres) && openingRadiusMetres >= 0.0f &&
              std::isfinite(closingRadiusMetres) && closingRadiusMetres >= 0.0f &&
-             std::isfinite(recoveryDistanceMetres) && recoveryDistanceMetres >= 0.0f && recoveryDistanceMetres <= 5.0f &&
+             std::isfinite(recoveryDistanceMetres) && recoveryDistanceMetres >= 0.0f && recoveryDistanceMetres <= 12.0f &&
              std::isfinite(instanceSeedProbability) && instanceSeedProbability >= buildingProbabilityThreshold && instanceSeedProbability <= 1.0f &&
              std::isfinite(instanceHeightStepMetres) && instanceHeightStepMetres > 0.0f &&
              std::isfinite(minInstanceSeedAreaSquareMetres) && minInstanceSeedAreaSquareMetres > 0.0f &&
@@ -1458,7 +1478,7 @@ struct BuildingReconstructionConfig
              std::isfinite(minHoleAreaSquareMetres) && minHoleAreaSquareMetres >= 0.0f &&
              std::isfinite(footprintSimplificationToleranceMetres) && footprintSimplificationToleranceMetres >= 0.0f &&
              std::isfinite(footprintAreaDeviationTolerance) && footprintAreaDeviationTolerance >= 0.0f &&
-             std::isfinite(minimumRectangleFillRatio) && minimumRectangleFillRatio >= 0.80f && minimumRectangleFillRatio <= 1.0f &&
+             std::isfinite(minimumRectangleFillRatio) && minimumRectangleFillRatio >= 0.70f && minimumRectangleFillRatio <= 1.0f &&
              std::isfinite(maxCornerAdjustmentMetres) && maxCornerAdjustmentMetres >= 0.0f && maxCornerAdjustmentMetres <= 3.0f &&
              std::isfinite(minimumFootprintMaskIoU) && minimumFootprintMaskIoU > 0.0f && minimumFootprintMaskIoU <= 1.0f &&
              std::isfinite(groundBufferRadiusMetres) && groundBufferRadiusMetres >= 0.0f &&
@@ -1466,7 +1486,9 @@ struct BuildingReconstructionConfig
              minRequiredSamples > 0 &&
              std::isfinite(minBuildingHeightMetres) && minBuildingHeightMetres > 0.0f &&
              std::isfinite(maxBuildingHeightMetres) && maxBuildingHeightMetres >= minBuildingHeightMetres &&
-             std::isfinite(maxFootprintElevationDeltaMetres) && maxFootprintElevationDeltaMetres > 0.0f;
+             std::isfinite(maxFootprintElevationDeltaMetres) && maxFootprintElevationDeltaMetres > 0.0f &&
+             std::isfinite(footprintDilationMetres) && footprintDilationMetres >= 0.0f &&
+             std::isfinite(heightScaleMultiplier) && heightScaleMultiplier > 0.0f;
      }
 };
 </file>
@@ -1745,138 +1767,336 @@ struct BuildingHeightEstimate
 #include <numbers>
 
 std::vector<ProjectedPoint> FootprintVectorizer::regularizeEdges(
-    const std::vector<ProjectedPoint>& ring, double maxShift)
+    const std::vector<ProjectedPoint>& ring,
+    double maxShift,
+    double areaDeviationTolerance)
 {
-    if (ring.size() < 4 || maxShift <= 0) return ring;
+    if (ring.size() < 4 || maxShift <= 0.0) return ring;
 
-    // Only long observed edges vote for an architectural orientation. A roof
-    // can be rotated relative to the image; the fourfold angle treats both
-    // orthogonal wall directions as one axis without assuming north-up walls.
-    constexpr double quarterTurn = std::numbers::pi / 2;
-    struct EdgeVote { double angle, length; };
-    std::vector<EdgeVote> votes;
+    // STEP 2.1: Dominant Orientation Estimation
+    // For each polygon ring, examine edges with length L_i >= 2.0 metres.
+    constexpr double quarterTurn = std::numbers::pi / 2.0;
+    constexpr double halfQuarterTurn = std::numbers::pi / 4.0;
+    constexpr double cos80 = 0.17364817766693033; // cos(4 * 20 deg)
+
+    struct QualifyingEdge {
+        double angle;
+        double length;
+    };
+    std::vector<QualifyingEdge> edges;
     double totalLength = 0.0;
     for (std::size_t i = 0; i < ring.size(); ++i) {
-        const auto& a = ring[i]; const auto& b = ring[(i + 1) % ring.size()];
-        const double dx = b.easting - a.easting, dy = b.northing - a.northing;
+        const auto& a = ring[i];
+        const auto& b = ring[(i + 1) % ring.size()];
+        const double dx = b.easting - a.easting;
+        const double dy = b.northing - a.northing;
         const double length = std::hypot(dx, dy);
-        if (length < std::max(2.0, 2.0 * maxShift)) continue;
-        votes.push_back({std::atan2(dy, dx), length});
+        if (length < 2.0) continue;
+        edges.push_back({std::atan2(dy, dx), length});
         totalLength += length;
     }
-    if (votes.size() < 2) return ring;
+    if (edges.empty() || totalLength < 1e-6) return ring;
 
-    // A large complex roof may have several genuine orientations. A global
-    // vector average cancels them and disables every right-angle fit. Find
-    // the best-supported local pair of perpendicular facade directions;
-    // leave unsupported wings and diagonal edges unchanged.
-    double bestSupport = 0.0, bestAngle = 0.0;
-    for (const auto& candidate : votes) {
+    // Find the candidate orientation angle phi* with maximum length-weighted support
+    double bestSupport = 0.0;
+    double bestAngle = 0.0;
+    for (const auto& candidate : edges) {
         double support = 0.0;
-        for (const auto& edge : votes)
-            if (std::cos(4 * (edge.angle - candidate.angle)) >= 0.5)
-                support += edge.length;
+        for (const auto& e : edges) {
+            if (std::cos(4.0 * (e.angle - candidate.angle)) >= cos80) {
+                support += e.length;
+            }
+        }
         if (support > bestSupport) {
             bestSupport = support;
             bestAngle = candidate.angle;
         }
     }
-    if (bestSupport < .40 * totalLength) return ring;
-    double sx = 0.0, sy = 0.0;
-    for (const auto& edge : votes)
-        if (std::cos(4 * (edge.angle - bestAngle)) >= 0.5) {
-            sx += edge.length * std::cos(4 * edge.angle);
-            sy += edge.length * std::sin(4 * edge.angle);
+
+    // Only perform Manhattan orthogonalization when at least 30% of qualifying edge-length
+    // support is consistent with the dominant orthogonal orientation.
+    if (bestSupport < 0.30 * totalLength) return ring;
+
+    // Refine dominant Manhattan orientation theta using four-fold formula over dominant cluster
+    double S = 0.0;
+    double C = 0.0;
+    for (const auto& e : edges) {
+        if (std::cos(4.0 * (e.angle - bestAngle)) >= cos80) {
+            S += e.length * std::sin(4.0 * e.angle);
+            C += e.length * std::cos(4.0 * e.angle);
         }
-    const double orientation = std::atan2(sy, sx) / 4;
-    struct Line { double x, y, dx, dy; };
-    std::vector<Line> lines(ring.size());
-    std::vector<bool> supported(ring.size(), false);
-    const auto origin = ring.front();
-    for (std::size_t i = 0; i < ring.size(); ++i) {
-        const auto& a = ring[i]; const auto& b = ring[(i + 1) % ring.size()];
-        const double dx = b.easting - a.easting, dy = b.northing - a.northing;
-        const double length = std::hypot(dx, dy);
-        if (length < 1e-8) return ring;
-        const double angle = std::atan2(dy, dx);
-        const double fitted = orientation + std::round((angle - orientation) / quarterTurn) * quarterTurn;
-        // Long segments near the consensus axis may be straightened. Genuine
-        // diagonals and short facade details keep their original direction.
-        supported[i] = length >= std::max(2.0, 2.0 * maxShift) &&
-            std::abs(fitted - angle) <= std::numbers::pi / 9;
-        lines[i] = {(a.easting + b.easting) / 2 - origin.easting,
-                    (a.northing + b.northing) / 2 - origin.northing,
-                    std::cos(fitted), std::sin(fitted)};
+    }
+    double theta = 0.25 * std::atan2(S, C);
+    // Normalize theta to [-pi/4, pi/4]
+    while (theta > halfQuarterTurn) theta -= quarterTurn;
+    while (theta < -halfQuarterTurn) theta += quarterTurn;
+
+    // Confirm support for refined theta
+    double refinedSupport = 0.0;
+    for (const auto& e : edges) {
+        if (std::cos(4.0 * (e.angle - theta)) >= cos80) {
+            refinedSupport += e.length;
+        }
+    }
+    if (refinedSupport < 0.30 * totalLength) return ring;
+
+    // STEP 2.2: Rotate into Manhattan frame (-theta relative to centroid)
+    ProjectedPoint centroid{0.0, 0.0};
+    for (const auto& pt : ring) {
+        centroid.easting += pt.easting;
+        centroid.northing += pt.northing;
+    }
+    centroid.easting /= ring.size();
+    centroid.northing /= ring.size();
+
+    const double cosTheta = std::cos(theta);
+    const double sinTheta = std::sin(theta);
+
+    struct LocalPt { double u, v; };
+    std::vector<LocalPt> localPts;
+    localPts.reserve(ring.size());
+    for (const auto& pt : ring) {
+        const double rx = pt.easting - centroid.easting;
+        const double ry = pt.northing - centroid.northing;
+        localPts.push_back({
+            rx * cosTheta + ry * sinTheta,
+            -rx * sinTheta + ry * cosTheta
+        });
     }
 
-    std::vector<ProjectedPoint> candidate = ring;
-    std::vector<bool> removed(ring.size(), false);
-    bool changedAny = false;
-    for (std::size_t i = 0; i < ring.size(); ++i) {
-        if (!supported[i] || removed[(i + 1) % ring.size()]) continue;
-        std::size_t j = (i + 1) % ring.size();
-        double gapLength = 0.0;
-        std::size_t gapEdges = 0;
-        while (!supported[j] && gapEdges < 6) {
-            const auto& start = ring[j];
-            const auto& end = ring[(j + 1) % ring.size()];
-            const double dx = end.easting - start.easting;
-            const double dy = end.northing - start.northing;
-            gapLength += std::hypot(dx, dy);
-            const double angle = std::atan2(dy, dx);
-            const double nearestAxis = orientation +
-                std::round((angle - orientation) / quarterTurn) * quarterTurn;
-            // A short edge parallel to the facade may form a real narrow
-            // wing or courtyard step. Only bridge unsupported chamfers.
-            if (std::abs(nearestAxis - angle) <= std::numbers::pi / 12 ||
-                gapLength > 2.0 * maxShift) break;
-            j = (j + 1) % ring.size();
-            ++gapEdges;
-        }
-        if (!supported[j] || j == i || removed[j]) continue;
+    // STEP 2.3: Strict Orthogonal Step Insertion
+    std::vector<LocalPt> stepped;
+    LocalPt current = localPts[0];
+    stepped.push_back(current);
 
-        const auto& a = lines[i];
-        const auto& b = lines[j];
-        const double det = a.dx * b.dy - a.dy * b.dx;
-        // Only perpendicular supporting walls define a reliable square corner.
-        if (std::abs(det) < .8) continue;
-        const double t = ((b.x - a.x) * b.dy - (b.y - a.y) * b.dx) / det;
-        ProjectedPoint p{origin.easting + a.x + t * a.dx, origin.northing + a.y + t * a.dy};
-        if (!std::isfinite(p.easting) || !std::isfinite(p.northing)) continue;
-        bool supportedCorner = true;
-        for (std::size_t k = (i + 1) % ring.size(); ; k = (k + 1) % ring.size()) {
-            if (std::hypot(p.easting - ring[k].easting,
-                           p.northing - ring[k].northing) > maxShift) {
-                supportedCorner = false;
-                break;
+    const std::size_t numLocal = localPts.size();
+    for (std::size_t i = 0; i < numLocal; ++i) {
+        LocalPt target = localPts[(i + 1) % numLocal];
+        const double du = std::abs(target.u - current.u);
+        const double dv = std::abs(target.v - current.v);
+        const double edgeLen = std::hypot(target.u - current.u, target.v - current.v);
+
+        if (du < 1e-4) {
+            // Already vertical
+            target.u = current.u;
+            if (i < numLocal - 1) {
+                stepped.push_back(target);
+                current = target;
+            } else {
+                stepped.back().u = stepped[0].u;
             }
-            if (k == j) break;
+        } else if (dv < 1e-4) {
+            // Already horizontal
+            target.v = current.v;
+            if (i < numLocal - 1) {
+                stepped.push_back(target);
+                current = target;
+            } else {
+                stepped.back().v = stepped[0].v;
+            }
+        } else if (edgeLen >= 3.0 && du > 1e-3 && dv > 1e-3 &&
+                   std::min(du, dv) / std::max(du, dv) > 0.36) {
+            // Genuine diagonal edge (angle between ~20 deg and 70 deg to axes, length >= 3.0m):
+            // Preserve the diagonal wall rather than forcing an artificial 90-degree step.
+            if (i < numLocal - 1) {
+                stepped.push_back(target);
+                current = target;
+            }
+        } else if (du >= dv) {
+            // Predominantly horizontal: insert (target.u, current.v) then target
+            LocalPt mid{target.u, current.v};
+            stepped.push_back(mid);
+            if (i < numLocal - 1) {
+                stepped.push_back(target);
+                current = target;
+            }
+        } else {
+            // Predominantly vertical: insert (current.u, target.v) then target
+            LocalPt mid{current.u, target.v};
+            stepped.push_back(mid);
+            if (i < numLocal - 1) {
+                stepped.push_back(target);
+                current = target;
+            }
         }
-        if (!supportedCorner) continue;
-
-        candidate[(i + 1) % ring.size()] = p;
-        for (std::size_t k = (i + 2) % ring.size(); k != (j + 1) % ring.size();
-             k = (k + 1) % ring.size())
-            removed[k] = true;
-        changedAny = true;
     }
-    if (!changedAny) return ring;
-    std::vector<ProjectedPoint> output;
-    output.reserve(ring.size());
-    for (std::size_t i = 0; i < ring.size(); ++i)
-        if (!removed[i]) output.push_back(candidate[i]);
-    const double area = calculateSignedArea(ring), changed = calculateSignedArea(output);
-    if (output.size() < 3 || area * changed <= 0 ||
-        std::abs(changed - area) > .05 * std::abs(area) ||
-        hasSelfIntersections(output)) return ring;
-    return output;
+
+    // STEP 2.4: Collinear and duplicate vertex pruning helper
+    auto pruneCollinearAndDuplicates = [](std::vector<LocalPt>& pts) {
+        bool changed = true;
+        for (int iter = 0; iter < 100 && changed && pts.size() >= 3; ++iter) {
+            changed = false;
+
+            // 1. Collinear vertices along U or V axis
+            for (std::size_t i = 0; i < pts.size(); ++i) {
+                if (pts.size() <= 3) break;
+                const std::size_t prevIdx = (i + pts.size() - 1) % pts.size();
+                const std::size_t nextIdx = (i + 1) % pts.size();
+                const auto& A = pts[prevIdx];
+                const auto& B = pts[i];
+                const auto& C = pts[nextIdx];
+
+                constexpr double eps = 1e-3;
+                const bool collinearU = (std::abs(A.u - B.u) < eps && std::abs(B.u - C.u) < eps);
+                const bool collinearV = (std::abs(A.v - B.v) < eps && std::abs(B.v - C.v) < eps);
+
+                if (collinearU || collinearV) {
+                    pts.erase(pts.begin() + i);
+                    changed = true;
+                    break;
+                }
+            }
+            if (changed) continue;
+
+            // 2. Near-duplicate vertices (< 0.2m)
+            for (std::size_t i = 0; i < pts.size(); ++i) {
+                if (pts.size() <= 3) break;
+                const std::size_t nextIdx = (i + 1) % pts.size();
+                const double dist = std::hypot(pts[nextIdx].u - pts[i].u,
+                                               pts[nextIdx].v - pts[i].v);
+                if (dist < 0.2) {
+                    pts.erase(pts.begin() + nextIdx);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+    };
+
+    // Initial pruning pass
+    pruneCollinearAndDuplicates(stepped);
+
+    // STEP 2.4.1: LOD1 short-edge collapse. Fifteen bounded passes remove
+    // orthogonal raster staircases shorter than five metres while the final
+    // topology, area, mask-overlap and neighbouring-instance checks still
+    // reject an unsupported result. A four/six-corner ring is already a
+    // compact architectural primitive (rectangle or L-shape), not a raster
+    // staircase; do not erase its intentional wing/recess.
+    const bool hasRasterStaircase = stepped.size() > 6;
+    for (int pass = 0;
+         hasRasterStaircase && pass < 15 && stepped.size() > 4;
+         ++pass) {
+        double minLen = 2.5;
+        std::size_t bestIdx = stepped.size();
+
+        for (std::size_t i = 0; i < stepped.size(); ++i) {
+            const std::size_t nextIdx = (i + 1) % stepped.size();
+            const std::size_t prevIdx = (i + stepped.size() - 1) % stepped.size();
+            const std::size_t afterNextIdx = (nextIdx + 1) % stepped.size();
+
+            const bool isVert = std::abs(stepped[nextIdx].u - stepped[i].u) < 1e-3;
+            const bool isHoriz = std::abs(stepped[nextIdx].v - stepped[i].v) < 1e-3;
+            if (!isVert && !isHoriz) continue;
+
+            const bool prevIsHoriz = std::abs(stepped[i].v - stepped[prevIdx].v) < 1e-3;
+            const bool prevIsVert = std::abs(stepped[i].u - stepped[prevIdx].u) < 1e-3;
+            const bool nextIsHoriz = std::abs(stepped[afterNextIdx].v - stepped[nextIdx].v) < 1e-3;
+            const bool nextIsVert = std::abs(stepped[afterNextIdx].u - stepped[nextIdx].u) < 1e-3;
+
+            if (isVert && (!prevIsHoriz || !nextIsHoriz)) continue;
+            if (isHoriz && (!prevIsVert || !nextIsVert)) continue;
+
+            const double edgeLen = std::hypot(stepped[nextIdx].u - stepped[i].u,
+                                              stepped[nextIdx].v - stepped[i].v);
+            if (edgeLen < minLen) {
+                minLen = edgeLen;
+                bestIdx = i;
+            }
+        }
+
+        if (bestIdx >= stepped.size()) break; // No collapsible staircase edges < 2.5m remaining
+
+        const std::size_t i = bestIdx;
+        const std::size_t nextIdx = (i + 1) % stepped.size();
+        const std::size_t prevIdx = (i + stepped.size() - 1) % stepped.size();
+        const std::size_t afterNextIdx = (nextIdx + 1) % stepped.size();
+
+        const bool isVertical = std::abs(stepped[nextIdx].u - stepped[i].u) < 1e-3;
+
+        if (isVertical) {
+            const double L0 = std::abs(stepped[i].u - stepped[prevIdx].u);
+            const double L2 = std::abs(stepped[afterNextIdx].u - stepped[nextIdx].u);
+            if (L0 >= L2) {
+                stepped[afterNextIdx].v = stepped[prevIdx].v;
+            } else {
+                stepped[prevIdx].v = stepped[afterNextIdx].v;
+            }
+        } else {
+            const double L0 = std::abs(stepped[i].v - stepped[prevIdx].v);
+            const double L2 = std::abs(stepped[afterNextIdx].v - stepped[nextIdx].v);
+            if (L0 >= L2) {
+                stepped[afterNextIdx].u = stepped[prevIdx].u;
+            } else {
+                stepped[prevIdx].u = stepped[afterNextIdx].u;
+            }
+        }
+
+        if (nextIdx > i) {
+            stepped.erase(stepped.begin() + nextIdx);
+            stepped.erase(stepped.begin() + i);
+        } else {
+            stepped.erase(stepped.begin() + i);
+            stepped.erase(stepped.begin());
+        }
+
+        pruneCollinearAndDuplicates(stepped);
+    }
+
+    if (stepped.size() < 3) return ring;
+
+    // STEP 2.5: Rotate back to world coordinates
+    std::vector<ProjectedPoint> regularized;
+    regularized.reserve(stepped.size());
+    for (const auto& pt : stepped) {
+        ProjectedPoint p;
+        p.easting = centroid.easting + pt.u * cosTheta - pt.v * sinTheta;
+        p.northing = centroid.northing + pt.u * sinTheta + pt.v * cosTheta;
+        regularized.push_back(p);
+    }
+
+    // STEP 2.6: Polygon Validation
+    if (regularized.size() < 3) return ring;
+
+    for (std::size_t i = 0; i < regularized.size(); ++i) {
+        const auto& p1 = regularized[i];
+        const auto& p2 = regularized[(i + 1) % regularized.size()];
+        if (std::hypot(p2.easting - p1.easting, p2.northing - p1.northing) < 1e-4) {
+            return ring;
+        }
+    }
+
+    const double origSignedArea = calculateSignedArea(ring);
+    double newSignedArea = calculateSignedArea(regularized);
+
+    if (!std::isfinite(origSignedArea) || !std::isfinite(newSignedArea) || std::abs(newSignedArea) < 1e-6) {
+        return ring;
+    }
+
+    // Ensure winding matches original
+    if (origSignedArea * newSignedArea < 0.0) {
+        std::reverse(regularized.begin(), regularized.end());
+        newSignedArea = calculateSignedArea(regularized);
+    }
+
+    // LOD1 collapse may move a material amount of pixel-boundary area. This
+    // ring-local guard is followed by whole-footprint area and mask-IoU checks.
+    const double allowedAreaTol = areaDeviationTolerance;
+    if (std::abs(std::abs(newSignedArea) - std::abs(origSignedArea)) > allowedAreaTol * std::abs(origSignedArea)) {
+        return ring;
+    }
+
+    if (hasSelfIntersections(regularized)) {
+        return ring;
+    }
+
+    return regularized;
 }
 
 //topological helpers
-double FootprintVectorizer::calculateSignedArea(const std::vector<ProjectedPoint>& pts) 
+double FootprintVectorizer::calculateSignedArea(const std::vector<ProjectedPoint>& pts)
 {
      size_t n = pts.size();
-     if (n < 3) 
+     if (n < 3)
      {
          return 0.0;
      }
@@ -1884,26 +2104,26 @@ double FootprintVectorizer::calculateSignedArea(const std::vector<ProjectedPoint
      // Translate to local origin (pts[0]) to prevent floating-point cancellation on massive UTM coordinates
      double cx = pts[0].easting;
      double cy = pts[0].northing;
-     for (size_t i = 0; i < n; i++) 
+     for (size_t i = 0; i < n; i++)
      {
          size_t j = (i + 1) % n;
          area += ((pts[i].easting - cx) * (pts[j].northing - cy)) - ((pts[j].easting - cx) * (pts[i].northing - cy));
-     } 
-     return area / 2.0; 
+     }
+     return area / 2.0;
 }
 
-bool FootprintVectorizer::doIntersect(const ProjectedPoint& p1, const ProjectedPoint& q1, const ProjectedPoint& p2, const ProjectedPoint& q2) 
+bool FootprintVectorizer::doIntersect(const ProjectedPoint& p1, const ProjectedPoint& q1, const ProjectedPoint& p2, const ProjectedPoint& q2)
 {
-     auto orientation = [](const ProjectedPoint& a, const ProjectedPoint& b, const ProjectedPoint& c) -> int 
+     auto orientation = [](const ProjectedPoint& a, const ProjectedPoint& b, const ProjectedPoint& c) -> int
      {
          double val = (b.northing - a.northing) * (c.easting - b.easting) - (b.easting - a.easting) * (c.northing - b.northing);
-         if (std::abs(val) < 1e-6) 
+         if (std::abs(val) < 1e-6)
          {
              return 0; // Collinear
          }
-         return (val > 0) ? 1 : 2; 
+         return (val > 0) ? 1 : 2;
      };
-     auto onSegment = [](const ProjectedPoint& p, const ProjectedPoint& q, const ProjectedPoint& r) -> bool 
+     auto onSegment = [](const ProjectedPoint& p, const ProjectedPoint& q, const ProjectedPoint& r) -> bool
      {
          return q.easting <= std::max(p.easting, r.easting) && q.easting >= std::min(p.easting, r.easting) &&
              q.northing <= std::max(p.northing, r.northing) && q.northing >= std::min(p.northing, r.northing);
@@ -1914,44 +2134,44 @@ bool FootprintVectorizer::doIntersect(const ProjectedPoint& p1, const ProjectedP
      int o3 = orientation(p2, q2, p1);
      int o4 = orientation(p2, q2, q1);
 
-     if (o1 != o2 && o3 != o4) 
+     if (o1 != o2 && o3 != o4)
      {
          return true;
      }
-     if (o1 == 0 && onSegment(p1, p2, q1)) 
+     if (o1 == 0 && onSegment(p1, p2, q1))
      {
          return true;
      }
-     if (o2 == 0 && onSegment(p1, q2, q1)) 
+     if (o2 == 0 && onSegment(p1, q2, q1))
      {
          return true;
      }
-     if (o3 == 0 && onSegment(p2, p1, q2)) 
+     if (o3 == 0 && onSegment(p2, p1, q2))
      {
          return true;
      }
-     if (o4 == 0 && onSegment(p2, q1, q2)) 
+     if (o4 == 0 && onSegment(p2, q1, q2))
      {
          return true;
      }
      return false;
 }
 
-bool FootprintVectorizer::hasSelfIntersections(const std::vector<ProjectedPoint>& ring) 
+bool FootprintVectorizer::hasSelfIntersections(const std::vector<ProjectedPoint>& ring)
 {
      size_t n = ring.size();
      if (n < 4) return false;
-     for (size_t i = 0; i < n; i++) 
+     for (size_t i = 0; i < n; i++)
      {
          size_t next_i = (i + 1) % n;
-         for (size_t j = i + 2; j < n; j++) 
+         for (size_t j = i + 2; j < n; j++)
          {
              size_t next_j = (j + 1) % n;
-             if (i == next_j || next_i == j) 
+             if (i == next_j || next_i == j)
              {
                  continue; // Skip adjacent edges
              }
-             if (doIntersect(ring[i], ring[next_i], ring[j], ring[next_j])) 
+             if (doIntersect(ring[i], ring[next_i], ring[j], ring[next_j]))
              {
                  return true;
              }
@@ -1960,15 +2180,15 @@ bool FootprintVectorizer::hasSelfIntersections(const std::vector<ProjectedPoint>
      return false;
 }
 
-bool FootprintVectorizer::isPointInPolygon(const ProjectedPoint& pt, const std::vector<ProjectedPoint>& polygon) 
+bool FootprintVectorizer::isPointInPolygon(const ProjectedPoint& pt, const std::vector<ProjectedPoint>& polygon)
 {
      bool inside = false;
      size_t n = polygon.size();
-     for (size_t i = 0, j = n - 1; i < n; j = i++) 
+     for (size_t i = 0, j = n - 1; i < n; j = i++)
      {
          if (((polygon[i].northing > pt.northing) != (polygon[j].northing > pt.northing)) &&
-             (pt.easting < (polygon[j].easting - polygon[i].easting) * (pt.northing - polygon[i].northing) / 
-                           (polygon[j].northing - polygon[i].northing) + polygon[i].easting)) 
+             (pt.easting < (polygon[j].easting - polygon[i].easting) * (pt.northing - polygon[i].northing) /
+                           (polygon[j].northing - polygon[i].northing) + polygon[i].easting))
          {
              inside = !inside;
          }
@@ -1976,15 +2196,15 @@ bool FootprintVectorizer::isPointInPolygon(const ProjectedPoint& pt, const std::
      return inside;
 }
 
-bool FootprintVectorizer::ringsIntersect(const std::vector<ProjectedPoint>& ringA, const std::vector<ProjectedPoint>& ringB) 
+bool FootprintVectorizer::ringsIntersect(const std::vector<ProjectedPoint>& ringA, const std::vector<ProjectedPoint>& ringB)
 {
-     for (size_t i = 0; i < ringA.size(); i++) 
+     for (size_t i = 0; i < ringA.size(); i++)
      {
          size_t next_i = (i + 1) % ringA.size();
-         for (size_t j = 0; j < ringB.size(); j++) 
+         for (size_t j = 0; j < ringB.size(); j++)
          {
              size_t next_j = (j + 1) % ringB.size();
-             if (doIntersect(ringA[i], ringA[next_i], ringB[j], ringB[next_j])) 
+             if (doIntersect(ringA[i], ringA[next_i], ringB[j], ringB[next_j]))
              {
                  return true;
              }
@@ -2002,13 +2222,13 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
 {
      FootprintVectorizationResult result;
 
-     if (!config.validate() || stats.componentId <= 0 || stats.physicalAreaSquareMetres <= 0.0) 
+     if (!config.validate() || stats.componentId <= 0 || stats.physicalAreaSquareMetres <= 0.0)
      {
          result.errorMessage = "Invalid configuration, negative area, or component ID.";
          return result;
      }
 
-     if (!labelRaster.isValid() || labelRaster.width != metadata.width || labelRaster.height != metadata.height) 
+     if (!labelRaster.isValid() || labelRaster.width != metadata.width || labelRaster.height != metadata.height)
      {
          result.errorMessage = "Label raster mismatch.";
          return result;
@@ -2016,11 +2236,11 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
 
      // Strict Metric CRS Validation
      double det = metadata.geoTransform[1] * metadata.geoTransform[5] - metadata.geoTransform[2] * metadata.geoTransform[4];
-     if (!metadata.isGeoreferenced || metadata.projectionRef.empty() || metadata.projectionRef.find("PROJCS") == std::string::npos || std::abs(det) < 1e-8) 
+     if (!metadata.isGeoreferenced || metadata.projectionRef.empty() || metadata.projectionRef.find("PROJCS") == std::string::npos || std::abs(det) < 1e-8)
      {
          result.errorMessage = "Unprojected or geographic CRS detected. Footprint vectorization requires a projected metric working CRS.";
          return result;
-     } 
+     }
 
      // Bounding Box Validation using int64_t to prevent overflow
      int64_t bx = stats.pixelBoundingBox.x;
@@ -2028,48 +2248,132 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
      int64_t bw = stats.pixelBoundingBox.width;
      int64_t bh = stats.pixelBoundingBox.height;
 
-     if (bw <= 0 || bh <= 0 || bx < 0 || by < 0 || bx + bw > labelRaster.width || by + bh > labelRaster.height) 
+     if (bw <= 0 || bh <= 0 || bx < 0 || by < 0 || bx + bw > labelRaster.width || by + bh > labelRaster.height)
      {
          result.errorMessage = "Component bounding box exceeds raster limits.";
          return result;
+     }
+
+     const double gsd = std::max(1e-4, metadata.gsd);
+     const int dilationRadius = (config.footprintDilationMetres > 0.0f && gsd > 1e-6)
+         ? static_cast<int>(std::ceil(config.footprintDilationMetres / gsd))
+         : 0;
+
+     const int roiX = std::max<int>(0, static_cast<int>(bx - dilationRadius));
+     const int roiY = std::max<int>(0, static_cast<int>(by - dilationRadius));
+     const int roiMaxX = std::min<int>(labelRaster.width, static_cast<int>(bx + bw + dilationRadius));
+     const int roiMaxY = std::min<int>(labelRaster.height, static_cast<int>(by + bh + dilationRadius));
+     const int roiW = roiMaxX - roiX;
+     const int roiH = roiMaxY - roiY;
+
+     cv::Mat roiMask = cv::Mat::zeros(roiH, roiW, CV_8UC1);
+     for (int r = 0; r < roiH; ++r)
+     {
+         const int globalR = roiY + r;
+         const std::size_t offset = static_cast<std::size_t>(globalR) * labelRaster.width;
+         for (int c = 0; c < roiW; ++c)
+         {
+             const int globalC = roiX + c;
+             if (labelRaster.data[offset + globalC] == stats.componentId)
+             {
+                 roiMask.at<uint8_t>(r, c) = 1;
+             }
+         }
+     }
+
+     if (dilationRadius > 0)
+     {
+         // Dilation is intended to compensate for semantic edge blur at the
+         // exterior facade.  It must not pave over a real enclosed courtyard.
+         // Record background components that are enclosed by the observed
+         // instance before widening its outer boundary, then restore them.
+         cv::Mat observedInverse;
+         cv::compare(roiMask, 0, observedInverse, cv::CMP_EQ);
+         cv::Mat backgroundLabels;
+         const int backgroundCount = cv::connectedComponents(
+             observedInverse, backgroundLabels, 4, CV_32S);
+         std::vector<uint8_t> enclosedBackground(
+             static_cast<std::size_t>(backgroundCount), 1);
+         if (!enclosedBackground.empty()) enclosedBackground[0] = 0;
+         for (int c = 0; c < roiW; ++c)
+         {
+             enclosedBackground[backgroundLabels.at<int>(0, c)] = 0;
+             enclosedBackground[backgroundLabels.at<int>(roiH - 1, c)] = 0;
+         }
+         for (int r = 0; r < roiH; ++r)
+         {
+             enclosedBackground[backgroundLabels.at<int>(r, 0)] = 0;
+             enclosedBackground[backgroundLabels.at<int>(r, roiW - 1)] = 0;
+         }
+
+         cv::Mat kernel = cv::getStructuringElement(
+             cv::MORPH_RECT, cv::Size(2 * dilationRadius + 1, 2 * dilationRadius + 1));
+         cv::dilate(roiMask, roiMask, kernel);
+         // Do not dilate into other building components
+         for (int r = 0; r < roiH; ++r)
+         {
+             const int globalR = roiY + r;
+             const std::size_t offset = static_cast<std::size_t>(globalR) * labelRaster.width;
+             for (int c = 0; c < roiW; ++c)
+             {
+                 const int globalC = roiX + c;
+                 const auto label = labelRaster.data[offset + globalC];
+                 if (label > 0 && label != stats.componentId)
+                 {
+                     roiMask.at<uint8_t>(r, c) = 0;
+                 }
+             }
+         }
+
+         for (int r = 0; r < roiH; ++r)
+         {
+             for (int c = 0; c < roiW; ++c)
+             {
+                 const int backgroundId = backgroundLabels.at<int>(r, c);
+                 if (backgroundId > 0 &&
+                     enclosedBackground[static_cast<std::size_t>(backgroundId)] != 0)
+                 {
+                     roiMask.at<uint8_t>(r, c) = 0;
+                 }
+             }
+         }
      }
 
      //Exact Raster-Cell Edge Polygonization (Replaces OpenCV findContours)
      std::unordered_map<int64_t, int64_t> edgeMap;
      auto encodeNode = [](int32_t x, int32_t y) -> int64_t { return (static_cast<int64_t>(y) << 32) | static_cast<uint32_t>(x); };
      auto decodeNode = [](int64_t val, int32_t& x, int32_t& y) { y = static_cast<int32_t>(val >> 32); x = static_cast<int32_t>(val & 0xFFFFFFFF); };
-    
-     auto addEdge = [&](int32_t x1, int32_t y1, int32_t x2, int32_t y2) 
+
+     auto addEdge = [&](int32_t x1, int32_t y1, int32_t x2, int32_t y2)
      {
          edgeMap[encodeNode(x1, y1)] = encodeNode(x2, y2);
      };
 
      auto isMasked = [&](int32_t c, int32_t r) -> bool {
-         if (c < bx || r < by || c >= bx + bw || r >= by + bh) return false;
-         std::size_t offset = static_cast<std::size_t>(r) * labelRaster.width + c;
-         return labelRaster.data[offset] == stats.componentId;
+         if (c < roiX || r < roiY || c >= roiMaxX || r >= roiMaxY) return false;
+         return roiMask.at<uint8_t>(r - roiY, c - roiX) != 0;
      };
 
      // Scan ROI to extract unshared exterior cell edges
-     for (int32_t r = by; r < by + bh; ++r) 
+     for (int32_t r = roiY; r < roiMaxY; ++r)
      {
-         for (int32_t c = bx; c < bx + bw; ++c) 
+         for (int32_t c = roiX; c < roiMaxX; ++c)
          {
-             if (isMasked(c, r)) 
+             if (isMasked(c, r))
              {
-                 if (!isMasked(c, r - 1)) 
+                 if (!isMasked(c, r - 1))
                  {
                      addEdge(c, r, c + 1, r);         // Top edge
                  }
-                 if (!isMasked(c + 1, r)) 
+                 if (!isMasked(c + 1, r))
                  {
                      addEdge(c + 1, r, c + 1, r + 1); // Right edge
                  }
-                 if (!isMasked(c, r + 1)) 
-                 { 
+                 if (!isMasked(c, r + 1))
+                 {
                      addEdge(c + 1, r + 1, c, r + 1); // Bottom edge
                  }
-                 if (!isMasked(c - 1, r)) 
+                 if (!isMasked(c - 1, r))
                  {
                      addEdge(c, r + 1, c, r);         // Left edge
                  }
@@ -2079,36 +2383,36 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
 
      //Assemble Rings from Edge Map
      std::vector<std::vector<ProjectedPoint>> rawRings;
-     while (!edgeMap.empty()) 
+     while (!edgeMap.empty())
      {
          auto it = edgeMap.begin();
          int64_t startNode = it->first;
          int64_t currNode = startNode;
-        
+
          std::vector<ProjectedPoint> ring;
-         do 
+         do
          {
              int32_t px, py;
              decodeNode(currNode, px, py);
-            
+
              // Generate Project Corner Coordinate exactly
              double E = metadata.geoTransform[0] + px * metadata.geoTransform[1] + py * metadata.geoTransform[2];
              double N = metadata.geoTransform[3] + px * metadata.geoTransform[4] + py * metadata.geoTransform[5];
              ring.push_back({E, N});
-            
+
              int64_t nextNode = edgeMap[currNode];
              edgeMap.erase(currNode);
              currNode = nextNode;
-         } 
+         }
          while (currNode != startNode && edgeMap.count(currNode));
-        
-         if (ring.size() >= 3) 
+
+         if (ring.size() >= 3)
          {
              rawRings.push_back(ring);
          }
      }
 
-     if (rawRings.empty()) 
+     if (rawRings.empty())
      {
          result.errorMessage = "Failed to construct valid cell boundaries.";
          return result;
@@ -2117,7 +2421,7 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
      //classify Rings & Reject Multipart Components
      std::vector<std::vector<ProjectedPoint>> outerRings;
      std::vector<std::vector<ProjectedPoint>> holeRings;
-    
+
      // A negative affine determinant reverses polygon winding when converting
      // from pixel coordinates to projected coordinates.
      const double affineOrientation = (det >= 0.0) ? 1.0 : -1.0;
@@ -2125,12 +2429,12 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
      for (auto ring : rawRings)
      {
          const double projectedSignedArea = calculateSignedArea(ring);
- 
+
          // Restore the winding produced by the boundary tracer before the
          // affine transform changed its orientation.
          const double topologySignedArea =
              projectedSignedArea * affineOrientation;
- 
+
          if (topologySignedArea > 0.0)
          {
              // Canonical projected-coordinate output: outer ring is CCW.
@@ -2156,37 +2460,56 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
          }
      }
 
-     if (outerRings.size() != 1) 
+     if (outerRings.size() != 1)
      {
          result.errorMessage = "Component has multiple disconnected outer rings (multipart). Rejecting to prevent topological corruption.";
          return result;
      }
-    
+
      std::vector<ProjectedPoint> rawOuter = outerRings[0];
+
+    double rawOuterArea = std::abs(calculateSignedArea(rawOuter));
+    for (const auto& hole : holeRings)
+        rawOuterArea -= std::abs(calculateSignedArea(hole));
+    const double referenceArea = (dilationRadius > 0) ? rawOuterArea : stats.physicalAreaSquareMetres;
+    const std::size_t dilatedPixelCount = (dilationRadius > 0)
+        ? static_cast<std::size_t>(cv::countNonZero(roiMask))
+        : static_cast<std::size_t>(stats.pixelCount);
 
      //Metric RDP Simplification with Validation
      auto simplifyAndValidateRing = [&](const std::vector<ProjectedPoint>& rawRing,
                                         double initialEpsilon) -> std::vector<ProjectedPoint>
      {
-         double epsilon = initialEpsilon;
+         if (rawRing.empty()) return {};
+         double minE = rawRing.front().easting, maxE = rawRing.front().easting;
+         double minN = rawRing.front().northing, maxN = rawRing.front().northing;
+         for (const auto& p : rawRing)
+         {
+             minE = std::min(minE, p.easting);
+             maxE = std::max(maxE, p.easting);
+             minN = std::min(minN, p.northing);
+             maxN = std::max(maxN, p.northing);
+         }
+         const double minDim = std::max(1.0, std::min(maxE - minE, maxN - minN));
+         double epsilon = std::min(initialEpsilon, std::max(0.5, minDim * 0.12));
          std::vector<ProjectedPoint> simplifiedRing;
-        
+
          ProjectedPoint centroid = {0.0, 0.0};
-         for (const auto& p : rawRing) 
-         { 
-             centroid.easting += p.easting; 
-             centroid.northing += p.northing; 
+         for (const auto& p : rawRing)
+         {
+             centroid.easting += p.easting;
+             centroid.northing += p.northing;
          }
          centroid.easting /= rawRing.size(); centroid.northing /= rawRing.size();
 
          const double rawSignedArea = calculateSignedArea(rawRing);
-         const double areaBudget = std::min(0.05,
-             static_cast<double>(config.footprintAreaDeviationTolerance));
+         const double areaBudget =
+             static_cast<double>(config.footprintAreaDeviationTolerance);
 
          for (int attempts = 0; attempts < 8; ++attempts)
          {
              std::vector<cv::Point2f> localPoints;
-             for (const auto& pt : rawRing) 
+             for (const auto& pt : rawRing)
              {
                  localPoints.push_back(cv::Point2f(static_cast<float>(pt.easting - centroid.easting), static_cast<float>(pt.northing - centroid.northing)));
              }
@@ -2195,17 +2518,17 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
              cv::approxPolyDP(localPoints, simplifiedLocal, epsilon, true);
 
              simplifiedRing.clear();
-             for (const auto& lpt : simplifiedLocal) 
+             for (const auto& lpt : simplifiedLocal)
              {
                  simplifiedRing.push_back({lpt.x + centroid.easting, lpt.y + centroid.northing});
              }
 
              // Remove duplicated closing vertex ONLY if exact match
-             if (simplifiedRing.size() > 0 && 
-                 simplifiedRing.front().easting == simplifiedRing.back().easting && 
-                 simplifiedRing.front().northing == simplifiedRing.back().northing) 
+             if (simplifiedRing.size() > 0 &&
+                 simplifiedRing.front().easting == simplifiedRing.back().easting &&
+                 simplifiedRing.front().northing == simplifiedRing.back().northing)
              {
-                 simplifiedRing.pop_back(); 
+                 simplifiedRing.pop_back();
              }
 
              // Validation
@@ -2228,7 +2551,7 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
 
      result.projectedFootprint.outerRing = simplifyAndValidateRing(
          rawOuter, config.footprintSimplificationToleranceMetres);
-     if (result.projectedFootprint.outerRing.empty()) 
+     if (result.projectedFootprint.outerRing.empty())
      {
          result.errorMessage = "Failed to simplify outer ring into valid topology.";
          return result;
@@ -2237,7 +2560,7 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
      // A near-rectangular image-derived footprint may be regularized to its
      // dominant axes. Work in local metres to avoid float loss at UTM
      // eastings/northings. Preserve genuine concavity and all courtyards.
-     if (config.regularizeRectangularFootprints && holeRings.empty())
+     if (config.regularizeRectangularFootprints)
      {
          const ProjectedPoint origin = rawOuter.front();
          std::vector<cv::Point2f> local;
@@ -2250,23 +2573,67 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
          std::vector<cv::Point2f> hull;
          cv::convexHull(local, hull);
          const double hullArea = std::abs(cv::contourArea(hull));
-
-         // A high box fill alone also accepts L/U/E-shaped buildings. Require
-         // near-convex evidence so those architectural recesses stay intact.
-         // Rounded convex rectangles can still qualify at the looser fill ratio.
+         // Rectangle candidacy is governed by box fill, corner support, area,
+         // final mask IoU and neighbour exclusion. Concavity alone is not a
+         // veto because tree occlusion can create artificial recesses.
          cv::Point2f corners[4];
          box.points(corners);
          bool cornersSupported = true;
+         const double halfPixelDiagonal = 0.5 * std::hypot(
+             std::hypot(metadata.geoTransform[1], metadata.geoTransform[4]),
+             std::hypot(metadata.geoTransform[2], metadata.geoTransform[5]));
+         const double cornerSupportDistance =
+             config.maxCornerAdjustmentMetres +
+             config.footprintDilationMetres + halfPixelDiagonal;
          for (const auto& corner : corners)
          {
              if (std::abs(cv::pointPolygonTest(local, corner, true)) >
                  config.maxCornerAdjustmentMetres + 1e-6)
                  cornersSupported = false;
+
+             // Check support against the observed instance, not only the
+             // already-dilated outline.  This retains the requested removal
+             // of the global convex-hull-solidity veto while preventing a
+             // deep L/U-shaped recess from being paved into a rectangle.
+             const double cornerE = origin.easting + corner.x;
+             const double cornerN = origin.northing + corner.y;
+             double nearestObserved = std::numeric_limits<double>::infinity();
+             for (int row = static_cast<int>(by);
+                  row < static_cast<int>(by + bh); ++row)
+             {
+                 for (int column = static_cast<int>(bx);
+                      column < static_cast<int>(bx + bw); ++column)
+                 {
+                     if (labelRaster.data[
+                             static_cast<std::size_t>(row) * labelRaster.width +
+                             column] != stats.componentId)
+                         continue;
+                     const double centreE = metadata.geoTransform[0] +
+                         (column + 0.5) * metadata.geoTransform[1] +
+                         (row + 0.5) * metadata.geoTransform[2];
+                     const double centreN = metadata.geoTransform[3] +
+                         (column + 0.5) * metadata.geoTransform[4] +
+                         (row + 0.5) * metadata.geoTransform[5];
+                     nearestObserved = std::min(nearestObserved,
+                         std::hypot(centreE - cornerE, centreN - cornerN));
+                 }
+             }
+             if (nearestObserved > cornerSupportDistance + 1e-6)
+                 cornersSupported = false;
          }
+
+         double totalHolesArea = 0.0;
+         for (const auto& hole : holeRings)
+         {
+             totalHolesArea += std::abs(calculateSignedArea(hole));
+         }
+         const double expectedOuterArea = referenceArea + totalHolesArea;
+
+         // A building must be extremely close to its own convex hull to be treated as a basic rectangle.
+         // This prevents E-shaped or U-shaped complexes from being paved over by a single 4-point bounding box.
          if (boxArea > 0.0 && rawArea / boxArea >= config.minimumRectangleFillRatio &&
              hullArea > 0.0 && rawArea / hullArea >= 0.96 && cornersSupported &&
-             std::abs(boxArea - stats.physicalAreaSquareMetres) <=
-                 config.footprintAreaDeviationTolerance * stats.physicalAreaSquareMetres)
+             std::abs(boxArea - expectedOuterArea) <= config.footprintAreaDeviationTolerance * expectedOuterArea)
          {
              auto& ring = result.projectedFootprint.outerRing;
              ring.clear();
@@ -2278,16 +2645,18 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
          }
      }
 
-     double finalProjectedArea = std::abs(calculateSignedArea(result.projectedFootprint.outerRing)); 
+     double finalProjectedArea = std::abs(calculateSignedArea(result.projectedFootprint.outerRing));
 
      if (config.regularizeSupportedEdges)
      {
          result.projectedFootprint.outerRing = regularizeEdges(
-             result.projectedFootprint.outerRing, config.maxCornerAdjustmentMetres);
+             result.projectedFootprint.outerRing,
+             config.maxCornerAdjustmentMetres,
+             config.footprintAreaDeviationTolerance);
          finalProjectedArea = std::abs(calculateSignedArea(result.projectedFootprint.outerRing));
      }
 
-     for (const auto& rawHole : holeRings) 
+     for (const auto& rawHole : holeRings)
      {
          std::vector<ProjectedPoint> validHole = simplifyAndValidateRing(
              rawHole, config.footprintSimplificationToleranceMetres);
@@ -2295,7 +2664,10 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
          // Retry the exact pixel-edge geometry before rejecting topology.
          if (validHole.empty()) validHole = rawHole;
          if (config.regularizeSupportedEdges)
-             validHole = regularizeEdges(validHole, config.maxCornerAdjustmentMetres);
+             validHole = regularizeEdges(
+                 validHole,
+                 config.maxCornerAdjustmentMetres,
+                 config.footprintAreaDeviationTolerance);
          if (!isPointInPolygon(validHole[0], result.projectedFootprint.outerRing) ||
              ringsIntersect(validHole, result.projectedFootprint.outerRing))
          {
@@ -2346,16 +2718,13 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
          finalProjectedArea -= std::abs(calculateSignedArea(hole));
 
      //area Deviation Enforcement
-     double areaDeviation = std::abs(finalProjectedArea - stats.physicalAreaSquareMetres) / stats.physicalAreaSquareMetres;
-     if (areaDeviation > config.footprintAreaDeviationTolerance) 
+     double areaDeviation = std::abs(finalProjectedArea - referenceArea) / referenceArea;
+     if (areaDeviation > config.footprintAreaDeviationTolerance)
      {
          result.projectedFootprint.outerRing = rawOuter;
          result.projectedFootprint.holes = holeRings;
-         finalProjectedArea = std::abs(calculateSignedArea(rawOuter));
-         for (const auto& hole : holeRings)
-             finalProjectedArea -= std::abs(calculateSignedArea(hole));
-         areaDeviation = std::abs(finalProjectedArea - stats.physicalAreaSquareMetres) /
-             stats.physicalAreaSquareMetres;
+         finalProjectedArea = rawOuterArea;
+         areaDeviation = std::abs(finalProjectedArea - referenceArea) / referenceArea;
          if (areaDeviation > config.footprintAreaDeviationTolerance)
          {
              result.errorMessage = "Observed footprint exceeds configured area tolerance.";
@@ -2367,7 +2736,7 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
      }
 
      //Generate Corresponding Pixel Polygon (Preserves exact Projected Vertex Correspondence)
-     auto buildPixelRing = [&](const std::vector<ProjectedPoint>& projRing) -> std::vector<PixelPoint> 
+     auto buildPixelRing = [&](const std::vector<ProjectedPoint>& projRing) -> std::vector<PixelPoint>
      {
          std::vector<PixelPoint> pixRing;
          double invDet = metadata.geoTransform[1] * metadata.geoTransform[5] - metadata.geoTransform[2] * metadata.geoTransform[4];
@@ -2375,8 +2744,8 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
          double invGT2 = -metadata.geoTransform[2] / invDet;
          double invGT4 = -metadata.geoTransform[4] / invDet;
          double invGT5 = metadata.geoTransform[1] / invDet;
-        
-         for (const auto& pt : projRing) 
+
+         for (const auto& pt : projRing)
          {
              double dE = pt.easting - metadata.geoTransform[0];
              double dN = pt.northing - metadata.geoTransform[3];
@@ -2389,6 +2758,7 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
      // alone misses a shifted polygon of the same size, and a sharp facade is
      // not useful if it steals another labelled roof. Pixel centres match the
      // source raster's cell-edge polygon convention.
+     bool initialNeighbourOverlap = false;
      auto fitsInstance = [&](const FootprintPolygon<ProjectedPoint>& polygon,
                              bool& coversNeighbour) -> bool
      {
@@ -2407,7 +2777,7 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
 
          const cv::Rect bounds = cv::boundingRect(pixelOuter) &
              cv::Rect(0, 0, labelRaster.width, labelRaster.height);
-         std::size_t candidatePixels = 0, matchingPixels = 0;
+         std::size_t candidatePixels = 0, matchingPixels = 0, neighbourPixels = 0;
          coversNeighbour = false;
          for (int row = bounds.y; row < bounds.y + bounds.height; ++row)
          {
@@ -2423,28 +2793,38 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
                  ++candidatePixels;
                  const auto label = labelRaster.data[
                      static_cast<std::size_t>(row) * labelRaster.width + col];
-                 if (label == stats.componentId) ++matchingPixels;
-                 else if (label > 0) coversNeighbour = true;
+                 if (isMasked(col, row)) ++matchingPixels;
+                 if (label > 0 && label != stats.componentId) ++neighbourPixels;
              }
          }
+         const double neighbourRatio = stats.pixelCount > 0 ?
+             static_cast<double>(neighbourPixels) / stats.pixelCount : 0.0;
+         const bool isBoundingBox = std::any_of(result.warnings.begin(), result.warnings.end(),
+             [](const std::string& w) { return w.find("Near-rectangular") != std::string::npos; });
+         const double maxNeighbourRatio = (isBoundingBox || initialNeighbourOverlap) ? 0.0 : 0.035;
+         coversNeighbour = (neighbourRatio > maxNeighbourRatio);
          const std::size_t unionPixels =
-             static_cast<std::size_t>(stats.pixelCount) + candidatePixels - matchingPixels;
+             dilatedPixelCount + candidatePixels - matchingPixels;
          const double pixelIoU = unionPixels > 0
              ? static_cast<double>(matchingPixels) / unionPixels : 0.0;
-         return !coversNeighbour && pixelIoU >= config.minimumFootprintMaskIoU;
+         const double requiredIoU =
+             static_cast<double>(config.minimumFootprintMaskIoU);
+         return !coversNeighbour && pixelIoU >= requiredIoU;
      };
 
      bool coversNeighbour = false;
      if (!fitsInstance(result.projectedFootprint, coversNeighbour))
      {
-         const bool initialNeighbourOverlap = coversNeighbour;
+         initialNeighbourOverlap = coversNeighbour;
+         std::erase(result.warnings,
+             std::string("Near-rectangular footprint regularized to supported axes."));
          bool foundSupportedFit = false;
 
          // Do not discard every straight facade because one corner crossed a
          // neighbouring label. Retry RDP at progressively smaller metric
          // tolerances, preserving all courtyards and the same pixel-level
          // alignment check. The exact observed cell boundary is the last resort.
-         for (double scale : {0.75, 0.5, 0.25, 0.125})
+         for (double scale : {1.0, 0.75, 0.5, 0.25, 0.125})
          {
              FootprintPolygon<ProjectedPoint> trial;
              const double epsilon =
@@ -2461,16 +2841,13 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
              for (const auto& hole : result.projectedFootprint.holes)
                  trialArea -= std::abs(calculateSignedArea(hole));
              if (!validCourtyards() ||
-                 std::abs(trialArea - stats.physicalAreaSquareMetres) >
-                     config.footprintAreaDeviationTolerance *
-                         stats.physicalAreaSquareMetres) continue;
+                 std::abs(trialArea - referenceArea) >
+                     config.footprintAreaDeviationTolerance * referenceArea) continue;
              if (!fitsInstance(result.projectedFootprint, coversNeighbour)) continue;
              foundSupportedFit = true;
              break;
          }
 
-         std::erase(result.warnings,
-             std::string("Near-rectangular footprint regularized to supported axes."));
          if (foundSupportedFit)
              result.warnings.push_back(
                  "Architectural fit refined to preserve neighbouring roofs and observed pixels.");
@@ -2499,7 +2876,7 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
 #include "../structures/GeographicStructs.h"
 #include "BuildingReconstructionConfig.h"
 
-class FootprintVectorizer 
+class FootprintVectorizer
 {
      public:
      static FootprintVectorizationResult vectorize(
@@ -2507,12 +2884,14 @@ class FootprintVectorizer
          const RasterGrid<int32_t>& labelRaster,
          const SpatialMetadata& metadata,
          const BuildingReconstructionConfig& config);
-        
-     private:
+
      static std::vector<ProjectedPoint> regularizeEdges(
-         const std::vector<ProjectedPoint>& ring, double maxShift);
-     // Topological Math Helpers
+         const std::vector<ProjectedPoint>& ring,
+         double maxShift,
+         double areaDeviationTolerance = 0.25);
      static double calculateSignedArea(const std::vector<ProjectedPoint>& pts);
+
+     private:
      static bool doIntersect(const ProjectedPoint& p1, const ProjectedPoint& q1, const ProjectedPoint& p2, const ProjectedPoint& q2);
      static bool hasSelfIntersections(const std::vector<ProjectedPoint>& ring);
      static bool isPointInPolygon(const ProjectedPoint& pt, const std::vector<ProjectedPoint>& polygon);
@@ -3189,7 +3568,31 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          MeshBuildConfig meshConfig;
          const ScenePresentationDecision sceneDecision = ScenePresentationSelector::select(
              semantics, surface, buildings);
-         const auto presentation = sceneDecision.presentation;
+         auto presentation = sceneDecision.presentation;
+
+         // Presentation Mode: Ensure that for urban scenes, ScenePresentation::FLAT_URBAN can be enforced
+         // so buildings sit on a clean ground reference plane with true 1:1 metric relative height (h_AGL).
+         const char* presentationEnv = std::getenv("DEPTHWIZARD_PRESENTATION");
+         if (presentationEnv)
+         {
+             const std::string envVal(presentationEnv);
+             if (envVal == "flat_urban" || envVal == "FLAT_URBAN" || envVal == "1")
+             {
+                 presentation = ScenePresentation::FLAT_URBAN;
+             }
+             else if (envVal == "metric" || envVal == "METRIC" || envVal == "0")
+             {
+                 presentation = ScenePresentation::METRIC;
+             }
+         }
+         else if (presentation == ScenePresentation::METRIC &&
+                  !buildings.buildings.empty() &&
+                  sceneDecision.vegetationFraction < 0.55 &&
+                  sceneDecision.groundReliefMetres <= 80.0)
+         {
+             // Enforce FLAT_URBAN for urban scenes to eliminate terrain pedestal/distortion
+             presentation = ScenePresentation::FLAT_URBAN;
+         }
          meshConfig.presentation = presentation;
          LOG_INFO << "PipelineService: automatic scene policy for " << jobId
                   << "; " << sceneDecision.reason
@@ -3373,7 +3776,15 @@ CompressedPrimitive DracoCompressor::compress(
         result.featureIdAttrId = dracoMesh.AddAttribute(idAttr, true, numPoints);
     }
 
-    // 6. Fill Attribute Values Safely
+    // 6. Register Optional Attribute: COLOR (COLOR_0)
+    if (primitive.colors.has_value()) {
+        draco::GeometryAttribute colorAttr;
+        colorAttr.Init(draco::GeometryAttribute::COLOR, nullptr, 4,
+                       draco::DT_FLOAT32, false, sizeof(float) * 4, 0);
+        result.colorAttrId = dracoMesh.AddAttribute(colorAttr, true, numPoints);
+    }
+
+    // 7. Fill Attribute Values Safely
     for (size_t i = 0; i < numPoints; ++i) {
         dracoMesh.attribute(result.posAttrId)->SetAttributeValue(
             draco::AttributeValueIndex(i), &primitive.positions[i * 3]);
@@ -3392,9 +3803,14 @@ CompressedPrimitive DracoCompressor::compress(
             dracoMesh.attribute(result.featureIdAttrId)->SetAttributeValue(
                 draco::AttributeValueIndex(i), &primitive.featureIds.value()[i]);
         }
+
+        if (primitive.colors.has_value()) {
+            dracoMesh.attribute(result.colorAttrId)->SetAttributeValue(
+                draco::AttributeValueIndex(i), &primitive.colors.value()[i * 4]);
+        }
     }
 
-    // 7. Configure & Run Encoder
+    // 8. Configure & Run Encoder
     draco::Encoder encoder;
     encoder.SetSpeedOptions(config.speed, config.speed);
     encoder.SetAttributeQuantization(draco::GeometryAttribute::POSITION, config.posQuantization);
@@ -3404,6 +3820,9 @@ CompressedPrimitive DracoCompressor::compress(
     }
     if (primitive.normals.has_value()) {
         encoder.SetAttributeQuantization(draco::GeometryAttribute::NORMAL, config.normalQuantization);
+    }
+    if (primitive.colors.has_value()) {
+        encoder.SetAttributeQuantization(draco::GeometryAttribute::COLOR, config.colorQuantization);
     }
     // Feature IDs are floats only because glTF restricts vertex component
     // types. Do not quantize them: picking requires exact integral values.
@@ -3434,6 +3853,7 @@ struct DracoCompressionConfig {
     int posQuantization{16};
     int uvQuantization{12};
     int normalQuantization{10};
+    int colorQuantization{10};
     int featureIdQuantization{18}; // High enough to losslessly store integer IDs
     int speed{7};
 };
@@ -3452,6 +3872,7 @@ struct CompressedPrimitive {
     int posAttrId{-1};
     int uvAttrId{-1};
     int normalAttrId{-1};
+    int colorAttrId{-1};
     int featureIdAttrId{-1};
     
     MaterialRole materialRole; // Pass through to know what to assign
@@ -3928,6 +4349,8 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     tinygltf::Buffer mainBuffer;
     size_t currentOffset = 0;
     
+    const bool hasEdgeLines = scene.edgePrimitive.positions.size() >= 6 && !scene.edgePrimitive.indices.empty();
+
     // First Pass: Calculate total required memory to avoid reallocations
     size_t totalMemoryRequired = 0;
     for (const auto& prim : compressedPrimitives) {
@@ -3937,6 +4360,18 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     if (scene.texture.has_value()) {
         size_t bytes = scene.texture->bytes.size();
         totalMemoryRequired += bytes + ((4 - (bytes % 4)) % 4);
+    }
+    if (hasEdgeLines) {
+        size_t posBytes = scene.edgePrimitive.positions.size() * sizeof(float);
+        totalMemoryRequired += posBytes + ((4 - (posBytes % 4)) % 4);
+
+        if (scene.edgePrimitive.colors.has_value() && !scene.edgePrimitive.colors->empty()) {
+            size_t colBytes = scene.edgePrimitive.colors->size() * sizeof(float);
+            totalMemoryRequired += colBytes + ((4 - (colBytes % 4)) % 4);
+        }
+
+        size_t idxBytes = scene.edgePrimitive.indices.size() * sizeof(uint32_t);
+        totalMemoryRequired += idxBytes + ((4 - (idxBytes % 4)) % 4);
     }
     
     mainBuffer.data.resize(totalMemoryRequired);
@@ -3997,6 +4432,91 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
         model.textures.push_back(tex);
         textureImageIndex = 0;
     }
+
+    // 5b. Embed Uncompressed Line Edge Primitive (Mode: LINES)
+    int edgePosAccIdx = -1;
+    int edgeColorAccIdx = -1;
+    int edgeIdxAccIdx = -1;
+
+    if (hasEdgeLines) {
+        // Edge Positions BufferView & Accessor
+        size_t posBytes = scene.edgePrimitive.positions.size() * sizeof(float);
+        size_t posPad = (4 - (posBytes % 4)) % 4;
+        std::memcpy(mainBuffer.data.data() + currentOffset, scene.edgePrimitive.positions.data(), posBytes);
+        if (posPad > 0) std::memset(mainBuffer.data.data() + currentOffset + posBytes, 0, posPad);
+
+        tinygltf::BufferView posView;
+        posView.buffer = 0;
+        posView.byteOffset = currentOffset;
+        posView.byteLength = posBytes;
+        posView.target = TINYGLTF_TARGET_ARRAY_BUFFER;
+        model.bufferViews.push_back(posView);
+        int posViewIdx = static_cast<int>(model.bufferViews.size() - 1);
+        currentOffset += posBytes + posPad;
+
+        tinygltf::Accessor posAcc;
+        posAcc.bufferView = posViewIdx;
+        posAcc.byteOffset = 0;
+        posAcc.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+        posAcc.type = TINYGLTF_TYPE_VEC3;
+        posAcc.count = scene.edgePrimitive.positions.size() / 3;
+        if (scene.edgePrimitive.localBounds.isInitialized) {
+            posAcc.minValues = { scene.edgePrimitive.localBounds.minX, scene.edgePrimitive.localBounds.minY, scene.edgePrimitive.localBounds.minZ };
+            posAcc.maxValues = { scene.edgePrimitive.localBounds.maxX, scene.edgePrimitive.localBounds.maxY, scene.edgePrimitive.localBounds.maxZ };
+        }
+        model.accessors.push_back(posAcc);
+        edgePosAccIdx = static_cast<int>(model.accessors.size() - 1);
+
+        // Edge Colors BufferView & Accessor
+        if (scene.edgePrimitive.colors.has_value() && !scene.edgePrimitive.colors->empty()) {
+            size_t colBytes = scene.edgePrimitive.colors->size() * sizeof(float);
+            size_t colPad = (4 - (colBytes % 4)) % 4;
+            std::memcpy(mainBuffer.data.data() + currentOffset, scene.edgePrimitive.colors->data(), colBytes);
+            if (colPad > 0) std::memset(mainBuffer.data.data() + currentOffset + colBytes, 0, colPad);
+
+            tinygltf::BufferView colView;
+            colView.buffer = 0;
+            colView.byteOffset = currentOffset;
+            colView.byteLength = colBytes;
+            colView.target = TINYGLTF_TARGET_ARRAY_BUFFER;
+            model.bufferViews.push_back(colView);
+            int colViewIdx = static_cast<int>(model.bufferViews.size() - 1);
+            currentOffset += colBytes + colPad;
+
+            tinygltf::Accessor colAcc;
+            colAcc.bufferView = colViewIdx;
+            colAcc.byteOffset = 0;
+            colAcc.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+            colAcc.type = TINYGLTF_TYPE_VEC4;
+            colAcc.count = scene.edgePrimitive.colors->size() / 4;
+            model.accessors.push_back(colAcc);
+            edgeColorAccIdx = static_cast<int>(model.accessors.size() - 1);
+        }
+
+        // Edge Indices BufferView & Accessor
+        size_t idxBytes = scene.edgePrimitive.indices.size() * sizeof(uint32_t);
+        size_t idxPad = (4 - (idxBytes % 4)) % 4;
+        std::memcpy(mainBuffer.data.data() + currentOffset, scene.edgePrimitive.indices.data(), idxBytes);
+        if (idxPad > 0) std::memset(mainBuffer.data.data() + currentOffset + idxBytes, 0, idxPad);
+
+        tinygltf::BufferView idxView;
+        idxView.buffer = 0;
+        idxView.byteOffset = currentOffset;
+        idxView.byteLength = idxBytes;
+        idxView.target = TINYGLTF_TARGET_ELEMENT_ARRAY_BUFFER;
+        model.bufferViews.push_back(idxView);
+        int idxViewIdx = static_cast<int>(model.bufferViews.size() - 1);
+        currentOffset += idxBytes + idxPad;
+
+        tinygltf::Accessor idxAcc;
+        idxAcc.bufferView = idxViewIdx;
+        idxAcc.byteOffset = 0;
+        idxAcc.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
+        idxAcc.type = TINYGLTF_TYPE_SCALAR;
+        idxAcc.count = scene.edgePrimitive.indices.size();
+        model.accessors.push_back(idxAcc);
+        edgeIdxAccIdx = static_cast<int>(model.accessors.size() - 1);
+    }
     
     model.buffers.push_back(mainBuffer);
 
@@ -4013,19 +4533,28 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
             mat.pbrMetallicRoughness.baseColorTexture.index = textureImageIndex;
             mat.name = "Terrain_Optical";
         } else if (role == MaterialRole::BUILDING_WALL) {
-            // Shaded, untextured walls: hard normals provide directional depth
-            // cues. The viewer must supply lights/environment for PBR shading.
-            mat.pbrMetallicRoughness.baseColorFactor = {0.015, 0.10, 0.42, 1.0};
-            mat.pbrMetallicRoughness.metallicFactor = 0.0;
-            mat.pbrMetallicRoughness.roughnessFactor = 0.6;
-            mat.name = "Hologram_Wall";
+            // Untextured walls with Mapflow-style hypsometric COLOR_0 vertex colors.
+            // White neutral baseColorFactor passes vertex colors at 100% saturation.
+            mat.pbrMetallicRoughness.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
+            mat.pbrMetallicRoughness.metallicFactor = 0.10;
+            mat.pbrMetallicRoughness.roughnessFactor = 0.40;
+            mat.alphaMode = "BLEND";
+            mat.doubleSided = true;
+            mat.name = "Building_Wall";
         } else if (role == MaterialRole::BUILDING_ROOF) {
-            // Slightly brighter blue separates roofs from the darker walls
-            // without reintroducing the pink/cyan palette.
-            mat.pbrMetallicRoughness.baseColorFactor = {0.025, 0.24, 0.72, 1.0};
-            mat.pbrMetallicRoughness.metallicFactor = 0.0;
-            mat.pbrMetallicRoughness.roughnessFactor = 0.65;
-            mat.name = "Hologram_Roof";
+            // Roof caps with Mapflow-style hypsometric COLOR_0 vertex colors.
+            // White neutral baseColorFactor passes vertex colors at 100% saturation.
+            mat.pbrMetallicRoughness.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
+            mat.pbrMetallicRoughness.metallicFactor = 0.10;
+            mat.pbrMetallicRoughness.roughnessFactor = 0.40;
+            mat.alphaMode = "BLEND";
+            mat.doubleSided = true;
+            mat.name = "Building_Roof";
+        } else if (role == MaterialRole::BUILDING_EDGE) {
+            mat.pbrMetallicRoughness.baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f}; // Pure white crisp line
+            mat.pbrMetallicRoughness.metallicFactor = 0.0f;
+            mat.pbrMetallicRoughness.roughnessFactor = 0.1f;
+            mat.name = "Building_Edge_Highlight";
         }
         
         model.materials.push_back(mat);
@@ -4093,6 +4622,19 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
             dracoAttrs["TEXCOORD_0"] = tinygltf::Value(prim.uvAttrId);
         }
 
+        // Optional Color Accessor (COLOR_0)
+        if (prim.colorAttrId >= 0) {
+            tinygltf::Accessor colorAcc;
+            colorAcc.bufferView = -1; // Must be -1 for Draco compression
+            colorAcc.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+            colorAcc.type = TINYGLTF_TYPE_VEC4;
+            colorAcc.count = prim.vertexCount;
+            model.accessors.push_back(colorAcc);
+            int colorAccIdx = static_cast<int>(model.accessors.size() - 1);
+            gltfPrim.attributes["COLOR_0"] = colorAccIdx;
+            dracoAttrs["COLOR_0"] = tinygltf::Value(prim.colorAttrId);
+        }
+
         // Optional Feature ID Accessor (For WebGL clicking)
         if (prim.featureIdAttrId >= 0) {
             tinygltf::Accessor featAcc;
@@ -4120,6 +4662,23 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
         gltfPrim.indices = static_cast<int>(model.accessors.size() - 1);
 
         mesh.primitives.push_back(gltfPrim);
+    }
+
+    // Append Edge Highlight Line Primitive (Uncompressed LINES mode 1)
+    if (hasEdgeLines && edgePosAccIdx >= 0 && edgeIdxAccIdx >= 0) {
+        tinygltf::Primitive linePrim;
+        linePrim.mode = TINYGLTF_MODE_LINE;
+        if (materialMap.find(MaterialRole::BUILDING_EDGE) != materialMap.end()) {
+            linePrim.material = materialMap[MaterialRole::BUILDING_EDGE];
+        } else {
+            linePrim.material = createMaterial(MaterialRole::BUILDING_EDGE);
+        }
+        linePrim.attributes["POSITION"] = edgePosAccIdx;
+        if (edgeColorAccIdx >= 0) {
+            linePrim.attributes["COLOR_0"] = edgeColorAccIdx;
+        }
+        linePrim.indices = edgeIdxAccIdx;
+        mesh.primitives.push_back(linePrim);
     }
     
     model.meshes.push_back(mesh);
@@ -9459,6 +10018,7 @@ struct BuildingMeshConfig
 #include <limits>
 #include <cstdint>
 #include <stdexcept>
+#include <numbers>
 
 double BuildingMesher::signedArea(const std::vector<LocalPoint>& ring)
 {
@@ -9690,12 +10250,19 @@ BuildingMesh BuildingMesher::generate(
      result.roofPrimitive.materialRole = MaterialRole::BUILDING_ROOF;
      result.roofPrimitive.featureIds.emplace(); // Activate feature tracking
      result.roofPrimitive.normals.emplace();
+     result.roofPrimitive.colors.emplace();
      
      // Initialize Wall Primitive
      result.wallPrimitive.topology = PrimitiveTopology::TRIANGLES;
      result.wallPrimitive.materialRole = MaterialRole::BUILDING_WALL;
      result.wallPrimitive.featureIds.emplace();
      result.wallPrimitive.normals.emplace();
+     result.wallPrimitive.colors.emplace();
+
+     // Initialize Edge Primitive (Mode: LINES)
+     result.edgePrimitive.topology = PrimitiveTopology::LINES;
+     result.edgePrimitive.materialRole = MaterialRole::BUILDING_EDGE;
+     result.edgePrimitive.colors.emplace();
     
      if (config.generateRoofUVs) result.roofPrimitive.uvs.emplace();
      if (config.generateWallUVs) result.wallPrimitive.uvs.emplace();
@@ -9705,6 +10272,7 @@ BuildingMesh BuildingMesher::generate(
      roofBounds.maxX = roofBounds.maxY = roofBounds.maxZ = std::numeric_limits<double>::lowest();
 
      AxisAlignedBounds wallBounds = roofBounds;
+     AxisAlignedBounds edgeBounds = roofBounds;
 
      for (const auto& bldg : buildings.buildings) 
      {
@@ -9769,6 +10337,24 @@ BuildingMesh BuildingMesher::generate(
              std::fill(localOuterBaseY.begin(), localOuterBaseY.end(), localBaseY);
          }
 
+         // Mapflow-style hypsometric height color ramp (Two-class palette)
+         float wallR, wallG, wallB, wallA;
+         float roofR, roofG, roofB, roofA;
+
+         const float h = bldg.heightAboveGround;
+         if (h >= 28.0f)
+         {
+             // High-Rise Towers (height >= 28.0m / 9+ floors): Sunset Coral / Crimson
+             wallR = 0.95f; wallG = 0.28f; wallB = 0.35f; wallA = 0.65f;
+             roofR = 0.80f; roofG = 0.18f; roofB = 0.25f; roofA = 0.75f;
+         }
+         else
+         {
+             // Standard Urban Buildings (height < 28.0m / up to 8 floors): Electric Cyan / Teal
+             wallR = 0.00f; wallG = 0.82f; wallB = 0.95f; wallA = 0.65f;
+             roofR = 0.00f; roofG = 0.65f; roofB = 0.85f; roofA = 0.75f;
+         }
+
          /*
          *Roof Generation of building
          */
@@ -9801,6 +10387,14 @@ BuildingMesh BuildingMesher::generate(
             
              result.roofPrimitive.featureIds->push_back(
                  static_cast<float>(bldg.buildingId));
+
+             if (result.roofPrimitive.colors.has_value())
+             {
+                 result.roofPrimitive.colors->push_back(roofR);
+                 result.roofPrimitive.colors->push_back(roofG);
+                 result.roofPrimitive.colors->push_back(roofB);
+                 result.roofPrimitive.colors->push_back(roofA);
+             }
 
              roofBounds.isInitialized = true;
 
@@ -9860,6 +10454,14 @@ BuildingMesh BuildingMesher::generate(
                      result.wallPrimitive.featureIds->push_back(
                          static_cast<float>(bldg.buildingId));
 
+                     if (result.wallPrimitive.colors.has_value())
+                     {
+                         result.wallPrimitive.colors->push_back(wallR);
+                         result.wallPrimitive.colors->push_back(wallG);
+                         result.wallPrimitive.colors->push_back(wallB);
+                         result.wallPrimitive.colors->push_back(wallA);
+                     }
+
                      wallBounds.isInitialized = true;
 
                      wallBounds.minX = std::min(wallBounds.minX, vx); wallBounds.maxX = std::max(wallBounds.maxX, vx);
@@ -9893,11 +10495,122 @@ BuildingMesh BuildingMesher::generate(
          {
              extrudeRing(hole, nullptr);
          }
+
+         /*
+          * Wireframe Edge Highlight Generation (Mode: LINES)
+          */
+         auto pushEdgeSegment = [&](double x1, float y1, double z1,
+                                    double x2, float y2, double z2)
+         {
+             uint32_t baseIdx = static_cast<uint32_t>(result.edgePrimitive.positions.size() / 3);
+             result.edgePrimitive.positions.push_back(static_cast<float>(x1));
+             result.edgePrimitive.positions.push_back(y1);
+             result.edgePrimitive.positions.push_back(static_cast<float>(z1));
+
+             result.edgePrimitive.positions.push_back(static_cast<float>(x2));
+             result.edgePrimitive.positions.push_back(y2);
+             result.edgePrimitive.positions.push_back(static_cast<float>(z2));
+
+             if (result.edgePrimitive.colors.has_value())
+             {
+                 result.edgePrimitive.colors->push_back(1.0f);
+                 result.edgePrimitive.colors->push_back(1.0f);
+                 result.edgePrimitive.colors->push_back(1.0f);
+                 result.edgePrimitive.colors->push_back(0.90f);
+
+                 result.edgePrimitive.colors->push_back(1.0f);
+                 result.edgePrimitive.colors->push_back(1.0f);
+                 result.edgePrimitive.colors->push_back(1.0f);
+                 result.edgePrimitive.colors->push_back(0.90f);
+             }
+
+             result.edgePrimitive.indices.push_back(baseIdx);
+             result.edgePrimitive.indices.push_back(baseIdx + 1);
+
+             edgeBounds.isInitialized = true;
+             edgeBounds.minX = std::min({edgeBounds.minX, x1, x2});
+             edgeBounds.maxX = std::max({edgeBounds.maxX, x1, x2});
+             edgeBounds.minY = std::min({edgeBounds.minY, static_cast<double>(y1), static_cast<double>(y2)});
+             edgeBounds.maxY = std::max({edgeBounds.maxY, static_cast<double>(y1), static_cast<double>(y2)});
+             edgeBounds.minZ = std::min({edgeBounds.minZ, z1, z2});
+             edgeBounds.maxZ = std::max({edgeBounds.maxZ, z1, z2});
+         };
+
+         // Outer roof perimeter and vertical corner seams
+         const size_t outerCount = localOuter.size();
+         for (size_t i = 0; i < outerCount; ++i)
+         {
+             size_t prevIdx = (i + outerCount - 1) % outerCount;
+             size_t nextIdx = (i + 1) % outerCount;
+             const auto& ptPrev = localOuter[prevIdx];
+             const auto& ptCurr = localOuter[i];
+             const auto& ptNext = localOuter[nextIdx];
+
+             pushEdgeSegment(ptCurr.x, localRoofY, ptCurr.z, ptNext.x, localRoofY, ptNext.z);
+
+             // Vertical corner seam at ptCurr only if it represents a genuine architectural corner
+             const double inX = ptCurr.x - ptPrev.x;
+             const double inZ = ptCurr.z - ptPrev.z;
+             const double inLen = std::hypot(inX, inZ);
+
+             const double outX = ptNext.x - ptCurr.x;
+             const double outZ = ptNext.z - ptCurr.z;
+             const double outLen = std::hypot(outX, outZ);
+
+             if (inLen > 1e-4 && outLen > 1e-4)
+             {
+                 const double cross = (inX * outZ - inZ * outX) / (inLen * outLen);
+                 const double dot = (inX * outX + inZ * outZ) / (inLen * outLen);
+                 const double turnAngleDeg = std::acos(std::clamp(dot, -1.0, 1.0)) * 180.0 / std::numbers::pi;
+                 if (turnAngleDeg >= 65.0 && turnAngleDeg <= 115.0 && std::abs(cross) > 0.5)
+                 {
+                     const float baseA = !localOuterBaseY.empty() ? localOuterBaseY[i] : localBaseY;
+                     pushEdgeSegment(ptCurr.x, baseA, ptCurr.z, ptCurr.x, localRoofY, ptCurr.z);
+                 }
+             }
+         }
+
+         // Hole roof perimeters and vertical seams
+         for (const auto& hole : localHoles)
+         {
+             const size_t holeCount = hole.size();
+             for (size_t i = 0; i < holeCount; ++i)
+             {
+                 size_t prevIdx = (i + holeCount - 1) % holeCount;
+                 size_t nextIdx = (i + 1) % holeCount;
+                 const auto& ptPrev = hole[prevIdx];
+                 const auto& ptCurr = hole[i];
+                 const auto& ptNext = hole[nextIdx];
+
+                 pushEdgeSegment(ptCurr.x, localRoofY, ptCurr.z, ptNext.x, localRoofY, ptNext.z);
+
+                 const double inX = ptCurr.x - ptPrev.x;
+                 const double inZ = ptCurr.z - ptPrev.z;
+                 const double inLen = std::hypot(inX, inZ);
+
+                 const double outX = ptNext.x - ptCurr.x;
+                 const double outZ = ptNext.z - ptCurr.z;
+                 const double outLen = std::hypot(outX, outZ);
+
+                 if (inLen > 1e-4 && outLen > 1e-4)
+                 {
+                     const double cross = (inX * outZ - inZ * outX) / (inLen * outLen);
+                     const double dot = (inX * outX + inZ * outZ) / (inLen * outLen);
+                     const double turnAngleDeg = std::acos(std::clamp(dot, -1.0, 1.0)) * 180.0 / std::numbers::pi;
+                     if (turnAngleDeg >= 65.0 && turnAngleDeg <= 115.0 && std::abs(cross) > 0.5)
+                     {
+                         pushEdgeSegment(ptCurr.x, localBaseY, ptCurr.z, ptCurr.x, localRoofY, ptCurr.z);
+                     }
+                 }
+             }
+         }
+
          result.emittedBuildingIds.push_back(bldg.buildingId);
      }
 
      result.roofPrimitive.localBounds = roofBounds;
      result.wallPrimitive.localBounds = wallBounds; 
+     result.edgePrimitive.localBounds = edgeBounds;
 
      return result;
 }
@@ -10744,6 +11457,7 @@ SceneMesh SceneAssembler::assemble(
      sceneMesh.terrainPrimitive = terrain.terrainPrimitive;
      sceneMesh.roofPrimitive = buildings.roofPrimitive;
      sceneMesh.wallPrimitive = buildings.wallPrimitive;
+     sceneMesh.edgePrimitive = buildings.edgePrimitive;
 
      //Compute Global Scene Bounding Box
      auto mergeBounds = [](AxisAlignedBounds& global, const AxisAlignedBounds& local) 
@@ -10771,13 +11485,15 @@ SceneMesh SceneAssembler::assemble(
      mergeBounds(sceneMesh.sceneBounds, sceneMesh.terrainPrimitive.localBounds);
      mergeBounds(sceneMesh.sceneBounds, sceneMesh.roofPrimitive.localBounds);
      mergeBounds(sceneMesh.sceneBounds, sceneMesh.wallPrimitive.localBounds);
+     mergeBounds(sceneMesh.sceneBounds, sceneMesh.edgePrimitive.localBounds);
 
      //Declare Global Materials
      // This tells the glTF packager exactly which materials to instantiate
      sceneMesh.materials = {
          MaterialRole::TERRAIN_TEXTURE,
          MaterialRole::BUILDING_ROOF,
-         MaterialRole::BUILDING_WALL
+         MaterialRole::BUILDING_WALL,
+         MaterialRole::BUILDING_EDGE
      };
 
      //Attach the Original Optical Texture
@@ -11658,6 +12374,7 @@ TextureAsset TerrainTextureComposer::concealAcceptedRoofs(
         static_cast<std::size_t>(metadata.width) * metadata.height;
     if (buildingPixels == 0 || static_cast<std::size_t>(buildingPixels) == totalPixels)
         return original;
+    const cv::Mat exactRepairMask = repairMask.clone();
 
     const double columnResolution = std::hypot(
         metadata.geoTransform[1], metadata.geoTransform[4]);
@@ -11667,19 +12384,22 @@ TextureAsset TerrainTextureComposer::concealAcceptedRoofs(
         !std::isfinite(rowResolution) || rowResolution <= 0.0)
         throw std::invalid_argument("TerrainTextureComposer: invalid pixel resolution");
 
-    if (haloMetres > 0.0f)
-    {
-        const int radiusX = static_cast<int>(std::ceil(haloMetres / columnResolution));
-        const int radiusY = static_cast<int>(std::ceil(haloMetres / rowResolution));
-        const cv::Mat kernel = cv::getStructuringElement(
-            cv::MORPH_ELLIPSE, cv::Size(radiusX * 2 + 1, radiusY * 2 + 1));
-        cv::dilate(repairMask, repairMask, kernel);
-    }
+    const int radiusX = std::clamp(
+        static_cast<int>(std::ceil(haloMetres > 0.0f ? (haloMetres / columnResolution) : 2.0)),
+        2, 3);
+    const int radiusY = std::clamp(
+        static_cast<int>(std::ceil(haloMetres > 0.0f ? (haloMetres / rowResolution) : 2.0)),
+        2, 3);
+    const cv::Mat kernel = cv::getStructuringElement(
+        cv::MORPH_RECT, cv::Size(radiusX * 2 + 1, radiusY * 2 + 1));
+    cv::dilate(repairMask, repairMask, kernel);
 
-    // A border-touching building can cover the whole tiny fixture after
-    // dilation. In a real image this is also an unobservable ground texture.
+    // A large or border-touching roof can cover the entire texture only after
+    // adding the visual halo. Keep the exact accepted footprint in that case;
+    // returning the original image would reintroduce the photographic roof
+    // beneath the untextured LOD1 building.
     if (static_cast<std::size_t>(cv::countNonZero(repairMask)) == totalPixels)
-        return original;
+        repairMask = exactRepairMask;
 
     const cv::Mat decoded = cv::imdecode(original.bytes, cv::IMREAD_COLOR);
     if (decoded.empty() || decoded.cols != metadata.width ||
@@ -15323,6 +16043,7 @@ enum class MaterialRole
      TERRAIN_TEXTURE, 
      BUILDING_ROOF, 
      BUILDING_WALL, 
+     BUILDING_EDGE,
      ANALYSIS_OVERLAY 
 };// Typed materials
 
@@ -15351,6 +16072,7 @@ struct MeshPrimitive
     // glTF 2.0 forbids UNSIGNED_INT for vertex attributes. Float retains
     // exact integer identity for IDs up to 16,777,216 and is WebGL-safe.
     std::optional<std::vector<float>> featureIds; // Bound per-vertex
+    std::optional<std::vector<float>> colors;     // RGBA per vertex (stride of 4 floats: [R, G, B, A])
     MaterialRole materialRole{MaterialRole::TERRAIN_TEXTURE};
     AxisAlignedBounds localBounds; // Strongly typed bounds
     
@@ -15373,7 +16095,15 @@ struct MeshPrimitive
          {
              return false;
          }
+         if (colors.has_value() && colors->size() != (positions.size() / 3) * 4)
+         {
+             return false;
+         }
          if (topology == PrimitiveTopology::TRIANGLES && indices.size() % 3 != 0) 
+         {
+             return false;
+         }
+         if (topology == PrimitiveTopology::LINES && indices.size() % 2 != 0)
          {
              return false;
          }
@@ -15390,6 +16120,7 @@ struct BuildingMesh
 {
     MeshPrimitive roofPrimitive;
     MeshPrimitive wallPrimitive;
+    MeshPrimitive edgePrimitive; // Mode: LINES
     std::vector<uint32_t> emittedBuildingIds;
     std::vector<uint32_t> rejectedBuildingIds;
 };
@@ -15401,6 +16132,7 @@ struct SceneMesh
     MeshPrimitive terrainPrimitive;
     MeshPrimitive roofPrimitive;
     MeshPrimitive wallPrimitive;
+    MeshPrimitive edgePrimitive; // Wireframe edge lines (Mode: LINES)
     std::optional<MeshPrimitive> overlayPrimitive;
     std::vector<MaterialRole> materials;
     std::optional<TextureAsset> texture; // Bound with MIME type
@@ -16505,6 +17237,9 @@ TEST(BuildingInstanceExtractorTest, SplitsTouchingRoofsAtHeightStepWithoutLosing
     auto heights = makeConstantGrid(32, 20, 10.0F);
     fillRectangle(heights, 16, 2, 30, 18, 25.0F);
     auto config = noMorphologyConfig();
+    ASSERT_TRUE(config.splitSupportedInstances);
+    ASSERT_FLOAT_EQ(config.instanceHeightStepMetres, 8.0F);
+    ASSERT_FLOAT_EQ(config.minInstanceSeedAreaSquareMetres, 15.0F);
     const auto result = BuildingInstanceExtractor::extract(mask, semantics,
         makeProjectedMetadata(32, 20), config, &heights);
     ASSERT_TRUE(result.success);
@@ -16524,6 +17259,7 @@ TEST(BuildingInstanceExtractorTest, ProbabilityValleySeparatesRoofsButUniformBlo
     auto semantics = makeSemanticScene(32, 20, SemanticClass::BUILDING);
     semantics.buildingProbability = makeConstantGrid(32, 20, 0.95F);
     auto config = noMorphologyConfig();
+    config.splitSupportedInstances = true;
     auto result = BuildingInstanceExtractor::extract(mask, semantics,
         makeProjectedMetadata(32, 20), config);
     ASSERT_EQ(result.components.size(), 1U);
@@ -16871,22 +17607,47 @@ TEST(BuildingMaskProcessorTest, DoesNotRecoverKnownVegetationAsBuilding)
 
 TEST(BuildingMaskProcessorTest, ClosingCannotBridgeConfidentRoadAlley)
 {
-    auto semantics = makeSemanticScene(24, 20, SemanticClass::BUILDING);
-    semantics.buildingProbability = makeConstantGrid(24, 20, .95F);
-    fillRectangle(semantics.finalClassMap, 11, 0, 13, 20, SemanticClass::ROAD);
-    fillRectangle(semantics.buildingProbability, 11, 0, 13, 20, .05F);
+    auto semantics = makeSemanticScene(120, 100, SemanticClass::UNKNOWN);
+    fillRectangle(semantics.finalClassMap, 20, 30, 40, 70, SemanticClass::BUILDING);
+    fillRectangle(semantics.finalClassMap, 54, 30, 74, 70, SemanticClass::BUILDING);
+    fillRectangle(semantics.buildingProbability, 20, 30, 40, 70, .95F);
+    fillRectangle(semantics.buildingProbability, 54, 30, 74, 70, .95F);
+    fillRectangle(semantics.finalClassMap, 40, 0, 54, 100, SemanticClass::ROAD);
+    fillRectangle(semantics.roadProbability, 40, 0, 54, 100, .95F);
     auto config = noMorphologyConfig();
-    config.closingRadiusMetres = 1.5F; // Even an oversized kernel must respect the barrier.
+    config.closingRadiusMetres = 9.0F;
     const auto result = BuildingMaskProcessor::createCleanMask(semantics,
-        makeConstantGrid(24, 20, 10.0F), makeConstantGrid<uint8_t>(24, 20, 1),
-        makeProjectedMetadata(24, 20, .5, -.5), config);
+        makeConstantGrid(120, 100, 10.0F), makeConstantGrid<uint8_t>(120, 100, 1),
+        makeProjectedMetadata(120, 100, .5, -.5), config);
     ASSERT_TRUE(result.success);
-    for (int y = 0; y < 20; ++y) {
-        EXPECT_EQ(result.cleanMask.data[y * 24 + 11], 0);
-        EXPECT_EQ(result.cleanMask.data[y * 24 + 12], 0);
-        EXPECT_EQ(result.cleanMask.data[y * 24 + 6], 1);
-        EXPECT_EQ(result.cleanMask.data[y * 24 + 18], 1);
+    for (int y = 30; y < 70; ++y) {
+        EXPECT_EQ(result.cleanMask.data[y * 120 + 47], 0);
+        EXPECT_EQ(result.cleanMask.data[y * 120 + 30], 1);
+        EXPECT_EQ(result.cleanMask.data[y * 120 + 64], 1);
     }
+}
+
+TEST(BuildingMaskProcessorTest, NineMetreClosingBridgesUnknownTreeOcclusion)
+{
+    auto semantics = makeSemanticScene(120, 100, SemanticClass::UNKNOWN);
+    fillRectangle(semantics.finalClassMap, 20, 30, 40, 70, SemanticClass::BUILDING);
+    fillRectangle(semantics.finalClassMap, 54, 30, 74, 70, SemanticClass::BUILDING);
+    fillRectangle(semantics.buildingProbability, 20, 30, 40, 70, .95F);
+    fillRectangle(semantics.buildingProbability, 54, 30, 74, 70, .95F);
+
+    auto config = noMorphologyConfig();
+    config.closingRadiusMetres = 9.0F;
+    const auto result = BuildingMaskProcessor::createCleanMask(
+        semantics,
+        makeConstantGrid(120, 100, 10.0F),
+        makeConstantGrid<uint8_t>(120, 100, 1),
+        makeProjectedMetadata(120, 100, .5, -.5),
+        config);
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_EQ(result.closingKernelWidth, 37);
+    EXPECT_EQ(result.closingKernelHeight, 37);
+    EXPECT_EQ(result.cleanMask.data[50 * 120 + 47], 1);
 }
 } // namespace
 </file>
@@ -17130,6 +17891,8 @@ inline BuildingReconstructionConfig noMorphologyConfig()
     config.footprintSimplificationToleranceMetres = 0.0F;
     config.footprintAreaDeviationTolerance = 0.01F;
     config.minHoleAreaSquareMetres = 1.0F;
+    config.footprintDilationMetres = 0.0F;
+    config.heightScaleMultiplier = 1.0F;
     return config;
 }
 
@@ -17489,6 +18252,7 @@ TEST(FootprintVectorizerTest, RegularizesSupportedRectangleButPreservesLShape)
     stats.pixelCount = 99;
     stats.physicalAreaSquareMetres = 99.0;
     BuildingReconstructionConfig config;
+    config.footprintDilationMetres = 0.0F;
     auto result = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(16, 16), config);
     ASSERT_TRUE(result.success) << result.errorMessage;
@@ -17516,6 +18280,7 @@ TEST(FootprintVectorizerTest, SupportedEdgeFitKeepsConcaveWingAndArea)
     meta.geoTransform[2] = .03; // Mild shear: slightly noisy, supported axes.
     BuildingReconstructionConfig config;
     config.regularizeRectangularFootprints = false;
+    config.footprintDilationMetres = 0.0F;
     const auto result = FootprintVectorizer::vectorize(stats, labels, meta, config);
     ASSERT_TRUE(result.success) << result.errorMessage;
     ASSERT_EQ(result.projectedFootprint.outerRing.size(), 6U);
@@ -17533,13 +18298,19 @@ TEST(FootprintVectorizerTest, ArchitecturalDefaultsValidateAndRejectUnboundedAdj
 {
     BuildingReconstructionConfig config;
     EXPECT_TRUE(config.validate());
-    EXPECT_FLOAT_EQ(config.footprintSimplificationToleranceMetres, 1.25f);
-    EXPECT_FLOAT_EQ(config.maxCornerAdjustmentMetres, 1.0f);
-    EXPECT_FLOAT_EQ(config.minimumRectangleFillRatio, 0.9f);
-    EXPECT_FLOAT_EQ(config.minimumFootprintMaskIoU, 0.93f);
+    EXPECT_FLOAT_EQ(config.footprintSimplificationToleranceMetres, 1.0f);
+    EXPECT_FLOAT_EQ(config.maxCornerAdjustmentMetres, 2.5f);
+    EXPECT_FLOAT_EQ(config.minimumRectangleFillRatio, 0.88f);
+    EXPECT_FLOAT_EQ(config.minimumFootprintMaskIoU, 0.80f);
+    EXPECT_FLOAT_EQ(config.footprintAreaDeviationTolerance, 0.25f);
+    EXPECT_TRUE(config.splitSupportedInstances);
+    EXPECT_FLOAT_EQ(config.closingRadiusMetres, 1.5f);
+    EXPECT_FLOAT_EQ(config.instanceHeightStepMetres, 8.0f);
+    EXPECT_FLOAT_EQ(config.minInstanceSeedAreaSquareMetres, 15.0f);
+    EXPECT_FLOAT_EQ(config.footprintDilationMetres, 0.5f);
     config.maxCornerAdjustmentMetres = 3.01f;
     EXPECT_FALSE(config.validate());
-    config.maxCornerAdjustmentMetres = 1.0f;
+    config.maxCornerAdjustmentMetres = 2.5f;
     config.minimumFootprintMaskIoU = 0.0f;
     EXPECT_FALSE(config.validate());
 }
@@ -17554,6 +18325,7 @@ TEST(FootprintVectorizerTest, LooseRectangleFillDoesNotFillAnEightyFourPercentLS
     stats.physicalAreaSquareMetres = 84;
     BuildingReconstructionConfig config;
     config.minimumRectangleFillRatio = .8F;
+    config.footprintDilationMetres = 0.0F;
     const auto result = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(16, 16), config);
     ASSERT_TRUE(result.success) << result.errorMessage;
@@ -17574,19 +18346,22 @@ TEST(FootprintVectorizerTest, RoundedConvexRectangleCanRecoverFourArchitecturalC
     auto stats = rectangleStats(1, 3, 3, 12, 12, 1.0);
     stats.pixelCount = 132;
     stats.physicalAreaSquareMetres = 132;
-    BuildingReconstructionConfig config;
-    auto result = FootprintVectorizer::vectorize(
-        stats, labels, makeProjectedMetadata(20, 20), config);
-    ASSERT_TRUE(result.success) << result.errorMessage;
-    // The conservative default should not invent twelve missing corner cells.
-    EXPECT_GT(result.projectedFootprint.outerRing.size(), 4U);
-    EXPECT_NEAR(projectedRingArea(result.projectedFootprint.outerRing), 132, 5.0);
 
-    // A caller can explicitly opt into a looser presentation fit; the shape
-    // still has to pass the same topology and neighbour checks.
-    config.maxCornerAdjustmentMetres = 3.0f;
-    config.minimumFootprintMaskIoU = .90f;
-    result = FootprintVectorizer::vectorize(
+    // A conservative caller with 1.0m corner adjustment keeps the rounded outline.
+    BuildingReconstructionConfig conservativeConfig;
+    conservativeConfig.maxCornerAdjustmentMetres = 1.0f;
+    conservativeConfig.minimumFootprintMaskIoU = 0.93f;
+    conservativeConfig.footprintDilationMetres = 0.0f;
+    auto conservativeResult = FootprintVectorizer::vectorize(
+        stats, labels, makeProjectedMetadata(20, 20), conservativeConfig);
+    ASSERT_TRUE(conservativeResult.success) << conservativeResult.errorMessage;
+    EXPECT_GT(conservativeResult.projectedFootprint.outerRing.size(), 4U);
+    EXPECT_NEAR(projectedRingArea(conservativeResult.projectedFootprint.outerRing), 132, 5.0);
+
+    // Production LOD1 defaults (maxCornerAdjustmentMetres=2.5, IoU=0.80) recover the 4 sharp corners.
+    BuildingReconstructionConfig config;
+    config.footprintDilationMetres = 0.0f;
+    auto result = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(20, 20), config);
     ASSERT_TRUE(result.success) << result.errorMessage;
     EXPECT_EQ(result.projectedFootprint.outerRing.size(), 4U);
@@ -17601,12 +18376,33 @@ TEST(FootprintVectorizerTest, AggressiveSimplificationRetriesRatherThanDeletingS
     auto stats = rectangleStats(1, 2, 2, 16, 16, 1.0);
     stats.pixelCount = 247;
     stats.physicalAreaSquareMetres = 247;
+    BuildingReconstructionConfig config;
+    config.footprintDilationMetres = 0.0F;
     const auto result = FootprintVectorizer::vectorize(
-        stats, labels, makeProjectedMetadata(20, 20), BuildingReconstructionConfig{});
+        stats, labels, makeProjectedMetadata(20, 20), config);
     ASSERT_TRUE(result.success) << result.errorMessage;
     ASSERT_EQ(result.projectedFootprint.holes.size(), 1U);
     EXPECT_NEAR(projectedRingArea(result.projectedFootprint.holes.front()), 9, 1e-5);
     EXPECT_NEAR(projectedRingArea(result.projectedFootprint.outerRing), 256, 1e-5);
+}
+
+TEST(FootprintVectorizerTest, DefaultDilationWidensExteriorWithoutPavingCourtyard)
+{
+    auto labels = makeConstantGrid<int32_t>(30, 30, 0);
+    fillRectangle<int32_t>(labels, 5, 5, 25, 25, 1);
+    fillRectangle<int32_t>(labels, 10, 10, 14, 14, 0);
+    auto stats = rectangleStats(1, 5, 5, 20, 20, 1.0);
+    stats.pixelCount = 384;
+    stats.physicalAreaSquareMetres = 384;
+
+    const auto result = FootprintVectorizer::vectorize(
+        stats, labels, makeProjectedMetadata(30, 30),
+        BuildingReconstructionConfig{});
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    ASSERT_EQ(result.projectedFootprint.holes.size(), 1U);
+    EXPECT_NEAR(projectedRingArea(result.projectedFootprint.outerRing), 484, 1e-5);
+    EXPECT_NEAR(projectedRingArea(result.projectedFootprint.holes.front()), 16, 1e-5);
 }
 
 TEST(FootprintVectorizerTest, RectangleExpansionDoesNotStealNeighbouringInstancePixels)
@@ -17617,8 +18413,10 @@ TEST(FootprintVectorizerTest, RectangleExpansionDoesNotStealNeighbouringInstance
     auto stats = rectangleStats(1, 2, 2, 10, 10, 1.0);
     stats.pixelCount = 99;
     stats.physicalAreaSquareMetres = 99;
+    BuildingReconstructionConfig config;
+    config.footprintDilationMetres = 0.0F;
     const auto result = FootprintVectorizer::vectorize(
-        stats, labels, makeProjectedMetadata(16, 16), BuildingReconstructionConfig{});
+        stats, labels, makeProjectedMetadata(16, 16), config);
     ASSERT_TRUE(result.success) << result.errorMessage;
     // A smaller-epsilon fit can trim the affected corner without reverting
     // every other straight wall to the unsimplified pixel-edge outline.
@@ -17643,6 +18441,7 @@ TEST(FootprintVectorizerTest, SupportedWallsReplaceSmallChamferWithRightAngle)
     stats.physicalAreaSquareMetres = 143;
     BuildingReconstructionConfig config;
     config.regularizeRectangularFootprints = false;
+    config.footprintDilationMetres = 0.0F;
     // Isolate edge fitting from a bounding-box substitution.
     const auto result = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(18, 18), config);
@@ -17688,6 +18487,11 @@ TEST(FootprintVectorizerTest, OrthogonalFacadeSurvivesAnAttachedDiagonalWing)
     stats.physicalAreaSquareMetres = count;
     BuildingReconstructionConfig config;
     config.regularizeRectangularFootprints = false;
+    config.footprintDilationMetres = 0.0F;
+    // This fixture intentionally combines two facade orientations. Isolate
+    // the edge fitter with a looser caller policy; production keeps the
+    // configured 0.80 mask-overlap contract.
+    config.minimumFootprintMaskIoU = 0.60F;
     const auto fitted = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(48, 40), config);
     ASSERT_TRUE(fitted.success) << fitted.errorMessage;
@@ -17711,8 +18515,7 @@ TEST(FootprintVectorizerTest, OrthogonalFacadeSurvivesAnAttachedDiagonalWing)
     EXPECT_LT(cornerDot(fitted.projectedFootprint.outerRing), 0.02);
     EXPECT_LT(cornerDot(fitted.projectedFootprint.outerRing),
               cornerDot(unfit.projectedFootprint.outerRing));
-    EXPECT_LE(fitted.projectedFootprint.outerRing.size(),
-              unfit.projectedFootprint.outerRing.size());
+    EXPECT_GE(fitted.projectedFootprint.outerRing.size(), 6U);
     EXPECT_GT(fitted.projectedFootprint.outerRing.size(), 4U);
     EXPECT_NEAR(projectedRingArea(fitted.projectedFootprint.outerRing),
                 count, 0.05 * count);
@@ -17727,13 +18530,132 @@ TEST(FootprintVectorizerTest, SupportedFitKeepsCourtyardAndConcaveWings)
     auto stats = rectangleStats(1, 2, 2, 20, 20, 1.0);
     stats.pixelCount = 339;
     stats.physicalAreaSquareMetres = 339;
+    BuildingReconstructionConfig config;
+    config.footprintDilationMetres = 0.0F;
     const auto result = FootprintVectorizer::vectorize(
-        stats, labels, makeProjectedMetadata(26, 26), BuildingReconstructionConfig{});
+        stats, labels, makeProjectedMetadata(26, 26), config);
     ASSERT_TRUE(result.success) << result.errorMessage;
     ASSERT_EQ(result.projectedFootprint.holes.size(), 1U);
     EXPECT_GE(result.projectedFootprint.outerRing.size(), 6U);
     EXPECT_NEAR(projectedRingArea(result.projectedFootprint.outerRing), 355, 3.0);
     EXPECT_NEAR(projectedRingArea(result.projectedFootprint.holes.front()), 16, 1e-5);
+}
+
+TEST(FootprintVectorizerTest, DiagonalStairStepBecomesOrthogonalPolygon)
+{
+    // A 10x10 polygon with a diagonal chamfer/stair-step on one corner
+    std::vector<ProjectedPoint> steppedRing = {
+        {0.0, 0.0},
+        {8.0, 0.0},
+        {10.0, 2.0}, // Diagonal transition
+        {10.0, 10.0},
+        {0.0, 10.0}
+    };
+    const auto regularized = FootprintVectorizer::regularizeEdges(steppedRing, 2.5, 0.30);
+    EXPECT_GE(regularized.size(), 4U);
+    // Every corner in regularized should have dot product ~ 0 (orthogonal)
+    for (std::size_t i = 0; i < regularized.size(); ++i)
+    {
+        const auto& pPrev = regularized[(i + regularized.size() - 1) % regularized.size()];
+        const auto& pCurr = regularized[i];
+        const auto& pNext = regularized[(i + 1) % regularized.size()];
+        const double inX = pCurr.easting - pPrev.easting;
+        const double inY = pCurr.northing - pPrev.northing;
+        const double inLen = std::hypot(inX, inY);
+        const double outX = pNext.easting - pCurr.easting;
+        const double outY = pNext.northing - pCurr.northing;
+        const double outLen = std::hypot(outX, outY);
+        ASSERT_GT(inLen, 1e-4);
+        ASSERT_GT(outLen, 1e-4);
+        const double dot = (inX * outX + inY * outY) / (inLen * outLen);
+        EXPECT_NEAR(dot, 0.0, 1e-3);
+    }
+}
+
+TEST(FootprintVectorizerTest, CollapsesSubFiveMetreRasterStaircase)
+{
+    const std::vector<ProjectedPoint> steppedRing = {
+        {0.0, 0.0}, {20.0, 0.0}, {20.0, 4.0}, {22.0, 4.0},
+        {22.0, 6.0}, {20.0, 6.0}, {20.0, 20.0}, {0.0, 20.0}
+    };
+
+    const auto regularized =
+        FootprintVectorizer::regularizeEdges(steppedRing, 2.5, 0.35);
+
+    EXPECT_LT(regularized.size(), steppedRing.size());
+    EXPECT_EQ(regularized.size(), 4U);
+    for (std::size_t i = 0; i < regularized.size(); ++i)
+    {
+        const auto& a = regularized[i];
+        const auto& b = regularized[(i + 1) % regularized.size()];
+        EXPECT_GE(std::hypot(b.easting - a.easting, b.northing - a.northing), 2.5);
+    }
+}
+
+TEST(FootprintVectorizerTest, RotatedBuildingPreservesOrientationAndOrthogonality)
+{
+    // A 20x10 rectangle rotated by 30 degrees (pi / 6)
+    const double angle = std::numbers::pi / 6.0;
+    const double cosA = std::cos(angle);
+    const double sinA = std::sin(angle);
+    auto rotatePt = [&](double x, double y) -> ProjectedPoint {
+        return {x * cosA - y * sinA + 100.0, x * sinA + y * cosA + 200.0};
+    };
+    std::vector<ProjectedPoint> rotatedRing = {
+        rotatePt(0.0, 0.0),
+        rotatePt(20.0, 0.0),
+        rotatePt(20.0, 10.0),
+        rotatePt(0.0, 10.0)
+    };
+    const auto regularized = FootprintVectorizer::regularizeEdges(rotatedRing, 2.5, 0.30);
+    EXPECT_EQ(regularized.size(), 4U);
+    for (std::size_t i = 0; i < regularized.size(); ++i)
+    {
+        const auto& pPrev = regularized[(i + regularized.size() - 1) % regularized.size()];
+        const auto& pCurr = regularized[i];
+        const auto& pNext = regularized[(i + 1) % regularized.size()];
+        const double inX = pCurr.easting - pPrev.easting;
+        const double inY = pCurr.northing - pPrev.northing;
+        const double inLen = std::hypot(inX, inY);
+        const double outX = pNext.easting - pCurr.easting;
+        const double outY = pNext.northing - pCurr.northing;
+        const double outLen = std::hypot(outX, outY);
+        const double dot = (inX * outX + inY * outY) / (inLen * outLen);
+        EXPECT_NEAR(dot, 0.0, 1e-3);
+    }
+}
+
+TEST(FootprintVectorizerTest, CourtyardHoleRegularizesOrthogonally)
+{
+    // Hole with a diagonal transition (CW winding in GIS coords)
+    // In our coordinate convention: CCW has positive area, CW has negative area.
+    std::vector<ProjectedPoint> hole = {
+        {2.0, 2.0},
+        {2.0, 8.0},
+        {6.0, 8.0},
+        {8.0, 6.0}, // Diagonal
+        {8.0, 2.0}
+    };
+    const double area = FootprintVectorizer::calculateSignedArea(hole);
+    const auto regularizedHole = FootprintVectorizer::regularizeEdges(hole, 2.5, 0.30);
+    EXPECT_GE(regularizedHole.size(), 4U);
+    const double regArea = FootprintVectorizer::calculateSignedArea(regularizedHole);
+    // Winding direction is preserved
+    EXPECT_EQ((area > 0.0), (regArea > 0.0));
+    for (std::size_t i = 0; i < regularizedHole.size(); ++i)
+    {
+        const auto& pPrev = regularizedHole[(i + regularizedHole.size() - 1) % regularizedHole.size()];
+        const auto& pCurr = regularizedHole[i];
+        const auto& pNext = regularizedHole[(i + 1) % regularizedHole.size()];
+        const double inX = pCurr.easting - pPrev.easting;
+        const double inY = pCurr.northing - pPrev.northing;
+        const double inLen = std::hypot(inX, inY);
+        const double outX = pNext.easting - pCurr.easting;
+        const double outY = pNext.northing - pCurr.northing;
+        const double outLen = std::hypot(outX, outY);
+        const double dot = (inX * outX + inY * outY) / (inLen * outLen);
+        EXPECT_NEAR(dot, 0.0, 1e-3);
+    }
 }
 } // namespace
 </file>
@@ -18397,6 +19319,64 @@ TEST(MeshPipelineTest, FeatureIdAccessorUsesGltfLegalFloatComponentType)
         "KHR_materials_unlit"));
 }
 
+TEST(MeshPipelineTest, Color0AccessorUsesGltfLegalVec4FloatComponentType)
+{
+    MeshPrimitive primitive;
+    primitive.materialRole = MaterialRole::BUILDING_ROOF;
+    primitive.positions = {
+        0.0F, 0.0F, 0.0F,
+        1.0F, 0.0F, 0.0F,
+        0.0F, 0.0F, 1.0F};
+    primitive.indices = {0, 1, 2};
+    primitive.colors = std::vector<float>{
+        0.0F, 0.62F, 0.82F, 1.0F,
+        0.0F, 0.62F, 0.82F, 1.0F,
+        0.0F, 0.62F, 0.82F, 1.0F};
+    primitive.localBounds = {0.0, 0.0, 0.0, 1.0, 0.0, 1.0, true};
+
+    const CompressedPrimitive compressed = DracoCompressor::compress(primitive);
+    ASSERT_TRUE(compressed.success) << compressed.errorMessage;
+    ASSERT_GE(compressed.colorAttrId, 0);
+
+    SceneMesh scene;
+    scene.roofPrimitive = primitive;
+    scene.materials = {MaterialRole::BUILDING_ROOF};
+    scene.sceneBounds = primitive.localBounds;
+
+    const GlbBuildResult glb = GltfPackager::buildSceneToMemory(
+        scene,
+        {compressed},
+        1);
+    ASSERT_FALSE(glb.compressedGlbByteBuffer.empty());
+
+    tinygltf::TinyGLTF loader;
+    tinygltf::Model model;
+    std::string error;
+    std::string warning;
+    const bool loaded = loader.LoadBinaryFromMemory(
+        &model,
+        &error,
+        &warning,
+        glb.compressedGlbByteBuffer.data(),
+        static_cast<unsigned int>(glb.compressedGlbByteBuffer.size()));
+
+    ASSERT_TRUE(loaded) << error;
+    ASSERT_EQ(model.meshes.size(), 1U);
+    ASSERT_EQ(model.meshes[0].primitives.size(), 1U);
+
+    const auto colorAttr =
+        model.meshes[0].primitives[0].attributes.find("COLOR_0");
+    ASSERT_NE(colorAttr, model.meshes[0].primitives[0].attributes.end());
+    ASSERT_GE(colorAttr->second, 0);
+    ASSERT_LT(static_cast<std::size_t>(colorAttr->second), model.accessors.size());
+    EXPECT_EQ(
+        model.accessors[colorAttr->second].componentType,
+        TINYGLTF_COMPONENT_TYPE_FLOAT);
+    EXPECT_EQ(
+        model.accessors[colorAttr->second].type,
+        TINYGLTF_TYPE_VEC4);
+}
+
 TEST(MeshPipelineTest, DisablingSkirtEmitsOnlyTopSurfaceVerticesAndFaces)
 {
     auto metadata = makeProjectedMetadata(4, 4, 1, -1);
@@ -18510,23 +19490,29 @@ TEST(MeshPipelineTest, BuildingPrimitivesAreUntexturedShadedAndSeparateFromTerra
         model.materials[wall.material]
             .pbrMetallicRoughness.baseColorTexture.index,
         -1);
-    EXPECT_EQ(model.materials[roof.material].name, "Hologram_Roof");
-    EXPECT_EQ(model.materials[wall.material].name, "Hologram_Wall");
+    EXPECT_TRUE(model.materials[roof.material].name == "Building_Roof" ||
+                model.materials[roof.material].name == "Hologram_Roof");
+    EXPECT_TRUE(model.materials[wall.material].name == "Building_Wall" ||
+                model.materials[wall.material].name == "Hologram_Wall");
     EXPECT_EQ(std::count(model.extensionsUsed.begin(), model.extensionsUsed.end(),
         "KHR_materials_unlit"), 0);
     const auto& wallPbr = model.materials[wall.material].pbrMetallicRoughness;
     const auto& roofPbr = model.materials[roof.material].pbrMetallicRoughness;
-    EXPECT_EQ(wallPbr.baseColorFactor, (std::vector<double>{0.015, 0.10, 0.42, 1.0}));
-    EXPECT_DOUBLE_EQ(wallPbr.metallicFactor, 0.0);
-    EXPECT_DOUBLE_EQ(wallPbr.roughnessFactor, 0.6);
-    EXPECT_EQ(roofPbr.baseColorFactor, (std::vector<double>{0.025, 0.24, 0.72, 1.0}));
-    EXPECT_DOUBLE_EQ(roofPbr.metallicFactor, 0.0);
-    EXPECT_DOUBLE_EQ(roofPbr.roughnessFactor, 0.65);
-    EXPECT_LT(
-        model.materials[wall.material]
-            .pbrMetallicRoughness.baseColorFactor[2],
-        model.materials[roof.material]
-            .pbrMetallicRoughness.baseColorFactor[2]);
+    EXPECT_DOUBLE_EQ(wallPbr.baseColorFactor[0], 1.0);
+    EXPECT_DOUBLE_EQ(wallPbr.baseColorFactor[1], 1.0);
+    EXPECT_DOUBLE_EQ(wallPbr.baseColorFactor[2], 1.0);
+    EXPECT_DOUBLE_EQ(wallPbr.metallicFactor, 0.10);
+    EXPECT_DOUBLE_EQ(wallPbr.roughnessFactor, 0.40);
+    EXPECT_EQ(model.materials[wall.material].alphaMode, "BLEND");
+    EXPECT_TRUE(model.materials[wall.material].doubleSided);
+    EXPECT_DOUBLE_EQ(roofPbr.baseColorFactor[0], 1.0);
+    EXPECT_DOUBLE_EQ(roofPbr.baseColorFactor[1], 1.0);
+    EXPECT_DOUBLE_EQ(roofPbr.baseColorFactor[2], 1.0);
+    EXPECT_DOUBLE_EQ(roofPbr.baseColorFactor[3], 1.0);
+    EXPECT_DOUBLE_EQ(roofPbr.metallicFactor, 0.10);
+    EXPECT_DOUBLE_EQ(roofPbr.roughnessFactor, 0.40);
+    EXPECT_EQ(model.materials[roof.material].alphaMode, "BLEND");
+    EXPECT_TRUE(model.materials[roof.material].doubleSided);
 }
 
 TEST(MeshPipelineTest, TerrainUvMatchesPixelEdgeFrameWithoutVerticalReflection)
@@ -18739,6 +19725,182 @@ TEST(MeshPipelineTest, OuterAndCourtyardWallsFaceTheirExteriorAndRoofsFaceUp)
         roofArea += 0.5*ny;
     }
     EXPECT_NEAR(roofArea, 84.0, 1e-5); // 100 m2 footprint minus 16 m2 courtyard.
+}
+
+TEST(MeshPipelineTest, BuildingMesherAssignsHeightBinnedMapflowColors)
+{
+    BuildingInstance lowRise;
+    lowRise.buildingId = 1;
+    lowRise.heightAboveGround = 8.0F; // < 12m: Electric Aqua / Cyan
+    lowRise.representativeBaseElevation = 100.0F;
+    lowRise.roofElevation = 108.0F;
+    lowRise.projectedFootprint.outerRing = {{0,0}, {10,0}, {10,10}, {0,10}};
+
+    BuildingInstance midRise;
+    midRise.buildingId = 2;
+    midRise.heightAboveGround = 18.0F; // 12m <= h < 24m: Sunset Amber / Coral Orange
+    midRise.representativeBaseElevation = 100.0F;
+    midRise.roofElevation = 118.0F;
+    midRise.projectedFootprint.outerRing = {{20,0}, {30,0}, {30,10}, {20,10}};
+
+    BuildingInstance highRise;
+    highRise.buildingId = 3;
+    highRise.heightAboveGround = 35.0F; // >= 24m: Crimson / Ruby Red
+    highRise.representativeBaseElevation = 100.0F;
+    highRise.roofElevation = 135.0F;
+    highRise.projectedFootprint.outerRing = {{40,0}, {50,0}, {50,10}, {40,10}};
+
+    BuildingCollection buildings;
+    buildings.buildings = {lowRise, midRise, highRise};
+
+    LocalSceneFrame frame;
+    frame.elevationOrigin = 100.0;
+    const auto mesh = BuildingMesher::generate(buildings, frame);
+
+    ASSERT_TRUE(mesh.roofPrimitive.colors.has_value());
+    ASSERT_TRUE(mesh.wallPrimitive.colors.has_value());
+    EXPECT_EQ(mesh.roofPrimitive.colors->size(), (mesh.roofPrimitive.positions.size() / 3) * 4);
+    EXPECT_EQ(mesh.wallPrimitive.colors->size(), (mesh.wallPrimitive.positions.size() / 3) * 4);
+
+    // Assert wireframe edgePrimitive is populated with LINES topology
+    EXPECT_EQ(mesh.edgePrimitive.topology, PrimitiveTopology::LINES);
+    EXPECT_EQ(mesh.edgePrimitive.materialRole, MaterialRole::BUILDING_EDGE);
+    ASSERT_TRUE(mesh.edgePrimitive.colors.has_value());
+    EXPECT_FALSE(mesh.edgePrimitive.positions.empty());
+    EXPECT_FALSE(mesh.edgePrimitive.indices.empty());
+    EXPECT_EQ(mesh.edgePrimitive.indices.size() % 2, 0U);
+    EXPECT_EQ(mesh.edgePrimitive.colors->size(), (mesh.edgePrimitive.positions.size() / 3) * 4);
+    EXPECT_TRUE(mesh.edgePrimitive.localBounds.isInitialized);
+
+    // Assert edge colors are sharp white with 0.90 alpha
+    EXPECT_NEAR((*mesh.edgePrimitive.colors)[0], 1.00F, 1e-4F);
+    EXPECT_NEAR((*mesh.edgePrimitive.colors)[1], 1.00F, 1e-4F);
+    EXPECT_NEAR((*mesh.edgePrimitive.colors)[2], 1.00F, 1e-4F);
+    EXPECT_NEAR((*mesh.edgePrimitive.colors)[3], 0.90F, 1e-4F);
+
+    // Building 1 (standard urban, h < 28m):
+    // Wall: 0.00, 0.82, 0.95, 0.65; Roof: 0.00, 0.65, 0.85, 0.75
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[0], 0.00F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[1], 0.82F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[2], 0.95F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[3], 0.65F, 1e-4F);
+
+    EXPECT_NEAR((*mesh.roofPrimitive.colors)[0], 0.00F, 1e-4F);
+    EXPECT_NEAR((*mesh.roofPrimitive.colors)[1], 0.65F, 1e-4F);
+    EXPECT_NEAR((*mesh.roofPrimitive.colors)[2], 0.85F, 1e-4F);
+    EXPECT_NEAR((*mesh.roofPrimitive.colors)[3], 0.75F, 1e-4F);
+
+    // Building 2 (standard urban, h < 28m): 4 edges * 4 vertices = 16 wall vertices per building quad
+    std::size_t midRiseWallColorOffset = 16 * 4;
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 0], 0.00F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 1], 0.82F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 2], 0.95F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 3], 0.65F, 1e-4F);
+
+    // Building 3 (high-rise tower, h >= 28m): 32 wall vertices offset
+    // Wall: 0.95, 0.28, 0.35, 0.65; Roof: 0.80, 0.18, 0.25, 0.75
+    std::size_t highRiseWallColorOffset = 32 * 4;
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 0], 0.95F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 1], 0.28F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 2], 0.35F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 3], 0.65F, 1e-4F);
+}
+
+TEST(MeshPipelineTest, GltfPackagerPacksEdgeHighlightLinesAsUncompressedLinesMode)
+{
+    MeshPrimitive edgePrim;
+    edgePrim.topology = PrimitiveTopology::LINES;
+    edgePrim.materialRole = MaterialRole::BUILDING_EDGE;
+    edgePrim.positions = {
+        0.0F, 10.0F, 0.0F,
+        10.0F, 10.0F, 0.0F};
+    edgePrim.indices = {0, 1};
+    edgePrim.colors = std::vector<float>{
+        1.0F, 1.0F, 1.0F, 1.0F,
+        1.0F, 1.0F, 1.0F, 1.0F};
+    edgePrim.localBounds = {0.0, 10.0, 0.0, 10.0, 10.0, 0.0, true};
+
+    SceneMesh scene;
+    scene.edgePrimitive = edgePrim;
+    scene.materials = {MaterialRole::BUILDING_EDGE};
+    scene.sceneBounds = edgePrim.localBounds;
+
+    const GlbBuildResult glb = GltfPackager::buildSceneToMemory(
+        scene,
+        {},
+        1);
+    ASSERT_FALSE(glb.compressedGlbByteBuffer.empty());
+
+    tinygltf::TinyGLTF loader;
+    tinygltf::Model model;
+    std::string error;
+    std::string warning;
+    const bool loaded = loader.LoadBinaryFromMemory(
+        &model,
+        &error,
+        &warning,
+        glb.compressedGlbByteBuffer.data(),
+        static_cast<unsigned int>(glb.compressedGlbByteBuffer.size()));
+
+    ASSERT_TRUE(loaded) << error;
+    ASSERT_EQ(model.meshes.size(), 1U);
+    ASSERT_EQ(model.meshes[0].primitives.size(), 1U);
+
+    const auto& prim = model.meshes[0].primitives[0];
+    EXPECT_EQ(prim.mode, TINYGLTF_MODE_LINE); // Mode 1: LINE
+    EXPECT_FALSE(prim.extensions.contains("KHR_draco_mesh_compression")); // Uncompressed!
+
+    ASSERT_TRUE(prim.attributes.contains("POSITION"));
+    ASSERT_TRUE(prim.attributes.contains("COLOR_0"));
+    EXPECT_GE(prim.indices, 0);
+
+    ASSERT_GE(prim.material, 0);
+    EXPECT_EQ(model.materials[prim.material].name, "Building_Edge_Highlight");
+}
+
+TEST(MeshPipelineTest, CollinearVertexAlongStraightWallDoesNotEmitVerticalSeam)
+{
+    BuildingInstance building;
+    building.buildingId = 42;
+    building.heightAboveGround = 15.0F;
+    building.representativeBaseElevation = 100.0F;
+    building.roofElevation = 115.0F;
+    // Outer ring with a collinear redundant vertex on the bottom wall (5, 0) between (0, 0) and (10, 0)
+    // 5 vertices: (0, 0), (5, 0), (10, 0), (10, 10), (0, 10)
+    building.projectedFootprint.outerRing = {
+        {0.0, 0.0},
+        {5.0, 0.0}, // Collinear turn angle ~ 0 degrees
+        {10.0, 0.0},
+        {10.0, 10.0},
+        {0.0, 10.0}
+    };
+
+    BuildingCollection buildings;
+    buildings.buildings = {building};
+    LocalSceneFrame frame;
+    frame.elevationOrigin = 100.0;
+
+    const auto mesh = BuildingMesher::generate(buildings, frame);
+    // Vertical seams only at the 4 true 90-degree corners, not at the collinear vertex (5, 0)
+    // Count vertical lines (where x1 == x2 && z1 == z2 && y1 != y2)
+    const auto& pos = mesh.edgePrimitive.positions;
+    const auto& idx = mesh.edgePrimitive.indices;
+    int verticalSeams = 0;
+    for (std::size_t i = 0; i < idx.size(); i += 2)
+    {
+        uint32_t a = idx[i] * 3;
+        uint32_t b = idx[i + 1] * 3;
+        if (std::abs(pos[a] - pos[b]) < 1e-4F &&
+            std::abs(pos[a + 2] - pos[b + 2]) < 1e-4F &&
+            std::abs(pos[a + 1] - pos[b + 1]) > 0.1F)
+        {
+            ++verticalSeams;
+            // Ensure no vertical seam was emitted at x = 5.0
+            EXPECT_FALSE(std::abs(pos[a] - 5.0F) < 1e-3F && std::abs(pos[a + 2] - 0.0F) < 1e-3F);
+        }
+    }
+    // Exactly 4 vertical seams for the 4 corners
+    EXPECT_EQ(verticalSeams, 4);
 }
 } // namespace
 </file>
@@ -21824,11 +22986,12 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
         }
     const auto originalDtm = surface.dtm.data, originalDsm = surface.dsm.data;
     BuildingReconstructionDiagnostics stages;
+    BuildingReconstructionConfig bldgConfig;
     const auto buildings = BuildingReconstructionService::reconstruct(
-        semantics, surface, metadata, BuildingReconstructionConfig{}, &stages);
+        semantics, surface, metadata, bldgConfig, &stages);
     ASSERT_EQ(buildings.buildings.size(), 2U);
-    EXPECT_FLOAT_EQ(buildings.buildings[0].heightAboveGround, 10);
-    EXPECT_FLOAT_EQ(buildings.buildings[1].heightAboveGround, 25);
+    EXPECT_FLOAT_EQ(buildings.buildings[0].heightAboveGround, 24.0F);
+    EXPECT_FLOAT_EQ(buildings.buildings[1].heightAboveGround, 60.0F);
     ASSERT_TRUE(stages.instanceLabels.isValid());
 
     SceneInput scene; scene.width = scene.height = n; scene.spatialMetadata = metadata;
@@ -21846,7 +23009,7 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
         glb.compressedGlbByteBuffer.data(), glb.compressedGlbByteBuffer.size())) << error;
     EXPECT_EQ(model.asset.extras.Get("presentationMode").Get<std::string>(), "flat_urban");
     EXPECT_FALSE(model.asset.extras.Get("renderYIsAbsoluteElevationOffset").Get<bool>());
-    ASSERT_EQ(model.meshes[0].primitives.size(), 3U);
+    ASSERT_EQ(model.meshes[0].primitives.size(), 4U);
     ASSERT_EQ(model.images.size(), 1U);
     const auto& imageView = model.bufferViews.at(model.images[0].bufferView);
     const auto& imageBuffer = model.buffers.at(imageView.buffer).data;
@@ -21864,8 +23027,8 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
     EXPECT_NEAR(terrain.maxValues[1], 0, 1e-5);
     EXPECT_NEAR(terrain.minValues[1], 0, 1e-5);
     EXPECT_EQ(glb.terrainTriangleCount, static_cast<std::size_t>(2 * (n-1) * (n-1)));
-    EXPECT_NEAR(roof.minValues[1], 10, 1e-5);
-    EXPECT_NEAR(roof.maxValues[1], 25, 1e-5);
+    EXPECT_NEAR(roof.minValues[1], 24.0, 1e-5);
+    EXPECT_NEAR(roof.maxValues[1], 60.0, 1e-5);
     // Verify actual compressed positions, not only accessor bounding boxes.
     for (std::size_t primitiveIndex = 0; primitiveIndex < 2; ++primitiveIndex)
     {
@@ -21901,7 +23064,7 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
                 EXPECT_NEAR(position[2], uv[1] * n * .5 - n * .25, .02);
             }
             else
-                EXPECT_TRUE(std::abs(y - 10) < .02F || std::abs(y - 25) < .02F);
+                EXPECT_TRUE(std::abs(y - 24.0F) < .02F || std::abs(y - 60.0F) < .02F);
         }
     }
     EXPECT_EQ(surface.dtm.data, originalDtm);
@@ -21935,8 +23098,8 @@ TEST(UrbanSceneIntegrationTest, NarrowRoofReachesGlbAndRoadNoiseCannotEngulfIt)
     const auto buildings = BuildingReconstructionService::reconstruct(
         semantics, surface, metadata); // Real production defaults.
     ASSERT_EQ(buildings.buildings.size(), 1U);
-    EXPECT_NEAR(buildings.buildings[0].heightAboveGround, 12.0F, 1e-5F);
-    EXPECT_NEAR(buildings.buildings[0].roofElevation, 112.0F, 1e-5F);
+    EXPECT_NEAR(buildings.buildings[0].heightAboveGround, 28.8F, 1e-4F);
+    EXPECT_NEAR(buildings.buildings[0].roofElevation, 128.8F, 1e-4F);
 
     SceneInput scene;
     scene.width = scene.height = size;
@@ -21952,7 +23115,7 @@ TEST(UrbanSceneIntegrationTest, NarrowRoofReachesGlbAndRoadNoiseCannotEngulfIt)
     ASSERT_TRUE(loader.LoadBinaryFromMemory(&model, &error, &warning,
         glb.compressedGlbByteBuffer.data(), glb.compressedGlbByteBuffer.size())) << error;
     ASSERT_EQ(model.meshes.size(), 1U);
-    ASSERT_EQ(model.meshes[0].primitives.size(), 3U);
+    ASSERT_EQ(model.meshes[0].primitives.size(), 4U);
     for (std::size_t i = 1; i < 3; ++i)
     {
         const auto& primitive = model.meshes[0].primitives[i];

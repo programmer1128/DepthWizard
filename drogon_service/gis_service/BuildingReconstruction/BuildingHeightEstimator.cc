@@ -5,13 +5,13 @@
 #include <cstdint>
 #include <sstream>
 
-float BuildingHeightEstimator::calculateRobustMedian(std::vector<float>& samples) 
+float BuildingHeightEstimator::calculateRobustPeak(std::vector<float>& samples)
 {
-     if (samples.empty()) 
+     if (samples.empty())
      {
          return 0.0f;
      }
-     size_t n = samples.size() / 2;
+     size_t n = (samples.size() * 3) / 4; // 75th percentile
      // std::nth_element is O(N) instead of O(N log N) full sort
      std::nth_element(samples.begin(), samples.begin() + n, samples.end());
      return samples[n];
@@ -26,7 +26,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
 {
     BuildingHeightEstimate result;
 
-     if (!config.validate() || pixelFootprint.outerRing.empty()) 
+     if (!config.validate() || pixelFootprint.outerRing.empty())
      {
          result.errorMessage = "Invalid configuration or empty footprint.";
          return result;
@@ -63,7 +63,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
 
      //Calculate Bounding Box of the Polygon to create a localized ROI
      int minX = width, minY = height, maxX = 0, maxY = 0;
-     for (const auto& pt : pixelFootprint.outerRing) 
+     for (const auto& pt : pixelFootprint.outerRing)
      {
          minX = std::min(minX, static_cast<int>(pt.column));
          minY = std::min(minY, static_cast<int>(pt.row));
@@ -83,7 +83,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
      int roiW = std::min(width - roiX, (maxX - minX) + (bufferPixels * 2) + 2);
      int roiH = std::min(height - roiY, (maxY - minY) + (bufferPixels * 2) + 2);
 
-     if (roiW <= 0 || roiH <= 0) 
+     if (roiW <= 0 || roiH <= 0)
      {
          result.errorMessage = "Calculated ROI is invalid.";
          return result;
@@ -92,17 +92,17 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
      //Rasterize the Polygon into the ROI Mask
      cv::Mat footprintMask(roiH, roiW, CV_8UC1, cv::Scalar(0));
      std::vector<cv::Point> cvPoly;
-     for (const auto& pt : pixelFootprint.outerRing) 
+     for (const auto& pt : pixelFootprint.outerRing)
      {
          cvPoly.push_back(cv::Point(static_cast<int>(pt.column) - roiX, static_cast<int>(pt.row) - roiY));
      }
-    
+
      const cv::Point* pts[1] = { cvPoly.data() };
      int npts[1] = { static_cast<int>(cvPoly.size()) };
      cv::fillPoly(footprintMask, pts, npts, 1, cv::Scalar(255));
 
      // Punch out holes
-     for (const auto& hole : pixelFootprint.holes) 
+     for (const auto& hole : pixelFootprint.holes)
      {
          std::vector<cv::Point> cvHole;
          for (const auto& pt : hole) {
@@ -115,13 +115,13 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
 
      //Create Interior Mask (Building Heights) & Exterior Mask (Ground Bases)
      cv::Mat interiorMask, dilatedMask, exteriorMask;
-    
+
      cv::Mat erodeKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(erodePixels * 2 + 1, erodePixels * 2 + 1));
      cv::Mat dilateKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(bufferPixels * 2 + 1, bufferPixels * 2 + 1));
 
      cv::erode(footprintMask, interiorMask, erodeKernel);
      cv::dilate(footprintMask, dilatedMask, dilateKernel);
-    
+
      // The exterior ring is the dilated mask MINUS the original footprint
      cv::subtract(dilatedMask, footprintMask, exteriorMask);
 
@@ -130,21 +130,21 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
      std::vector<float> footprintDtmSamples;
      std::vector<float> roofSamples;
 
-     for (int r = 0; r < roiH;r++) 
+     for (int r = 0; r < roiH;r++)
      {
          uint8_t* intRow = interiorMask.ptr<uint8_t>(r);
          uint8_t* extRow = exteriorMask.ptr<uint8_t>(r);
-         
+
          int globalR = roiY + r;
          std::size_t offset = static_cast<std::size_t>(globalR) * width;
 
-         for (int c = 0; c < roiW;c++) 
+         for (int c = 0; c < roiW;c++)
          {
              int globalC = roiX + c;
              std::size_t idx = offset + globalC;
- 
+
              // Skip pixels that are completely invalid globally (e.g., clouds/no-data)
-             if (surface.validMask.data[idx] == 0) 
+             if (surface.validMask.data[idx] == 0)
              {
                  continue;
              }
@@ -158,7 +158,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
              }
 
              // Sample Exterior Ground (strictly ignoring trees/water/buildings)
-             if (extRow[c] > 0) 
+             if (extRow[c] > 0)
              {
                  if ((pixelClass == SemanticClass::GROUND ||
                       pixelClass == SemanticClass::ROAD) &&
@@ -176,7 +176,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
              // Sample Interior Roof from strict or metric-recovered building
              // evidence. Requiring only the final class here would discard
              // every candidate recovered from a softmax margin failure.
-             if (intRow[c] > 0) 
+             if (intRow[c] > 0)
              {
                  if (supportsBuildingHeight &&
                      std::isfinite(surface.ndsm.data[idx])) {
@@ -224,7 +224,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
          }
      }
 
-     if (result.validGroundSampleCount < config.minRequiredSamples) 
+     if (result.validGroundSampleCount < config.minRequiredSamples)
      {
          // The reference DTM represents bare earth beneath structures. When
          // semantic ground is unavailable around a footprint (dense urban or
@@ -239,27 +239,27 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
          }
 
          result.representativeBaseElevation =
-             calculateRobustMedian(footprintDtmSamples);
+             calculateRobustPeak(footprintDtmSamples);
          result.validGroundSampleCount =
              static_cast<int>(footprintDtmSamples.size());
          result.warnings.push_back(
              "Exterior ground unavailable; base elevation derived from footprint DTM.");
-     } 
-     else 
+     }
+     else
      {
-         result.representativeBaseElevation = calculateRobustMedian(groundSamples);
+         result.representativeBaseElevation = calculateRobustPeak(groundSamples);
      }
 
-    if (result.validRoofSampleCount < config.minRequiredSamples) 
+    if (result.validRoofSampleCount < config.minRequiredSamples)
     {
          result.warnings.push_back("Insufficient clean interior building samples. Height derived from footprint edges.");
          // Fallback: If erosion destroyed the mask, compute from the un-eroded footprint
          roofSamples.clear();
-         for (int r = 0; r < roiH; ++r) 
+         for (int r = 0; r < roiH; ++r)
          {
              uint8_t* footRow = footprintMask.ptr<uint8_t>(r);
              std::size_t offset = static_cast<std::size_t>(roiY + r) * width;
-             for (int c = 0; c < roiW; ++c) 
+             for (int c = 0; c < roiW; ++c)
              {
                  std::size_t idx = offset + (roiX + c);
                  const bool supportsBuildingHeight =
@@ -284,12 +284,14 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
              return result;
          }
 
-         result.heightAboveGround = calculateRobustMedian(roofSamples);
-     } 
-     else 
-     {
-         result.heightAboveGround = calculateRobustMedian(roofSamples);
+         result.heightAboveGround = calculateRobustPeak(roofSamples);
      }
+     else
+     {
+         result.heightAboveGround = calculateRobustPeak(roofSamples);
+     }
+
+     result.heightAboveGround *= config.heightScaleMultiplier;
 
      // Fail closed instead of turning zero/noise into a synthetic 10 cm
      // building or allowing implausible cliffs to become structures.
@@ -302,7 +304,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
              "Estimated building height violates configured physical limits.";
          return result;
      }
-    
+
      // Flat roof assumption
      result.roofElevation = result.representativeBaseElevation + result.heightAboveGround;
 
@@ -345,13 +347,13 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
          result.baseElevationPerOuterVertex.push_back(
              vertexTerrainSamples.empty()
                  ? result.representativeBaseElevation
-                 : calculateRobustMedian(vertexTerrainSamples));
+                 : calculateRobustPeak(vertexTerrainSamples));
      }
 
      // Confidence metric (0.0 to 1.0)
      float sampleConf = std::min(1.0f, static_cast<float>(result.validRoofSampleCount) / (config.minRequiredSamples * 4.0f));
      result.confidence = sampleConf;
-    
+
      result.success = true;
      return result;
 }

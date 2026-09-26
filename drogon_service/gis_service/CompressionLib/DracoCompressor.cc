@@ -62,7 +62,15 @@ CompressedPrimitive DracoCompressor::compress(
         result.featureIdAttrId = dracoMesh.AddAttribute(idAttr, true, numPoints);
     }
 
-    // 6. Fill Attribute Values Safely
+    // 6. Register Optional Attribute: COLOR (COLOR_0)
+    if (primitive.colors.has_value()) {
+        draco::GeometryAttribute colorAttr;
+        colorAttr.Init(draco::GeometryAttribute::COLOR, nullptr, 4,
+                       draco::DT_FLOAT32, false, sizeof(float) * 4, 0);
+        result.colorAttrId = dracoMesh.AddAttribute(colorAttr, true, numPoints);
+    }
+
+    // 7. Fill Attribute Values Safely
     for (size_t i = 0; i < numPoints; ++i) {
         dracoMesh.attribute(result.posAttrId)->SetAttributeValue(
             draco::AttributeValueIndex(i), &primitive.positions[i * 3]);
@@ -81,9 +89,14 @@ CompressedPrimitive DracoCompressor::compress(
             dracoMesh.attribute(result.featureIdAttrId)->SetAttributeValue(
                 draco::AttributeValueIndex(i), &primitive.featureIds.value()[i]);
         }
+
+        if (primitive.colors.has_value()) {
+            dracoMesh.attribute(result.colorAttrId)->SetAttributeValue(
+                draco::AttributeValueIndex(i), &primitive.colors.value()[i * 4]);
+        }
     }
 
-    // 7. Configure & Run Encoder
+    // 8. Configure & Run Encoder
     draco::Encoder encoder;
     encoder.SetSpeedOptions(config.speed, config.speed);
     encoder.SetAttributeQuantization(draco::GeometryAttribute::POSITION, config.posQuantization);
@@ -93,6 +106,9 @@ CompressedPrimitive DracoCompressor::compress(
     }
     if (primitive.normals.has_value()) {
         encoder.SetAttributeQuantization(draco::GeometryAttribute::NORMAL, config.normalQuantization);
+    }
+    if (primitive.colors.has_value()) {
+        encoder.SetAttributeQuantization(draco::GeometryAttribute::COLOR, config.colorQuantization);
     }
     // Feature IDs are floats only because glTF restricts vertex component
     // types. Do not quantize them: picking requires exact integral values.

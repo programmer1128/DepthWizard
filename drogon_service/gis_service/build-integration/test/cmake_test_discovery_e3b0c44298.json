@@ -1,80 +1,30 @@
 {
-  "tests": 14,
+  "tests": 4,
   "name": "AllTests",
   "testsuites": [
     {
-      "name": "FootprintVectorizerTest",
-      "tests": 14,
+      "name": "ScenePresentationSelectorTest",
+      "tests": 4,
       "testsuite": [
         {
-          "name": "VectorizesRectangleWithExactAreaAndAffineCoordinates",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
-          "line": 31
+          "name": "DistributedUrbanBuildingsSelectFlatAutomatically",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/ScenePresentationSelector_test.cc",
+          "line": 24
         },
         {
-          "name": "PreservesCourtyardAsInteriorHole",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
-          "line": 74
+          "name": "CityReferenceContaminationDoesNotForcePedestal",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/ScenePresentationSelector_test.cc",
+          "line": 33
         },
         {
-          "name": "HandlesStandardNorthUpNegativeRowResolution",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
-          "line": 101
+          "name": "ForestAndMajorReliefRetainTerrain",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/ScenePresentationSelector_test.cc",
+          "line": 43
         },
         {
-          "name": "RejectsBoundingBoxOutsideRaster",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
-          "line": 117
-        },
-        {
-          "name": "RegularizesSupportedRectangleButPreservesLShape",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
-          "line": 132
-        },
-        {
-          "name": "SupportedEdgeFitKeepsConcaveWingAndArea",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
-          "line": 158
-        },
-        {
-          "name": "ArchitecturalDefaultsValidateAndRejectUnboundedAdjustments",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
-          "line": 182
-        },
-        {
-          "name": "LooseRectangleFillDoesNotFillAnEightyFourPercentLShape",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
-          "line": 197
-        },
-        {
-          "name": "RoundedConvexRectangleCanRecoverFourArchitecturalCorners",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
-          "line": 214
-        },
-        {
-          "name": "AggressiveSimplificationRetriesRatherThanDeletingSmallCourtyard",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
-          "line": 246
-        },
-        {
-          "name": "RectangleExpansionDoesNotStealNeighbouringInstancePixels",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
-          "line": 262
-        },
-        {
-          "name": "SupportedWallsReplaceSmallChamferWithRightAngle",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
-          "line": 286
-        },
-        {
-          "name": "OrthogonalFacadeSurvivesAnAttachedDiagonalWing",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
-          "line": 316
-        },
-        {
-          "name": "SupportedFitKeepsCourtyardAndConcaveWings",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
-          "line": 356
+          "name": "LocalizedBuildingsAndNoDataCannotFlattenScene",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/ScenePresentationSelector_test.cc",
+          "line": 55
         }
       ]
     }

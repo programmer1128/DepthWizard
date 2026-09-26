@@ -172,6 +172,9 @@ TEST(BuildingInstanceExtractorTest, SplitsTouchingRoofsAtHeightStepWithoutLosing
     auto heights = makeConstantGrid(32, 20, 10.0F);
     fillRectangle(heights, 16, 2, 30, 18, 25.0F);
     auto config = noMorphologyConfig();
+    ASSERT_TRUE(config.splitSupportedInstances);
+    ASSERT_FLOAT_EQ(config.instanceHeightStepMetres, 3.5F);
+    ASSERT_FLOAT_EQ(config.minInstanceSeedAreaSquareMetres, 15.0F);
     const auto result = BuildingInstanceExtractor::extract(mask, semantics,
         makeProjectedMetadata(32, 20), config, &heights);
     ASSERT_TRUE(result.success);
@@ -191,6 +194,7 @@ TEST(BuildingInstanceExtractorTest, ProbabilityValleySeparatesRoofsButUniformBlo
     auto semantics = makeSemanticScene(32, 20, SemanticClass::BUILDING);
     semantics.buildingProbability = makeConstantGrid(32, 20, 0.95F);
     auto config = noMorphologyConfig();
+    config.splitSupportedInstances = true;
     auto result = BuildingInstanceExtractor::extract(mask, semantics,
         makeProjectedMetadata(32, 20), config);
     ASSERT_EQ(result.components.size(), 1U);

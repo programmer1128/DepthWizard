@@ -29,11 +29,12 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
         }
     const auto originalDtm = surface.dtm.data, originalDsm = surface.dsm.data;
     BuildingReconstructionDiagnostics stages;
+    BuildingReconstructionConfig bldgConfig;
     const auto buildings = BuildingReconstructionService::reconstruct(
-        semantics, surface, metadata, BuildingReconstructionConfig{}, &stages);
+        semantics, surface, metadata, bldgConfig, &stages);
     ASSERT_EQ(buildings.buildings.size(), 2U);
-    EXPECT_FLOAT_EQ(buildings.buildings[0].heightAboveGround, 10);
-    EXPECT_FLOAT_EQ(buildings.buildings[1].heightAboveGround, 25);
+    EXPECT_FLOAT_EQ(buildings.buildings[0].heightAboveGround, 24.0F);
+    EXPECT_FLOAT_EQ(buildings.buildings[1].heightAboveGround, 60.0F);
     ASSERT_TRUE(stages.instanceLabels.isValid());
 
     SceneInput scene; scene.width = scene.height = n; scene.spatialMetadata = metadata;
@@ -51,7 +52,7 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
         glb.compressedGlbByteBuffer.data(), glb.compressedGlbByteBuffer.size())) << error;
     EXPECT_EQ(model.asset.extras.Get("presentationMode").Get<std::string>(), "flat_urban");
     EXPECT_FALSE(model.asset.extras.Get("renderYIsAbsoluteElevationOffset").Get<bool>());
-    ASSERT_EQ(model.meshes[0].primitives.size(), 3U);
+    ASSERT_EQ(model.meshes[0].primitives.size(), 4U);
     ASSERT_EQ(model.images.size(), 1U);
     const auto& imageView = model.bufferViews.at(model.images[0].bufferView);
     const auto& imageBuffer = model.buffers.at(imageView.buffer).data;
@@ -69,8 +70,8 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
     EXPECT_NEAR(terrain.maxValues[1], 0, 1e-5);
     EXPECT_NEAR(terrain.minValues[1], 0, 1e-5);
     EXPECT_EQ(glb.terrainTriangleCount, static_cast<std::size_t>(2 * (n-1) * (n-1)));
-    EXPECT_NEAR(roof.minValues[1], 10, 1e-5);
-    EXPECT_NEAR(roof.maxValues[1], 25, 1e-5);
+    EXPECT_NEAR(roof.minValues[1], 24.0, 1e-5);
+    EXPECT_NEAR(roof.maxValues[1], 60.0, 1e-5);
     // Verify actual compressed positions, not only accessor bounding boxes.
     for (std::size_t primitiveIndex = 0; primitiveIndex < 2; ++primitiveIndex)
     {
@@ -106,7 +107,7 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
                 EXPECT_NEAR(position[2], uv[1] * n * .5 - n * .25, .02);
             }
             else
-                EXPECT_TRUE(std::abs(y - 10) < .02F || std::abs(y - 25) < .02F);
+                EXPECT_TRUE(std::abs(y - 24.0F) < .02F || std::abs(y - 60.0F) < .02F);
         }
     }
     EXPECT_EQ(surface.dtm.data, originalDtm);
@@ -140,8 +141,8 @@ TEST(UrbanSceneIntegrationTest, NarrowRoofReachesGlbAndRoadNoiseCannotEngulfIt)
     const auto buildings = BuildingReconstructionService::reconstruct(
         semantics, surface, metadata); // Real production defaults.
     ASSERT_EQ(buildings.buildings.size(), 1U);
-    EXPECT_NEAR(buildings.buildings[0].heightAboveGround, 12.0F, 1e-5F);
-    EXPECT_NEAR(buildings.buildings[0].roofElevation, 112.0F, 1e-5F);
+    EXPECT_NEAR(buildings.buildings[0].heightAboveGround, 28.8F, 1e-4F);
+    EXPECT_NEAR(buildings.buildings[0].roofElevation, 128.8F, 1e-4F);
 
     SceneInput scene;
     scene.width = scene.height = size;
@@ -157,7 +158,7 @@ TEST(UrbanSceneIntegrationTest, NarrowRoofReachesGlbAndRoadNoiseCannotEngulfIt)
     ASSERT_TRUE(loader.LoadBinaryFromMemory(&model, &error, &warning,
         glb.compressedGlbByteBuffer.data(), glb.compressedGlbByteBuffer.size())) << error;
     ASSERT_EQ(model.meshes.size(), 1U);
-    ASSERT_EQ(model.meshes[0].primitives.size(), 3U);
+    ASSERT_EQ(model.meshes[0].primitives.size(), 4U);
     for (std::size_t i = 1; i < 3; ++i)
     {
         const auto& primitive = model.meshes[0].primitives[i];

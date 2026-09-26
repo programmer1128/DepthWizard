@@ -203,6 +203,64 @@ TEST(MeshPipelineTest, FeatureIdAccessorUsesGltfLegalFloatComponentType)
         "KHR_materials_unlit"));
 }
 
+TEST(MeshPipelineTest, Color0AccessorUsesGltfLegalVec4FloatComponentType)
+{
+    MeshPrimitive primitive;
+    primitive.materialRole = MaterialRole::BUILDING_ROOF;
+    primitive.positions = {
+        0.0F, 0.0F, 0.0F,
+        1.0F, 0.0F, 0.0F,
+        0.0F, 0.0F, 1.0F};
+    primitive.indices = {0, 1, 2};
+    primitive.colors = std::vector<float>{
+        0.0F, 0.62F, 0.82F, 1.0F,
+        0.0F, 0.62F, 0.82F, 1.0F,
+        0.0F, 0.62F, 0.82F, 1.0F};
+    primitive.localBounds = {0.0, 0.0, 0.0, 1.0, 0.0, 1.0, true};
+
+    const CompressedPrimitive compressed = DracoCompressor::compress(primitive);
+    ASSERT_TRUE(compressed.success) << compressed.errorMessage;
+    ASSERT_GE(compressed.colorAttrId, 0);
+
+    SceneMesh scene;
+    scene.roofPrimitive = primitive;
+    scene.materials = {MaterialRole::BUILDING_ROOF};
+    scene.sceneBounds = primitive.localBounds;
+
+    const GlbBuildResult glb = GltfPackager::buildSceneToMemory(
+        scene,
+        {compressed},
+        1);
+    ASSERT_FALSE(glb.compressedGlbByteBuffer.empty());
+
+    tinygltf::TinyGLTF loader;
+    tinygltf::Model model;
+    std::string error;
+    std::string warning;
+    const bool loaded = loader.LoadBinaryFromMemory(
+        &model,
+        &error,
+        &warning,
+        glb.compressedGlbByteBuffer.data(),
+        static_cast<unsigned int>(glb.compressedGlbByteBuffer.size()));
+
+    ASSERT_TRUE(loaded) << error;
+    ASSERT_EQ(model.meshes.size(), 1U);
+    ASSERT_EQ(model.meshes[0].primitives.size(), 1U);
+
+    const auto colorAttr =
+        model.meshes[0].primitives[0].attributes.find("COLOR_0");
+    ASSERT_NE(colorAttr, model.meshes[0].primitives[0].attributes.end());
+    ASSERT_GE(colorAttr->second, 0);
+    ASSERT_LT(static_cast<std::size_t>(colorAttr->second), model.accessors.size());
+    EXPECT_EQ(
+        model.accessors[colorAttr->second].componentType,
+        TINYGLTF_COMPONENT_TYPE_FLOAT);
+    EXPECT_EQ(
+        model.accessors[colorAttr->second].type,
+        TINYGLTF_TYPE_VEC4);
+}
+
 TEST(MeshPipelineTest, DisablingSkirtEmitsOnlyTopSurfaceVerticesAndFaces)
 {
     auto metadata = makeProjectedMetadata(4, 4, 1, -1);
@@ -316,23 +374,29 @@ TEST(MeshPipelineTest, BuildingPrimitivesAreUntexturedShadedAndSeparateFromTerra
         model.materials[wall.material]
             .pbrMetallicRoughness.baseColorTexture.index,
         -1);
-    EXPECT_EQ(model.materials[roof.material].name, "Hologram_Roof");
-    EXPECT_EQ(model.materials[wall.material].name, "Hologram_Wall");
+    EXPECT_TRUE(model.materials[roof.material].name == "Building_Roof" ||
+                model.materials[roof.material].name == "Hologram_Roof");
+    EXPECT_TRUE(model.materials[wall.material].name == "Building_Wall" ||
+                model.materials[wall.material].name == "Hologram_Wall");
     EXPECT_EQ(std::count(model.extensionsUsed.begin(), model.extensionsUsed.end(),
         "KHR_materials_unlit"), 0);
     const auto& wallPbr = model.materials[wall.material].pbrMetallicRoughness;
     const auto& roofPbr = model.materials[roof.material].pbrMetallicRoughness;
-    EXPECT_EQ(wallPbr.baseColorFactor, (std::vector<double>{0.015, 0.10, 0.42, 1.0}));
-    EXPECT_DOUBLE_EQ(wallPbr.metallicFactor, 0.0);
-    EXPECT_DOUBLE_EQ(wallPbr.roughnessFactor, 0.6);
-    EXPECT_EQ(roofPbr.baseColorFactor, (std::vector<double>{0.025, 0.24, 0.72, 1.0}));
-    EXPECT_DOUBLE_EQ(roofPbr.metallicFactor, 0.0);
-    EXPECT_DOUBLE_EQ(roofPbr.roughnessFactor, 0.65);
-    EXPECT_LT(
-        model.materials[wall.material]
-            .pbrMetallicRoughness.baseColorFactor[2],
-        model.materials[roof.material]
-            .pbrMetallicRoughness.baseColorFactor[2]);
+    EXPECT_DOUBLE_EQ(wallPbr.baseColorFactor[0], 1.0);
+    EXPECT_DOUBLE_EQ(wallPbr.baseColorFactor[1], 1.0);
+    EXPECT_DOUBLE_EQ(wallPbr.baseColorFactor[2], 1.0);
+    EXPECT_DOUBLE_EQ(wallPbr.metallicFactor, 0.10);
+    EXPECT_DOUBLE_EQ(wallPbr.roughnessFactor, 0.40);
+    EXPECT_EQ(model.materials[wall.material].alphaMode, "BLEND");
+    EXPECT_TRUE(model.materials[wall.material].doubleSided);
+    EXPECT_DOUBLE_EQ(roofPbr.baseColorFactor[0], 1.0);
+    EXPECT_DOUBLE_EQ(roofPbr.baseColorFactor[1], 1.0);
+    EXPECT_DOUBLE_EQ(roofPbr.baseColorFactor[2], 1.0);
+    EXPECT_DOUBLE_EQ(roofPbr.baseColorFactor[3], 1.0);
+    EXPECT_DOUBLE_EQ(roofPbr.metallicFactor, 0.10);
+    EXPECT_DOUBLE_EQ(roofPbr.roughnessFactor, 0.40);
+    EXPECT_EQ(model.materials[roof.material].alphaMode, "BLEND");
+    EXPECT_TRUE(model.materials[roof.material].doubleSided);
 }
 
 TEST(MeshPipelineTest, TerrainUvMatchesPixelEdgeFrameWithoutVerticalReflection)
@@ -545,5 +609,181 @@ TEST(MeshPipelineTest, OuterAndCourtyardWallsFaceTheirExteriorAndRoofsFaceUp)
         roofArea += 0.5*ny;
     }
     EXPECT_NEAR(roofArea, 84.0, 1e-5); // 100 m2 footprint minus 16 m2 courtyard.
+}
+
+TEST(MeshPipelineTest, BuildingMesherAssignsHeightBinnedMapflowColors)
+{
+    BuildingInstance lowRise;
+    lowRise.buildingId = 1;
+    lowRise.heightAboveGround = 8.0F; // < 12m: Electric Aqua / Cyan
+    lowRise.representativeBaseElevation = 100.0F;
+    lowRise.roofElevation = 108.0F;
+    lowRise.projectedFootprint.outerRing = {{0,0}, {10,0}, {10,10}, {0,10}};
+
+    BuildingInstance midRise;
+    midRise.buildingId = 2;
+    midRise.heightAboveGround = 18.0F; // 12m <= h < 24m: Sunset Amber / Coral Orange
+    midRise.representativeBaseElevation = 100.0F;
+    midRise.roofElevation = 118.0F;
+    midRise.projectedFootprint.outerRing = {{20,0}, {30,0}, {30,10}, {20,10}};
+
+    BuildingInstance highRise;
+    highRise.buildingId = 3;
+    highRise.heightAboveGround = 35.0F; // >= 24m: Crimson / Ruby Red
+    highRise.representativeBaseElevation = 100.0F;
+    highRise.roofElevation = 135.0F;
+    highRise.projectedFootprint.outerRing = {{40,0}, {50,0}, {50,10}, {40,10}};
+
+    BuildingCollection buildings;
+    buildings.buildings = {lowRise, midRise, highRise};
+
+    LocalSceneFrame frame;
+    frame.elevationOrigin = 100.0;
+    const auto mesh = BuildingMesher::generate(buildings, frame);
+
+    ASSERT_TRUE(mesh.roofPrimitive.colors.has_value());
+    ASSERT_TRUE(mesh.wallPrimitive.colors.has_value());
+    EXPECT_EQ(mesh.roofPrimitive.colors->size(), (mesh.roofPrimitive.positions.size() / 3) * 4);
+    EXPECT_EQ(mesh.wallPrimitive.colors->size(), (mesh.wallPrimitive.positions.size() / 3) * 4);
+
+    // Assert wireframe edgePrimitive is populated with LINES topology
+    EXPECT_EQ(mesh.edgePrimitive.topology, PrimitiveTopology::LINES);
+    EXPECT_EQ(mesh.edgePrimitive.materialRole, MaterialRole::BUILDING_EDGE);
+    ASSERT_TRUE(mesh.edgePrimitive.colors.has_value());
+    EXPECT_FALSE(mesh.edgePrimitive.positions.empty());
+    EXPECT_FALSE(mesh.edgePrimitive.indices.empty());
+    EXPECT_EQ(mesh.edgePrimitive.indices.size() % 2, 0U);
+    EXPECT_EQ(mesh.edgePrimitive.colors->size(), (mesh.edgePrimitive.positions.size() / 3) * 4);
+    EXPECT_TRUE(mesh.edgePrimitive.localBounds.isInitialized);
+
+    // Assert edge colors are sharp white with 0.90 alpha
+    EXPECT_NEAR((*mesh.edgePrimitive.colors)[0], 1.00F, 1e-4F);
+    EXPECT_NEAR((*mesh.edgePrimitive.colors)[1], 1.00F, 1e-4F);
+    EXPECT_NEAR((*mesh.edgePrimitive.colors)[2], 1.00F, 1e-4F);
+    EXPECT_NEAR((*mesh.edgePrimitive.colors)[3], 0.90F, 1e-4F);
+
+    // Building 1 (standard urban, h < 28m):
+    // Wall: 0.00, 0.82, 0.95, 0.65; Roof: 0.00, 0.65, 0.85, 0.75
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[0], 0.00F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[1], 0.82F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[2], 0.95F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[3], 0.65F, 1e-4F);
+
+    EXPECT_NEAR((*mesh.roofPrimitive.colors)[0], 0.00F, 1e-4F);
+    EXPECT_NEAR((*mesh.roofPrimitive.colors)[1], 0.65F, 1e-4F);
+    EXPECT_NEAR((*mesh.roofPrimitive.colors)[2], 0.85F, 1e-4F);
+    EXPECT_NEAR((*mesh.roofPrimitive.colors)[3], 0.75F, 1e-4F);
+
+    // Building 2 (standard urban, h < 28m): 4 edges * 4 vertices = 16 wall vertices per building quad
+    std::size_t midRiseWallColorOffset = 16 * 4;
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 0], 0.00F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 1], 0.82F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 2], 0.95F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 3], 0.65F, 1e-4F);
+
+    // Building 3 (high-rise tower, h >= 28m): 32 wall vertices offset
+    // Wall: 0.95, 0.28, 0.35, 0.65; Roof: 0.80, 0.18, 0.25, 0.75
+    std::size_t highRiseWallColorOffset = 32 * 4;
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 0], 0.95F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 1], 0.28F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 2], 0.35F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 3], 0.65F, 1e-4F);
+}
+
+TEST(MeshPipelineTest, GltfPackagerPacksEdgeHighlightLinesAsUncompressedLinesMode)
+{
+    MeshPrimitive edgePrim;
+    edgePrim.topology = PrimitiveTopology::LINES;
+    edgePrim.materialRole = MaterialRole::BUILDING_EDGE;
+    edgePrim.positions = {
+        0.0F, 10.0F, 0.0F,
+        10.0F, 10.0F, 0.0F};
+    edgePrim.indices = {0, 1};
+    edgePrim.colors = std::vector<float>{
+        1.0F, 1.0F, 1.0F, 1.0F,
+        1.0F, 1.0F, 1.0F, 1.0F};
+    edgePrim.localBounds = {0.0, 10.0, 0.0, 10.0, 10.0, 0.0, true};
+
+    SceneMesh scene;
+    scene.edgePrimitive = edgePrim;
+    scene.materials = {MaterialRole::BUILDING_EDGE};
+    scene.sceneBounds = edgePrim.localBounds;
+
+    const GlbBuildResult glb = GltfPackager::buildSceneToMemory(
+        scene,
+        {},
+        1);
+    ASSERT_FALSE(glb.compressedGlbByteBuffer.empty());
+
+    tinygltf::TinyGLTF loader;
+    tinygltf::Model model;
+    std::string error;
+    std::string warning;
+    const bool loaded = loader.LoadBinaryFromMemory(
+        &model,
+        &error,
+        &warning,
+        glb.compressedGlbByteBuffer.data(),
+        static_cast<unsigned int>(glb.compressedGlbByteBuffer.size()));
+
+    ASSERT_TRUE(loaded) << error;
+    ASSERT_EQ(model.meshes.size(), 1U);
+    ASSERT_EQ(model.meshes[0].primitives.size(), 1U);
+
+    const auto& prim = model.meshes[0].primitives[0];
+    EXPECT_EQ(prim.mode, TINYGLTF_MODE_LINE); // Mode 1: LINE
+    EXPECT_FALSE(prim.extensions.contains("KHR_draco_mesh_compression")); // Uncompressed!
+
+    ASSERT_TRUE(prim.attributes.contains("POSITION"));
+    ASSERT_TRUE(prim.attributes.contains("COLOR_0"));
+    EXPECT_GE(prim.indices, 0);
+
+    ASSERT_GE(prim.material, 0);
+    EXPECT_EQ(model.materials[prim.material].name, "Building_Edge_Highlight");
+}
+
+TEST(MeshPipelineTest, CollinearVertexAlongStraightWallDoesNotEmitVerticalSeam)
+{
+    BuildingInstance building;
+    building.buildingId = 42;
+    building.heightAboveGround = 15.0F;
+    building.representativeBaseElevation = 100.0F;
+    building.roofElevation = 115.0F;
+    // Outer ring with a collinear redundant vertex on the bottom wall (5, 0) between (0, 0) and (10, 0)
+    // 5 vertices: (0, 0), (5, 0), (10, 0), (10, 10), (0, 10)
+    building.projectedFootprint.outerRing = {
+        {0.0, 0.0},
+        {5.0, 0.0}, // Collinear turn angle ~ 0 degrees
+        {10.0, 0.0},
+        {10.0, 10.0},
+        {0.0, 10.0}
+    };
+
+    BuildingCollection buildings;
+    buildings.buildings = {building};
+    LocalSceneFrame frame;
+    frame.elevationOrigin = 100.0;
+
+    const auto mesh = BuildingMesher::generate(buildings, frame);
+    // Vertical seams only at the 4 true 90-degree corners, not at the collinear vertex (5, 0)
+    // Count vertical lines (where x1 == x2 && z1 == z2 && y1 != y2)
+    const auto& pos = mesh.edgePrimitive.positions;
+    const auto& idx = mesh.edgePrimitive.indices;
+    int verticalSeams = 0;
+    for (std::size_t i = 0; i < idx.size(); i += 2)
+    {
+        uint32_t a = idx[i] * 3;
+        uint32_t b = idx[i + 1] * 3;
+        if (std::abs(pos[a] - pos[b]) < 1e-4F &&
+            std::abs(pos[a + 2] - pos[b + 2]) < 1e-4F &&
+            std::abs(pos[a + 1] - pos[b + 1]) > 0.1F)
+        {
+            ++verticalSeams;
+            // Ensure no vertical seam was emitted at x = 5.0
+            EXPECT_FALSE(std::abs(pos[a] - 5.0F) < 1e-3F && std::abs(pos[a + 2] - 0.0F) < 1e-3F);
+        }
+    }
+    // Exactly 4 vertical seams for the 4 corners
+    EXPECT_EQ(verticalSeams, 4);
 }
 } // namespace

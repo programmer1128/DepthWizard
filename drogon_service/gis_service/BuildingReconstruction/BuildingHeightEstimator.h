@@ -15,5 +15,5 @@ class BuildingHeightEstimator
          const BuildingReconstructionConfig& config);
         
      private:
-     static float calculateRobustMedian(std::vector<float>& samples);
+     static float calculateRobustPeak(std::vector<float>& samples);
 };

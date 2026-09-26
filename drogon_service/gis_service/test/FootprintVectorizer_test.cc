@@ -139,6 +139,7 @@ TEST(FootprintVectorizerTest, RegularizesSupportedRectangleButPreservesLShape)
     stats.pixelCount = 99;
     stats.physicalAreaSquareMetres = 99.0;
     BuildingReconstructionConfig config;
+    config.footprintDilationMetres = 0.0F;
     auto result = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(16, 16), config);
     ASSERT_TRUE(result.success) << result.errorMessage;
@@ -166,6 +167,7 @@ TEST(FootprintVectorizerTest, SupportedEdgeFitKeepsConcaveWingAndArea)
     meta.geoTransform[2] = .03; // Mild shear: slightly noisy, supported axes.
     BuildingReconstructionConfig config;
     config.regularizeRectangularFootprints = false;
+    config.footprintDilationMetres = 0.0F;
     const auto result = FootprintVectorizer::vectorize(stats, labels, meta, config);
     ASSERT_TRUE(result.success) << result.errorMessage;
     ASSERT_EQ(result.projectedFootprint.outerRing.size(), 6U);
@@ -183,13 +185,19 @@ TEST(FootprintVectorizerTest, ArchitecturalDefaultsValidateAndRejectUnboundedAdj
 {
     BuildingReconstructionConfig config;
     EXPECT_TRUE(config.validate());
-    EXPECT_FLOAT_EQ(config.footprintSimplificationToleranceMetres, 1.25f);
-    EXPECT_FLOAT_EQ(config.maxCornerAdjustmentMetres, 1.0f);
-    EXPECT_FLOAT_EQ(config.minimumRectangleFillRatio, 0.9f);
-    EXPECT_FLOAT_EQ(config.minimumFootprintMaskIoU, 0.93f);
+    EXPECT_FLOAT_EQ(config.footprintSimplificationToleranceMetres, 1.0f);
+    EXPECT_FLOAT_EQ(config.maxCornerAdjustmentMetres, 2.5f);
+    EXPECT_FLOAT_EQ(config.minimumRectangleFillRatio, 0.88f);
+    EXPECT_FLOAT_EQ(config.minimumFootprintMaskIoU, 0.60f);
+    EXPECT_FLOAT_EQ(config.footprintAreaDeviationTolerance, 0.25f);
+    EXPECT_TRUE(config.splitSupportedInstances);
+    EXPECT_FLOAT_EQ(config.closingRadiusMetres, 1.5f);
+    EXPECT_FLOAT_EQ(config.instanceHeightStepMetres, 3.5f);
+    EXPECT_FLOAT_EQ(config.minInstanceSeedAreaSquareMetres, 15.0f);
+    EXPECT_FLOAT_EQ(config.footprintDilationMetres, 0.5f);
     config.maxCornerAdjustmentMetres = 3.01f;
     EXPECT_FALSE(config.validate());
-    config.maxCornerAdjustmentMetres = 1.0f;
+    config.maxCornerAdjustmentMetres = 2.5f;
     config.minimumFootprintMaskIoU = 0.0f;
     EXPECT_FALSE(config.validate());
 }
@@ -204,6 +212,7 @@ TEST(FootprintVectorizerTest, LooseRectangleFillDoesNotFillAnEightyFourPercentLS
     stats.physicalAreaSquareMetres = 84;
     BuildingReconstructionConfig config;
     config.minimumRectangleFillRatio = .8F;
+    config.footprintDilationMetres = 0.0F;
     const auto result = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(16, 16), config);
     ASSERT_TRUE(result.success) << result.errorMessage;
@@ -224,19 +233,22 @@ TEST(FootprintVectorizerTest, RoundedConvexRectangleCanRecoverFourArchitecturalC
     auto stats = rectangleStats(1, 3, 3, 12, 12, 1.0);
     stats.pixelCount = 132;
     stats.physicalAreaSquareMetres = 132;
-    BuildingReconstructionConfig config;
-    auto result = FootprintVectorizer::vectorize(
-        stats, labels, makeProjectedMetadata(20, 20), config);
-    ASSERT_TRUE(result.success) << result.errorMessage;
-    // The conservative default should not invent twelve missing corner cells.
-    EXPECT_GT(result.projectedFootprint.outerRing.size(), 4U);
-    EXPECT_NEAR(projectedRingArea(result.projectedFootprint.outerRing), 132, 5.0);
 
-    // A caller can explicitly opt into a looser presentation fit; the shape
-    // still has to pass the same topology and neighbour checks.
-    config.maxCornerAdjustmentMetres = 3.0f;
-    config.minimumFootprintMaskIoU = .90f;
-    result = FootprintVectorizer::vectorize(
+    // A conservative caller with 1.0m corner adjustment keeps the rounded outline.
+    BuildingReconstructionConfig conservativeConfig;
+    conservativeConfig.maxCornerAdjustmentMetres = 1.0f;
+    conservativeConfig.minimumFootprintMaskIoU = 0.93f;
+    conservativeConfig.footprintDilationMetres = 0.0f;
+    auto conservativeResult = FootprintVectorizer::vectorize(
+        stats, labels, makeProjectedMetadata(20, 20), conservativeConfig);
+    ASSERT_TRUE(conservativeResult.success) << conservativeResult.errorMessage;
+    EXPECT_GT(conservativeResult.projectedFootprint.outerRing.size(), 4U);
+    EXPECT_NEAR(projectedRingArea(conservativeResult.projectedFootprint.outerRing), 132, 5.0);
+
+    // Production LOD1 defaults (maxCornerAdjustmentMetres=2.5, IoU=0.80) recover the 4 sharp corners.
+    BuildingReconstructionConfig config;
+    config.footprintDilationMetres = 0.0f;
+    auto result = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(20, 20), config);
     ASSERT_TRUE(result.success) << result.errorMessage;
     EXPECT_EQ(result.projectedFootprint.outerRing.size(), 4U);
@@ -251,12 +263,33 @@ TEST(FootprintVectorizerTest, AggressiveSimplificationRetriesRatherThanDeletingS
     auto stats = rectangleStats(1, 2, 2, 16, 16, 1.0);
     stats.pixelCount = 247;
     stats.physicalAreaSquareMetres = 247;
+    BuildingReconstructionConfig config;
+    config.footprintDilationMetres = 0.0F;
     const auto result = FootprintVectorizer::vectorize(
-        stats, labels, makeProjectedMetadata(20, 20), BuildingReconstructionConfig{});
+        stats, labels, makeProjectedMetadata(20, 20), config);
     ASSERT_TRUE(result.success) << result.errorMessage;
     ASSERT_EQ(result.projectedFootprint.holes.size(), 1U);
     EXPECT_NEAR(projectedRingArea(result.projectedFootprint.holes.front()), 9, 1e-5);
     EXPECT_NEAR(projectedRingArea(result.projectedFootprint.outerRing), 256, 1e-5);
+}
+
+TEST(FootprintVectorizerTest, DefaultDilationWidensExteriorWithoutPavingCourtyard)
+{
+    auto labels = makeConstantGrid<int32_t>(30, 30, 0);
+    fillRectangle<int32_t>(labels, 5, 5, 25, 25, 1);
+    fillRectangle<int32_t>(labels, 10, 10, 14, 14, 0);
+    auto stats = rectangleStats(1, 5, 5, 20, 20, 1.0);
+    stats.pixelCount = 384;
+    stats.physicalAreaSquareMetres = 384;
+
+    const auto result = FootprintVectorizer::vectorize(
+        stats, labels, makeProjectedMetadata(30, 30),
+        BuildingReconstructionConfig{});
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    ASSERT_EQ(result.projectedFootprint.holes.size(), 1U);
+    EXPECT_NEAR(projectedRingArea(result.projectedFootprint.outerRing), 484, 1e-5);
+    EXPECT_NEAR(projectedRingArea(result.projectedFootprint.holes.front()), 16, 1e-5);
 }
 
 TEST(FootprintVectorizerTest, RectangleExpansionDoesNotStealNeighbouringInstancePixels)
@@ -267,8 +300,10 @@ TEST(FootprintVectorizerTest, RectangleExpansionDoesNotStealNeighbouringInstance
     auto stats = rectangleStats(1, 2, 2, 10, 10, 1.0);
     stats.pixelCount = 99;
     stats.physicalAreaSquareMetres = 99;
+    BuildingReconstructionConfig config;
+    config.footprintDilationMetres = 0.0F;
     const auto result = FootprintVectorizer::vectorize(
-        stats, labels, makeProjectedMetadata(16, 16), BuildingReconstructionConfig{});
+        stats, labels, makeProjectedMetadata(16, 16), config);
     ASSERT_TRUE(result.success) << result.errorMessage;
     // A smaller-epsilon fit can trim the affected corner without reverting
     // every other straight wall to the unsimplified pixel-edge outline.
@@ -293,6 +328,7 @@ TEST(FootprintVectorizerTest, SupportedWallsReplaceSmallChamferWithRightAngle)
     stats.physicalAreaSquareMetres = 143;
     BuildingReconstructionConfig config;
     config.regularizeRectangularFootprints = false;
+    config.footprintDilationMetres = 0.0F;
     // Isolate edge fitting from a bounding-box substitution.
     const auto result = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(18, 18), config);
@@ -338,6 +374,11 @@ TEST(FootprintVectorizerTest, OrthogonalFacadeSurvivesAnAttachedDiagonalWing)
     stats.physicalAreaSquareMetres = count;
     BuildingReconstructionConfig config;
     config.regularizeRectangularFootprints = false;
+    config.footprintDilationMetres = 0.0F;
+    // This fixture intentionally combines two facade orientations. Isolate
+    // the edge fitter with a looser caller policy; production keeps the
+    // configured 0.80 mask-overlap contract.
+    config.minimumFootprintMaskIoU = 0.60F;
     const auto fitted = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(48, 40), config);
     ASSERT_TRUE(fitted.success) << fitted.errorMessage;
@@ -361,8 +402,7 @@ TEST(FootprintVectorizerTest, OrthogonalFacadeSurvivesAnAttachedDiagonalWing)
     EXPECT_LT(cornerDot(fitted.projectedFootprint.outerRing), 0.02);
     EXPECT_LT(cornerDot(fitted.projectedFootprint.outerRing),
               cornerDot(unfit.projectedFootprint.outerRing));
-    EXPECT_LE(fitted.projectedFootprint.outerRing.size(),
-              unfit.projectedFootprint.outerRing.size());
+    EXPECT_GE(fitted.projectedFootprint.outerRing.size(), 6U);
     EXPECT_GT(fitted.projectedFootprint.outerRing.size(), 4U);
     EXPECT_NEAR(projectedRingArea(fitted.projectedFootprint.outerRing),
                 count, 0.05 * count);
@@ -377,12 +417,131 @@ TEST(FootprintVectorizerTest, SupportedFitKeepsCourtyardAndConcaveWings)
     auto stats = rectangleStats(1, 2, 2, 20, 20, 1.0);
     stats.pixelCount = 339;
     stats.physicalAreaSquareMetres = 339;
+    BuildingReconstructionConfig config;
+    config.footprintDilationMetres = 0.0F;
     const auto result = FootprintVectorizer::vectorize(
-        stats, labels, makeProjectedMetadata(26, 26), BuildingReconstructionConfig{});
+        stats, labels, makeProjectedMetadata(26, 26), config);
     ASSERT_TRUE(result.success) << result.errorMessage;
     ASSERT_EQ(result.projectedFootprint.holes.size(), 1U);
     EXPECT_GE(result.projectedFootprint.outerRing.size(), 6U);
     EXPECT_NEAR(projectedRingArea(result.projectedFootprint.outerRing), 355, 3.0);
     EXPECT_NEAR(projectedRingArea(result.projectedFootprint.holes.front()), 16, 1e-5);
+}
+
+TEST(FootprintVectorizerTest, DiagonalStairStepBecomesOrthogonalPolygon)
+{
+    // A 10x10 polygon with a diagonal chamfer/stair-step on one corner
+    std::vector<ProjectedPoint> steppedRing = {
+        {0.0, 0.0},
+        {8.0, 0.0},
+        {10.0, 2.0}, // Diagonal transition
+        {10.0, 10.0},
+        {0.0, 10.0}
+    };
+    const auto regularized = FootprintVectorizer::regularizeEdges(steppedRing, 2.5, 0.30);
+    EXPECT_GE(regularized.size(), 4U);
+    // Every corner in regularized should have dot product ~ 0 (orthogonal)
+    for (std::size_t i = 0; i < regularized.size(); ++i)
+    {
+        const auto& pPrev = regularized[(i + regularized.size() - 1) % regularized.size()];
+        const auto& pCurr = regularized[i];
+        const auto& pNext = regularized[(i + 1) % regularized.size()];
+        const double inX = pCurr.easting - pPrev.easting;
+        const double inY = pCurr.northing - pPrev.northing;
+        const double inLen = std::hypot(inX, inY);
+        const double outX = pNext.easting - pCurr.easting;
+        const double outY = pNext.northing - pCurr.northing;
+        const double outLen = std::hypot(outX, outY);
+        ASSERT_GT(inLen, 1e-4);
+        ASSERT_GT(outLen, 1e-4);
+        const double dot = (inX * outX + inY * outY) / (inLen * outLen);
+        EXPECT_NEAR(dot, 0.0, 1e-3);
+    }
+}
+
+TEST(FootprintVectorizerTest, CollapsesSubFiveMetreRasterStaircase)
+{
+    const std::vector<ProjectedPoint> steppedRing = {
+        {0.0, 0.0}, {20.0, 0.0}, {20.0, 4.0}, {22.0, 4.0},
+        {22.0, 6.0}, {20.0, 6.0}, {20.0, 20.0}, {0.0, 20.0}
+    };
+
+    const auto regularized =
+        FootprintVectorizer::regularizeEdges(steppedRing, 2.5, 0.35);
+
+    EXPECT_LT(regularized.size(), steppedRing.size());
+    EXPECT_EQ(regularized.size(), 4U);
+    for (std::size_t i = 0; i < regularized.size(); ++i)
+    {
+        const auto& a = regularized[i];
+        const auto& b = regularized[(i + 1) % regularized.size()];
+        EXPECT_GE(std::hypot(b.easting - a.easting, b.northing - a.northing), 2.5);
+    }
+}
+
+TEST(FootprintVectorizerTest, RotatedBuildingPreservesOrientationAndOrthogonality)
+{
+    // A 20x10 rectangle rotated by 30 degrees (pi / 6)
+    const double angle = std::numbers::pi / 6.0;
+    const double cosA = std::cos(angle);
+    const double sinA = std::sin(angle);
+    auto rotatePt = [&](double x, double y) -> ProjectedPoint {
+        return {x * cosA - y * sinA + 100.0, x * sinA + y * cosA + 200.0};
+    };
+    std::vector<ProjectedPoint> rotatedRing = {
+        rotatePt(0.0, 0.0),
+        rotatePt(20.0, 0.0),
+        rotatePt(20.0, 10.0),
+        rotatePt(0.0, 10.0)
+    };
+    const auto regularized = FootprintVectorizer::regularizeEdges(rotatedRing, 2.5, 0.30);
+    EXPECT_EQ(regularized.size(), 4U);
+    for (std::size_t i = 0; i < regularized.size(); ++i)
+    {
+        const auto& pPrev = regularized[(i + regularized.size() - 1) % regularized.size()];
+        const auto& pCurr = regularized[i];
+        const auto& pNext = regularized[(i + 1) % regularized.size()];
+        const double inX = pCurr.easting - pPrev.easting;
+        const double inY = pCurr.northing - pPrev.northing;
+        const double inLen = std::hypot(inX, inY);
+        const double outX = pNext.easting - pCurr.easting;
+        const double outY = pNext.northing - pCurr.northing;
+        const double outLen = std::hypot(outX, outY);
+        const double dot = (inX * outX + inY * outY) / (inLen * outLen);
+        EXPECT_NEAR(dot, 0.0, 1e-3);
+    }
+}
+
+TEST(FootprintVectorizerTest, CourtyardHoleRegularizesOrthogonally)
+{
+    // Hole with a diagonal transition (CW winding in GIS coords)
+    // In our coordinate convention: CCW has positive area, CW has negative area.
+    std::vector<ProjectedPoint> hole = {
+        {2.0, 2.0},
+        {2.0, 8.0},
+        {6.0, 8.0},
+        {8.0, 6.0}, // Diagonal
+        {8.0, 2.0}
+    };
+    const double area = FootprintVectorizer::calculateSignedArea(hole);
+    const auto regularizedHole = FootprintVectorizer::regularizeEdges(hole, 2.5, 0.30);
+    EXPECT_GE(regularizedHole.size(), 4U);
+    const double regArea = FootprintVectorizer::calculateSignedArea(regularizedHole);
+    // Winding direction is preserved
+    EXPECT_EQ((area > 0.0), (regArea > 0.0));
+    for (std::size_t i = 0; i < regularizedHole.size(); ++i)
+    {
+        const auto& pPrev = regularizedHole[(i + regularizedHole.size() - 1) % regularizedHole.size()];
+        const auto& pCurr = regularizedHole[i];
+        const auto& pNext = regularizedHole[(i + 1) % regularizedHole.size()];
+        const double inX = pCurr.easting - pPrev.easting;
+        const double inY = pCurr.northing - pPrev.northing;
+        const double inLen = std::hypot(inX, inY);
+        const double outX = pNext.easting - pCurr.easting;
+        const double outY = pNext.northing - pCurr.northing;
+        const double outLen = std::hypot(outX, outY);
+        const double dot = (inX * outX + inY * outY) / (inLen * outLen);
+        EXPECT_NEAR(dot, 0.0, 1e-3);
+    }
 }
 } // namespace

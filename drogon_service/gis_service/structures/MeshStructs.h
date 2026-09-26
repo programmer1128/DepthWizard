@@ -16,6 +16,7 @@ enum class MaterialRole
      TERRAIN_TEXTURE, 
      BUILDING_ROOF, 
      BUILDING_WALL, 
+     BUILDING_EDGE,
      ANALYSIS_OVERLAY 
 };// Typed materials
 
@@ -44,6 +45,7 @@ struct MeshPrimitive
     // glTF 2.0 forbids UNSIGNED_INT for vertex attributes. Float retains
     // exact integer identity for IDs up to 16,777,216 and is WebGL-safe.
     std::optional<std::vector<float>> featureIds; // Bound per-vertex
+    std::optional<std::vector<float>> colors;     // RGBA per vertex (stride of 4 floats: [R, G, B, A])
     MaterialRole materialRole{MaterialRole::TERRAIN_TEXTURE};
     AxisAlignedBounds localBounds; // Strongly typed bounds
     
@@ -66,7 +68,15 @@ struct MeshPrimitive
          {
              return false;
          }
+         if (colors.has_value() && colors->size() != (positions.size() / 3) * 4)
+         {
+             return false;
+         }
          if (topology == PrimitiveTopology::TRIANGLES && indices.size() % 3 != 0) 
+         {
+             return false;
+         }
+         if (topology == PrimitiveTopology::LINES && indices.size() % 2 != 0)
          {
              return false;
          }
@@ -83,6 +93,7 @@ struct BuildingMesh
 {
     MeshPrimitive roofPrimitive;
     MeshPrimitive wallPrimitive;
+    MeshPrimitive edgePrimitive; // Mode: LINES
     std::vector<uint32_t> emittedBuildingIds;
     std::vector<uint32_t> rejectedBuildingIds;
 };
@@ -94,6 +105,7 @@ struct SceneMesh
     MeshPrimitive terrainPrimitive;
     MeshPrimitive roofPrimitive;
     MeshPrimitive wallPrimitive;
+    MeshPrimitive edgePrimitive; // Wireframe edge lines (Mode: LINES)
     std::optional<MeshPrimitive> overlayPrimitive;
     std::vector<MaterialRole> materials;
     std::optional<TextureAsset> texture; // Bound with MIME type

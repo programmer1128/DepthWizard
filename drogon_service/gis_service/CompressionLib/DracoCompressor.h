@@ -8,6 +8,7 @@ struct DracoCompressionConfig {
     int posQuantization{16};
     int uvQuantization{12};
     int normalQuantization{10};
+    int colorQuantization{10};
     int featureIdQuantization{18}; // High enough to losslessly store integer IDs
     int speed{7};
 };
@@ -26,6 +27,7 @@ struct CompressedPrimitive {
     int posAttrId{-1};
     int uvAttrId{-1};
     int normalAttrId{-1};
+    int colorAttrId{-1};
     int featureIdAttrId{-1};
     
     MaterialRole materialRole; // Pass through to know what to assign

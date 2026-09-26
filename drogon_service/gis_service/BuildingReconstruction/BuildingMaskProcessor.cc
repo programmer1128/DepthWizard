@@ -15,7 +15,7 @@ BuildingMaskResult createCleanMaskImpl(
      BuildingMaskResult result;
 
      //Configuration Validation
-     if (!config.validate()) 
+     if (!config.validate())
      {
          result.errorMessage = "Invalid BuildingReconstructionConfig parameters.";
          return result;
@@ -54,7 +54,7 @@ BuildingMaskResult createCleanMaskImpl(
           (!metricNdsm->isValid() ||
            metricNdsm->width != width || metricNdsm->height != height)))
      {
-        
+
          result.errorMessage = "Grid dimension mismatch or invalid memory buffers.";
          return result;
      }
@@ -88,16 +88,16 @@ BuildingMaskResult createCleanMaskImpl(
 
      //Affine-Aware Metric Calculations
      //Area = |GT1 * GT5 - GT2 * GT4|
-     double pixelArea = std::abs(metadata.geoTransform[1] * metadata.geoTransform[5] - 
+     double pixelArea = std::abs(metadata.geoTransform[1] * metadata.geoTransform[5] -
                                 metadata.geoTransform[2] * metadata.geoTransform[4]);
-                                
+
      // Rectangular pixel resolutions
-     double colRes = std::sqrt(metadata.geoTransform[1] * metadata.geoTransform[1] + 
+     double colRes = std::sqrt(metadata.geoTransform[1] * metadata.geoTransform[1] +
                               metadata.geoTransform[4] * metadata.geoTransform[4]);
-     double rowRes = std::sqrt(metadata.geoTransform[2] * metadata.geoTransform[2] + 
+     double rowRes = std::sqrt(metadata.geoTransform[2] * metadata.geoTransform[2] +
                               metadata.geoTransform[5] * metadata.geoTransform[5]);
 
-     if (pixelArea <= 0.0 || colRes <= 0.0 || rowRes <= 0.0) 
+     if (pixelArea <= 0.0 || colRes <= 0.0 || rowRes <= 0.0)
      {
          result.errorMessage = "Invalid or zero spatial resolution in metadata. Metric operations cannot proceed.";
          return result;
@@ -126,28 +126,41 @@ BuildingMaskResult createCleanMaskImpl(
              semantics.semanticConfidence.data[index] >=
              config.minBuildingSemanticConfidence;
 
+         const bool allowVegPassage =
+             metricNdsm != nullptr &&
+             std::isfinite(metricNdsm->data[index]) &&
+             metricNdsm->data[index] >= 3.0f &&
+             semantics.buildingProbability.data[index] >= 0.02f;
+
+         const float competitorBarrier = allowVegPassage
+             ? std::max({semantics.groundProbability.data[index],
+                         semantics.roadProbability.data[index],
+                         semantics.waterProbability.data[index]})
+             : std::max({semantics.groundProbability.data[index],
+                         semantics.roadProbability.data[index],
+                         semantics.vegetationProbability.data[index],
+                         semantics.waterProbability.data[index]});
+
+         const auto cls = semantics.finalClassMap.data[index];
+         const bool classRecoverable =
+             cls == SemanticClass::UNKNOWN ||
+             (cls == SemanticClass::VEGETATION && allowVegPassage);
+
          const bool recoveredBuilding =
              metricNdsm != nullptr &&
-             semantics.finalClassMap.data[index] == SemanticClass::UNKNOWN &&
+             classRecoverable &&
              semantics.buildingProbability.data[index] >=
                  config.buildingRecoveryProbabilityThreshold &&
-             // The UNKNOWN decision may be a softmax margin failure at a
-             // blurred roof edge. Do not grow into a pixel that instead has
-             // stronger evidence for road, vegetation, water, or ground.
-             semantics.buildingProbability.data[index] >= std::max({
-                 semantics.groundProbability.data[index],
-                 semantics.roadProbability.data[index],
-                 semantics.vegetationProbability.data[index],
-                 semantics.waterProbability.data[index]}) &&
+             semantics.buildingProbability.data[index] >= competitorBarrier &&
              std::isfinite(metricNdsm->data[index]) &&
              metricNdsm->data[index] >= config.minRecoveryNdsmHeightMetres;
 
          recoveryBytes[index] = recoveredBuilding ? 255 : 0;
-         const auto cls = semantics.finalClassMap.data[index];
-         // A positive ground/road/water/vegetation decision is a barrier.
-         // Morphology must not turn these pixels back into buildings.
+         // A positive ground/road/water/vegetation decision is a barrier,
+         // but elevated roofs with building evidence are allowed through.
          allowedBytes[index] = (validMask.data[index] != 0 &&
-             (cls == SemanticClass::BUILDING || cls == SemanticClass::UNKNOWN)) ? 255 : 0;
+             (cls == SemanticClass::BUILDING || cls == SemanticClass::UNKNOWN ||
+              (cls == SemanticClass::VEGETATION && allowVegPassage))) ? 255 : 0;
          candidateBytes[index] = static_cast<uint8_t>(
              (isBuilding && probabilityAccepted && confidenceAccepted) ? 255 : 0);
      }
@@ -189,7 +202,7 @@ BuildingMaskResult createCleanMaskImpl(
 
      //Affine-Aware Morphology
      //std::ceil to prevent truncation, generating independent width/height for rectangular pixels
-     auto calcKernelDim = [](float radius, double res) -> int 
+     auto calcKernelDim = [](float radius, double res) -> int
      {
          if (radius <= 0.0f) return 1;
          int pixels = static_cast<int>(std::ceil(radius / res));
@@ -202,24 +215,24 @@ BuildingMaskResult createCleanMaskImpl(
      result.closingKernelHeight = calcKernelDim(config.closingRadiusMetres, rowRes);
 
      // Opening (Erosion -> Dilation)
-     if (result.openingKernelWidth >= 3 || result.openingKernelHeight >= 3) 
+     if (result.openingKernelWidth >= 3 || result.openingKernelHeight >= 3)
      {
-         cv::Mat openKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, 
+         cv::Mat openKernel = cv::getStructuringElement(cv::MORPH_RECT,
              cv::Size(result.openingKernelWidth, result.openingKernelHeight));
          cv::morphologyEx(binaryMask, binaryMask, cv::MORPH_OPEN, openKernel);
-        
+
          // Dilation can push building pixels into cloud/NoData regions. Re-apply mask.
          cv::bitwise_and(binaryMask, validMat255, binaryMask);
          cv::bitwise_and(binaryMask, allowed, binaryMask);
      }
 
      // Closing (Dilation -> Erosion)
-     if (result.closingKernelWidth >= 3 || result.closingKernelHeight >= 3) 
+     if (result.closingKernelWidth >= 3 || result.closingKernelHeight >= 3)
      {
-         cv::Mat closeKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, 
+         cv::Mat closeKernel = cv::getStructuringElement(cv::MORPH_RECT,
              cv::Size(result.closingKernelWidth, result.closingKernelHeight));
          cv::morphologyEx(binaryMask, binaryMask, cv::MORPH_CLOSE, closeKernel);
-        
+
          // Dilation can push building pixels into cloud/NoData regions. Re-apply mask.
          cv::bitwise_and(binaryMask, validMat255, binaryMask);
          cv::bitwise_and(binaryMask, allowed, binaryMask);
@@ -230,17 +243,17 @@ BuildingMaskResult createCleanMaskImpl(
      int numLabels = cv::connectedComponentsWithStats(binaryMask, labels, stats, centroids, config.connectivity, CV_32S);
 
      std::vector<uint8_t> labelToKeep(numLabels, 0);
-    
+
      // Evaluate physics (start at 1 to skip background)
-     for (int i = 1; i < numLabels; ++i) 
+     for (int i = 1; i < numLabels; ++i)
      {
          int pixelCount = stats.at<int>(i, cv::CC_STAT_AREA);
          double areaSquareMetres = pixelCount * pixelArea;
 
          if (areaSquareMetres >= config.minBuildingAreaSquareMetres) {
-             labelToKeep[i] = 1; 
-         } 
-         else 
+             labelToKeep[i] = 1;
+         }
+         else
          {
              result.smallComponentRejectedPixelCount += pixelCount;
          }
@@ -249,16 +262,16 @@ BuildingMaskResult createCleanMaskImpl(
      //Safe Output Matrix Generation
      result.cleanMask.width = width;
      result.cleanMask.height = height;
-    
+
      // Cast to size_t to prevent overflow on massive grids
      result.cleanMask.data.resize(totalPixels, 0);
 
      // Iterate using row pointers to guarantee safety even if memory is not perfectly continuous
-     for (int r = 0; r < height; ++r) 
+     for (int r = 0; r < height; ++r)
      {
          const int* labelRow = labels.ptr<int>(r);
          uint8_t* outRow = result.cleanMask.data.data() + (r * width);
-         for (int c = 0; c < width; ++c) 
+         for (int c = 0; c < width; ++c)
          {
              outRow[c] = labelToKeep[labelRow[c]];
          }

@@ -330,7 +330,31 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          MeshBuildConfig meshConfig;
          const ScenePresentationDecision sceneDecision = ScenePresentationSelector::select(
              semantics, surface, buildings);
-         const auto presentation = sceneDecision.presentation;
+         auto presentation = sceneDecision.presentation;
+
+         // Presentation Mode: Ensure that for urban scenes, ScenePresentation::FLAT_URBAN can be enforced
+         // so buildings sit on a clean ground reference plane with true 1:1 metric relative height (h_AGL).
+         const char* presentationEnv = std::getenv("DEPTHWIZARD_PRESENTATION");
+         if (presentationEnv)
+         {
+             const std::string envVal(presentationEnv);
+             if (envVal == "flat_urban" || envVal == "FLAT_URBAN" || envVal == "1")
+             {
+                 presentation = ScenePresentation::FLAT_URBAN;
+             }
+             else if (envVal == "metric" || envVal == "METRIC" || envVal == "0")
+             {
+                 presentation = ScenePresentation::METRIC;
+             }
+         }
+         else if (presentation == ScenePresentation::METRIC &&
+                  !buildings.buildings.empty() &&
+                  sceneDecision.vegetationFraction < 0.55 &&
+                  sceneDecision.groundReliefMetres <= 80.0)
+         {
+             // Enforce FLAT_URBAN for urban scenes to eliminate terrain pedestal/distortion
+             presentation = ScenePresentation::FLAT_URBAN;
+         }
          meshConfig.presentation = presentation;
          LOG_INFO << "PipelineService: automatic scene policy for " << jobId
                   << "; " << sceneDecision.reason

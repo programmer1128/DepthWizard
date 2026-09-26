@@ -319,21 +319,46 @@ TEST(BuildingMaskProcessorTest, DoesNotRecoverKnownVegetationAsBuilding)
 
 TEST(BuildingMaskProcessorTest, ClosingCannotBridgeConfidentRoadAlley)
 {
-    auto semantics = makeSemanticScene(24, 20, SemanticClass::BUILDING);
-    semantics.buildingProbability = makeConstantGrid(24, 20, .95F);
-    fillRectangle(semantics.finalClassMap, 11, 0, 13, 20, SemanticClass::ROAD);
-    fillRectangle(semantics.buildingProbability, 11, 0, 13, 20, .05F);
+    auto semantics = makeSemanticScene(120, 100, SemanticClass::UNKNOWN);
+    fillRectangle(semantics.finalClassMap, 20, 30, 40, 70, SemanticClass::BUILDING);
+    fillRectangle(semantics.finalClassMap, 54, 30, 74, 70, SemanticClass::BUILDING);
+    fillRectangle(semantics.buildingProbability, 20, 30, 40, 70, .95F);
+    fillRectangle(semantics.buildingProbability, 54, 30, 74, 70, .95F);
+    fillRectangle(semantics.finalClassMap, 40, 0, 54, 100, SemanticClass::ROAD);
+    fillRectangle(semantics.roadProbability, 40, 0, 54, 100, .95F);
     auto config = noMorphologyConfig();
-    config.closingRadiusMetres = 1.5F; // Even an oversized kernel must respect the barrier.
+    config.closingRadiusMetres = 9.0F;
     const auto result = BuildingMaskProcessor::createCleanMask(semantics,
-        makeConstantGrid(24, 20, 10.0F), makeConstantGrid<uint8_t>(24, 20, 1),
-        makeProjectedMetadata(24, 20, .5, -.5), config);
+        makeConstantGrid(120, 100, 10.0F), makeConstantGrid<uint8_t>(120, 100, 1),
+        makeProjectedMetadata(120, 100, .5, -.5), config);
     ASSERT_TRUE(result.success);
-    for (int y = 0; y < 20; ++y) {
-        EXPECT_EQ(result.cleanMask.data[y * 24 + 11], 0);
-        EXPECT_EQ(result.cleanMask.data[y * 24 + 12], 0);
-        EXPECT_EQ(result.cleanMask.data[y * 24 + 6], 1);
-        EXPECT_EQ(result.cleanMask.data[y * 24 + 18], 1);
+    for (int y = 30; y < 70; ++y) {
+        EXPECT_EQ(result.cleanMask.data[y * 120 + 47], 0);
+        EXPECT_EQ(result.cleanMask.data[y * 120 + 30], 1);
+        EXPECT_EQ(result.cleanMask.data[y * 120 + 64], 1);
     }
+}
+
+TEST(BuildingMaskProcessorTest, NineMetreClosingBridgesUnknownTreeOcclusion)
+{
+    auto semantics = makeSemanticScene(120, 100, SemanticClass::UNKNOWN);
+    fillRectangle(semantics.finalClassMap, 20, 30, 40, 70, SemanticClass::BUILDING);
+    fillRectangle(semantics.finalClassMap, 54, 30, 74, 70, SemanticClass::BUILDING);
+    fillRectangle(semantics.buildingProbability, 20, 30, 40, 70, .95F);
+    fillRectangle(semantics.buildingProbability, 54, 30, 74, 70, .95F);
+
+    auto config = noMorphologyConfig();
+    config.closingRadiusMetres = 9.0F;
+    const auto result = BuildingMaskProcessor::createCleanMask(
+        semantics,
+        makeConstantGrid(120, 100, 10.0F),
+        makeConstantGrid<uint8_t>(120, 100, 1),
+        makeProjectedMetadata(120, 100, .5, -.5),
+        config);
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_EQ(result.closingKernelWidth, 37);
+    EXPECT_EQ(result.closingKernelHeight, 37);
+    EXPECT_EQ(result.cleanMask.data[50 * 120 + 47], 1);
 }
 } // namespace

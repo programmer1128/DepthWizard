@@ -51,30 +51,40 @@ Metric exports are unchanged, not independently verified ground truth.
 ## Reconstruction stages
 
 1. Strong semantic roofs are accepted. UNKNOWN candidates can only grow a
-   bounded 2 m distance from strong evidence and cannot cross known non-building
+   bounded 4.5 m distance from strong evidence and cannot cross known non-building
    classes or stronger non-building probability. No standalone building is
    created just because noisy nDSM is high.
-2. Small morphology kernels clean masks. Confident road/ground/water/vegetation
-   decisions are barriers, reapplied after morphology so alleys survive.
+2. Urban morphology preserves thin roofs (`openingRadiusMetres=0`) and uses a
+   9 m rectangular closing radius to reconnect tree-occluded portions of a
+   complex. Confident road/ground/water evidence remains a barrier and is
+   reapplied after morphology so alleys survive. Elevated vegetation pixels
+   are traversable only when they also retain credible building evidence.
 3. `BuildingInstanceSplitter` labels edge-connected components, finds sizeable
    high-probability cores separated by probability valleys or median-filtered
    nDSM steps, and floods integer instance labels within the original mask.
-   It does not normalize distance against the largest building in the scene.
+   It is enabled by default. A median-filtered 5.5 m nDSM step and at least
+   15 m² of supported seed area separate adjacent roofs without responding to
+   most rooftop equipment. It does not normalize distance against the largest building in the scene.
    Every original mask pixel keeps a label. Poorly supported cuts, excessive
    markers and single-core components retain the original component.
-4. Each instance is vectorized and gets its own robust height estimate.
-   RDP starts at 1.25 m and retries smaller tolerances when ring area changes
-   by more than 5% (or the configured area budget, if tighter). Valid raw rings
-   remain the last fallback. Rectangle candidates need at least 90% box fill,
-   96% convex-hull solidity, no courtyard, corners within 1 m of the observed
-   boundary, and the existing 20% total-area budget. Thus fill ratio alone
-   cannot turn a large L-shaped recess into a box. These heuristics still need
-   boundary-accuracy validation; they do not identify real architectural intent.
-   Supported long edges can be straightened with at most 1 m corner movement,
-   at most 5% area change and no self-intersection. Facade axes are inferred
+4. Each instance is vectorized and gets its own robust height estimate. The
+   observed exterior is widened by 1.5 m to compensate for semantic edge blur;
+   this outward dilation explicitly restores enclosed courtyards and cannot
+   consume pixels belonging to another instance. RDP starts at 3 m and retries
+   smaller tolerances when topology or the configured 25% whole-footprint area
+   budget would be violated. Valid raw rings remain the last fallback.
+   Rectangle candidates need at least 75% box fill and supported observed
+   corners; the former 96% convex-hull-solidity veto is gone. Pixel support,
+   mask IoU, neighbour exclusion and courtyard topology remain mandatory, so
+   fill ratio alone cannot turn a deep L/U-shaped recess into a box.
+   Supported edges are Manhattan-regularized with at most 2.5 m corner
+   movement. Up to 15 collapse passes remove orthogonal raster steps shorter
+   than 5 m, with a 35% ring-local area allowance. Compact four/six-corner
+   architectural primitives are exempt from staircase collapse, and the final
+   footprint still has the stricter whole-object checks. Facade axes are inferred
    from the strongest perpendicular edge group, so diagonal wings do not
    disable fitting of an otherwise well-supported right-angle corner. A fitted footprint must
-   retain at least 93% mask IoU and cannot cover any other labelled instance's
+   retain at least 80% mask IoU and cannot cover any other labelled instance's
    pixel centres. If it fails, progressively smaller simplifications are tried
    before falling back to the exact observed boundary.
    This is a raster-resolution overlap guard, not continuous polygon packing.
