@@ -1,5 +1,6 @@
 #pragma once
 #include "BuildingReconstructionConfig.h"
+#include "BuildingReconstructionTypes.h"
 #include "../structures/GeographicStructs.h"
 #include "../structures/SurfaceStructs.h"
 
@@ -10,5 +11,6 @@ class BuildingReconstructionService
          const SemanticScene& semantics,
          const GeoreferencedSurfaceBundle& surface,
          const SpatialMetadata& metadata,
-         const BuildingReconstructionConfig& config = BuildingReconstructionConfig());
+         const BuildingReconstructionConfig& config = BuildingReconstructionConfig(),
+         BuildingReconstructionDiagnostics* diagnostics = nullptr);
 };

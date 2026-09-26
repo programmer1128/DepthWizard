@@ -257,6 +257,18 @@ TEST(ReferenceDemPreprocessorTest, MorphologicalOpeningPreservesConstantNegative
         std::vector<float>(16, -125.5F));
 }
 
+TEST(ReferenceDemPreprocessorTest, OpeningRadiusRemainsMetricOnHalfMetreImagery)
+{
+    auto dem = makeConstantGrid<float>(180, 180, 100.0F);
+    // 30 m-wide reference roof contamination survived the old 7.5 m radius.
+    for (int row = 60; row < 120; ++row)
+        for (int column = 60; column < 120; ++column)
+            dem.data[row * 180 + column] = 140.0F;
+    const auto result = ReferenceDemPreprocessor::applyAdaptiveGroundFilter(dem, 0.5F);
+    EXPECT_FLOAT_EQ(result.data[90 * 180 + 90], 100.0F);
+    EXPECT_FLOAT_EQ(result.data[0], 100.0F);
+}
+
 TEST(ReferenceDemPreprocessorTest, InpaintsCenterVoidUsingExactIdwMath)
 {
     const float nan = std::numeric_limits<float>::quiet_NaN();

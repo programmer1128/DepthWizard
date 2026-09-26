@@ -1,25 +1,80 @@
 {
-  "tests": 3,
+  "tests": 14,
   "name": "AllTests",
   "testsuites": [
     {
-      "name": "BuildingReconstructionServiceTest",
-      "tests": 3,
+      "name": "FootprintVectorizerTest",
+      "tests": 14,
       "testsuite": [
         {
-          "name": "EmptySceneReturnsEmptyCollection",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BuildingReconstructionService_test.cc",
-          "line": 13
+          "name": "VectorizesRectangleWithExactAreaAndAffineCoordinates",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
+          "line": 31
         },
         {
-          "name": "ReconstructsBuildingFromSemanticMaskToPhysicalInstance",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BuildingReconstructionService_test.cc",
-          "line": 35
+          "name": "PreservesCourtyardAsInteriorHole",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
+          "line": 74
         },
         {
-          "name": "InvalidConfigurationFailsClosedWithEmptyCollection",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BuildingReconstructionService_test.cc",
-          "line": 91
+          "name": "HandlesStandardNorthUpNegativeRowResolution",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
+          "line": 101
+        },
+        {
+          "name": "RejectsBoundingBoxOutsideRaster",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
+          "line": 117
+        },
+        {
+          "name": "RegularizesSupportedRectangleButPreservesLShape",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
+          "line": 132
+        },
+        {
+          "name": "SupportedEdgeFitKeepsConcaveWingAndArea",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
+          "line": 158
+        },
+        {
+          "name": "ArchitecturalDefaultsValidateAndRejectUnboundedAdjustments",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
+          "line": 182
+        },
+        {
+          "name": "LooseRectangleFillDoesNotFillAnEightyFourPercentLShape",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
+          "line": 197
+        },
+        {
+          "name": "RoundedConvexRectangleCanRecoverFourArchitecturalCorners",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
+          "line": 214
+        },
+        {
+          "name": "AggressiveSimplificationRetriesRatherThanDeletingSmallCourtyard",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
+          "line": 246
+        },
+        {
+          "name": "RectangleExpansionDoesNotStealNeighbouringInstancePixels",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
+          "line": 262
+        },
+        {
+          "name": "SupportedWallsReplaceSmallChamferWithRightAngle",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
+          "line": 286
+        },
+        {
+          "name": "OrthogonalFacadeSurvivesAnAttachedDiagonalWing",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
+          "line": 316
+        },
+        {
+          "name": "SupportedFitKeepsCourtyardAndConcaveWings",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/FootprintVectorizer_test.cc",
+          "line": 356
         }
       ]
     }

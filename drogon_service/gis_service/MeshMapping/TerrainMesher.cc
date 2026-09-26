@@ -81,10 +81,11 @@ TerrainMesh TerrainMesher::generate(
              const std::size_t sourceIndex =
                  static_cast<std::size_t>(origY) * width + origX;
 
-             // Keep the detailed DSM for natural terrain and vegetation, but
-             // remove each accepted building from this textured primitive.
-             // Its sharp roof and walls are emitted by BuildingMesher instead.
+             // Rejected/missed buildings must never return as textured DSM
+             // mounds. DTM already contains hills; nDSM is object height,
+             // not an additional high-frequency terrain elevation.
              const bool useBareEarth =
+                 config.elevationSource != TerrainElevationSource::SURFACE_PREVIEW ||
                  acceptedBuildingMask.data[sourceIndex] != 0;
              float elevation = useBareEarth
                  ? surface.dtm.data[sourceIndex]
@@ -93,23 +94,35 @@ TerrainMesh TerrainMesher::generate(
                           std::isfinite(elevation);
              sampledValid[static_cast<size_t>(y) * gridWidth + x] = valid;
              
-             // Convert to Projected Metric, then to Local glTF Space
-             double E = metadata.geoTransform[0] + origX * metadata.geoTransform[1] + origY * metadata.geoTransform[2];
-             double N = metadata.geoTransform[3] + origX * metadata.geoTransform[4] + origY * metadata.geoTransform[5];
+             // GDAL's affine transform maps pixel EDGES; raster samples live
+             // at centres. Interior terrain samples use their centres, while
+             // the outermost nodes extend to the image edges using the nearest
+             // valid height. This covers the same [0,width] x [0,height] domain
+             // as the pixel-edge building footprints, including border roofs.
+             const double pixelX = x == 0 ? 0.0 :
+                 (x == gridWidth - 1 ? static_cast<double>(width) : origX + 0.5);
+             const double pixelY = y == 0 ? 0.0 :
+                 (y == gridHeight - 1 ? static_cast<double>(height) : origY + 0.5);
+             double E = metadata.geoTransform[0] + pixelX * metadata.geoTransform[1] + pixelY * metadata.geoTransform[2];
+             double N = metadata.geoTransform[3] + pixelX * metadata.geoTransform[4] + pixelY * metadata.geoTransform[5];
             
              ProjectedPoint proj{E, N};
              LocalPoint localPt = LocalFrameTransformer::toLocal(proj, frame);
              float localY = valid
                  ? LocalFrameTransformer::toLocalElevation(elevation, frame)
                  : 0.0f; // Unused placeholder: faces touching NoData are omitted.
+             if (config.elevationSource == TerrainElevationSource::FLAT_PRESENTATION)
+                 localY = 0.0f; // Render-only: never modify the scientific raster.
 
              positions.push_back(static_cast<float>(localPt.x));
              positions.push_back(localY);
              positions.push_back(static_cast<float>(localPt.z));
 
-             // UV mapping (0.0 to 1.0)
-             uvs.push_back(static_cast<float>(origX) / (width - 1));
-             uvs.push_back(1.0f - (static_cast<float>(origY) / (height - 1))); // glTF V axis flips
+             // glTF (0,0) is the image's TOP LEFT, exactly like the unflipped
+             // JPEG supplied by RasterIngestService. Do not apply OpenGL's
+             // historical V flip: that mirrors optical roofs against geometry.
+             uvs.push_back(static_cast<float>(pixelX / width));
+             uvs.push_back(static_cast<float>(pixelY / height));
 
              if (valid) {
                  bounds.minX = std::min(bounds.minX, localPt.x);
@@ -146,11 +159,15 @@ TerrainMesh TerrainMesher::generate(
 
      //Skirt Generation (The Pedestal)
      float yBase = static_cast<float>(bounds.minY) - config.skirtDepth;
-     bounds.minY = yBase;
 
      float centerX = static_cast<float>((bounds.minX + bounds.maxX) / 2.0);
      float centerZ = static_cast<float>((bounds.minZ + bounds.maxZ) / 2.0);
 
+     // A flat urban surface has no pedestal, bottom cap, or skirt vertices.
+     // Depth zero alone would still create degenerate side/bottom triangles.
+     if (config.generateSkirt)
+     {
+     bounds.minY = yBase;
      uint32_t vCenterBase = positions.size() / 3;
      positions.push_back(centerX); positions.push_back(yBase); positions.push_back(centerZ);
      uvs.push_back(0.5f); uvs.push_back(0.5f); // Neutral center UV
@@ -193,6 +210,7 @@ TerrainMesh TerrainMesher::generate(
      for (int y = gridHeight - 1; y > 0; --y) 
      {
          addSkirtEdge(y * gridWidth + (gridWidth - 1), (y - 1) * gridWidth + (gridWidth - 1));
+     }
      }
 
      //Normal Calculation

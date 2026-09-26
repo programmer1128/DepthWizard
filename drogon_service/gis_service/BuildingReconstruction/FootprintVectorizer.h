@@ -13,6 +13,8 @@ class FootprintVectorizer
          const BuildingReconstructionConfig& config);
         
      private:
+     static std::vector<ProjectedPoint> regularizeEdges(
+         const std::vector<ProjectedPoint>& ring, double maxShift);
      // Topological Math Helpers
      static double calculateSignedArea(const std::vector<ProjectedPoint>& pts);
      static bool doIntersect(const ProjectedPoint& p1, const ProjectedPoint& q1, const ProjectedPoint& p2, const ProjectedPoint& q2);

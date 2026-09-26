@@ -218,7 +218,7 @@ void SemanticPostProcessor::applySoftmaxAndThresholding(
         out_road[i] = probs[5];
 
         const float classProbabilities[6] = {
-            0.0f,
+            out_unk[i],
             out_gnd[i],
             out_bldg[i],
             out_road[i],
@@ -249,7 +249,8 @@ void SemanticPostProcessor::applySoftmaxAndThresholding(
         
         // Entropy & Margin Thresholding Logic
         // if the winner didnt beat the runner-up by our safety margin -> force it to UNKNOWN
-        if (highest_prob < MIN_CLASS_PROBABILITY ||
+        if (winning_index == static_cast<int>(SemanticClass::UNKNOWN) ||
+            highest_prob < MIN_CLASS_PROBABILITY ||
             (highest_prob - second_highest_prob) < CONFIDENCE_MARGIN)
         {
             out_class[i] = SemanticClass::UNKNOWN;

@@ -7,15 +7,15 @@
 #include <iostream>
 #include <stdexcept> // required for std::invalid_argument
 #include <omp.h> // for multi-threading
+#include <opencv2/imgproc.hpp>
 
 float ReferenceDemPreprocessor::computeGsd(const SpatialMetadata& metadata)
 {
     // Ground Sample Distance (GSD) = square root of the pixel area in meters
-    double pixel_w = std::abs(metadata.geoTransform[1]);
-    double pixel_h = std::abs(metadata.geoTransform[5]);
-    double area = pixel_w * pixel_h;
+    double area = std::abs(metadata.geoTransform[1] * metadata.geoTransform[5] -
+                           metadata.geoTransform[2] * metadata.geoTransform[4]);
     
-    if (area <= 0.0)
+    if (!std::isfinite(area) || area <= 0.0)
     {
         return 1.0f; // failsafe
     }
@@ -81,103 +81,58 @@ void ReferenceDemPreprocessor::removeSpikes(RasterGrid<float>& demGrid, float th
 }
 
 RasterGrid<float> ReferenceDemPreprocessor::applyAdaptiveGroundFilter(
-    const RasterGrid<float>& inputGrid, 
+    const RasterGrid<float>& inputGrid,
     float gsdMeters)
 {
-    int w = inputGrid.width;
-    int h = inputGrid.height;
-
-    // calculate how big our digital bulldozer needs to be to wipe out buildings (25 meters)
-    int radius = std::clamp(static_cast<int>(std::round(25.0f / std::max(gsdMeters, 0.1f))), 2, 15);
-
-    // optimization: Kernel Pre-computation
-    // instead of doing expensive circle math (dx*dx + dy*dy) for every single pixel,
-    // we calculate the shape of the circle once and save the offsets
-    struct Offset { int dx, dy; };
-    std::vector<Offset> circleKernel;
-    circleKernel.reserve(radius * radius * 4); // Pre-allocate memory
-
-    for (int dy = -radius; dy <= radius; ++dy) {
-        for (int dx = -radius; dx <= radius; ++dx) {
-            if (dx * dx + dy * dy <= radius * radius) {
-                circleKernel.push_back({dx, dy});
-            }
-        }
-    }
-
-    // PHASE 1: EROSION (Scrapes away elevated structures like roofs and trees)
-    RasterGrid<float> eroded;
-    eroded.width = w;
-    eroded.height = h;
-    eroded.data.resize(w * h, std::numeric_limits<float>::quiet_NaN());
-
-    // multi-thread the heavy erosion sweep
-    #pragma omp parallel for schedule(dynamic)
-    for (int y = 0; y < h; ++y)
+    if (!inputGrid.isValid() || !std::isfinite(gsdMeters) || gsdMeters <= 0.0F)
     {
-        for (int x = 0; x < w; ++x)
-        {
-            float min_val = std::numeric_limits<float>::infinity();
-            bool has_valid = false;
-
-            // iterate over our pre-calculated circle kernel
-            for (const auto& offset : circleKernel)
-            {
-                int nx = x + offset.dx;
-                int ny = y + offset.dy;
-
-                // boundary safety check
-                if (nx >= 0 && nx < w && ny >= 0 && ny < h)
-                {
-                    float v = inputGrid.data[ny * w + nx];
-                    if (!std::isnan(v))
-                    {
-                        if (v < min_val) min_val = v;
-                        has_valid = true;
-                    }
-                }
-            }
-
-            if (has_valid) eroded.data[y * w + x] = min_val;
-        }
+        throw std::invalid_argument("ReferenceDemPreprocessor: invalid grid or GSD.");
     }
 
-    // PHASE 2: DILATION (Restores the natural terrain topography)
-    RasterGrid<float> opened;
-    opened.width = w;
-    opened.height = h;
-    opened.data.resize(w * h, std::numeric_limits<float>::quiet_NaN());
+    // Respect the physical 25 m radius even after warping a 30 m DEM to a
+    // 0.5 m optical grid. The former 15-pixel cap reduced it to just 7.5 m.
+    // OpenCV uses separable min/max filters for a rectangular kernel, avoiding
+    // a full radius-squared neighbourhood scan for every optical pixel.
+    const int maxDimension = std::max(inputGrid.width, inputGrid.height);
+    const int radius = static_cast<int>(std::min(
+        std::ceil(25.0 / gsdMeters), static_cast<double>(maxDimension - 1)));
+    const int radiusX = std::min(radius, inputGrid.width - 1);
+    const int radiusY = std::min(radius, inputGrid.height - 1);
+    const cv::Mat kernel = cv::getStructuringElement(
+        cv::MORPH_RECT, cv::Size(radiusX * 2 + 1, radiusY * 2 + 1));
 
-    // multi-thread the heavy dilation sweep
-    #pragma omp parallel for schedule(dynamic)
-    for (int y = 0; y < h; ++y)
+    cv::Mat values(inputGrid.height, inputGrid.width, CV_32FC1);
+    const float high = std::numeric_limits<float>::max();
+    const float low = std::numeric_limits<float>::lowest();
+    for (std::size_t i = 0; i < inputGrid.data.size(); ++i)
     {
-        for (int x = 0; x < w; ++x)
-        {
-            float max_val = -std::numeric_limits<float>::infinity();
-            bool has_valid = false;
-
-            for (const auto& offset : circleKernel)
-            {
-                int nx = x + offset.dx;
-                int ny = y + offset.dy;
-
-                if (nx >= 0 && nx < w && ny >= 0 && ny < h)
-                {
-                    float v = eroded.data[ny * w + nx];
-                    if (!std::isnan(v))
-                    {
-                        if (v > max_val) max_val = v;
-                        has_valid = true;
-                    }
-                }
-            }
-
-            if (has_valid) opened.data[y * w + x] = max_val;
-        }
+        values.ptr<float>()[i] = std::isfinite(inputGrid.data[i])
+            ? inputGrid.data[i] : high;
     }
 
-    return opened;
+    cv::Mat eroded;
+    cv::erode(values, eroded, kernel, cv::Point(-1, -1), 1,
+              cv::BORDER_CONSTANT, cv::Scalar(high));
+    // An all-invalid erosion window must not dominate the dilation.
+    for (std::size_t i = 0; i < inputGrid.data.size(); ++i)
+    {
+        if (eroded.ptr<float>()[i] == high)
+            eroded.ptr<float>()[i] = low;
+    }
+
+    cv::Mat opened;
+    cv::dilate(eroded, opened, kernel, cv::Point(-1, -1), 1,
+               cv::BORDER_CONSTANT, cv::Scalar(low));
+
+    RasterGrid<float> result = inputGrid;
+    for (std::size_t i = 0; i < result.data.size(); ++i)
+    {
+        // Preserve original voids for the explicit IDW/validity stage.
+        const float value = opened.ptr<float>()[i];
+        result.data[i] = std::isfinite(inputGrid.data[i]) && value != low
+            ? value : std::numeric_limits<float>::quiet_NaN();
+    }
+    return result;
 }
 
 void ReferenceDemPreprocessor::inpaintVoidsIDW(

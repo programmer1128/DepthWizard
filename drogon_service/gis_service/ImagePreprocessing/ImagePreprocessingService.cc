@@ -63,6 +63,26 @@ ImageQualityResult ImagePreprocessingService::process(const SceneInput &scene)
             "ImagePreprocessingService: Failed to read one or more RGB bands.");
     }
 
+    // Bright white roofs, asphalt shadows and clipped RGB colours are still
+    // observations. Only GDAL's explicit NoData/alpha/mask information can
+    // reliably declare them absent; brightness is not a cloud detector.
+    std::vector<uint8_t> observed(totalPixels, 1);
+    std::vector<uint8_t> bandMask(totalPixels);
+    for (int band = 1; band <= std::min(numBands, 3); ++band)
+    {
+        GDALRasterBand* source = poDS->GetRasterBand(band);
+        if ((source->GetMaskFlags() & GMF_ALL_VALID) != 0)
+            continue;
+        if (source->GetMaskBand()->RasterIO(
+                GF_Read, 0, 0, width, height, bandMask.data(), width, height,
+                GDT_Byte, 0, 0) != CE_None)
+        {
+            throw std::runtime_error("ImagePreprocessingService: failed reading validity mask.");
+        }
+        for (std::size_t i = 0; i < totalPixels; ++i)
+            observed[i] = observed[i] && bandMask[i] != 0;
+    }
+
     // GDALClose(poDS);
 
     ImageQualityResult result;
@@ -155,13 +175,9 @@ ImageQualityResult ImagePreprocessingService::process(const SceneInput &scene)
              shadowCount++;
          }
 
-         bool isBorderPadding = (r == 0.0f && g == 0.0f && b == 0.0f); // detecting artificial black border padding used in GeoTIFFs
-
-         // Shadows are real observed terrain, not missing sensor data. Keep
-         // them available to both inference models so shaded slopes do not
-         // become holes in the reconstructed surface. shadowMask remains a
-         // diagnostic/calibration exclusion mask.
-         if (isCloud || pSat[i] == 1 || isBorderPadding)
+         // Tile padding is masked by the dispatcher. RGB intensity alone
+         // must not remove an observed roof before semantic inference.
+         if (observed[i] == 0)
          {
              pValid[i] = 0;
          }

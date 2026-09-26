@@ -10,5 +10,6 @@ class BuildingInstanceExtractor
          const BuildingMaskResult& maskResult,
          const SemanticScene& semantics,
          const SpatialMetadata& metadata,
-         const BuildingReconstructionConfig& config);
+         const BuildingReconstructionConfig& config,
+         const RasterGrid<float>* ndsm = nullptr);
 };

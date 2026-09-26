@@ -16,8 +16,8 @@ class SemanticPostProcessor
     // converts raw scores into probabilities
     // determines the winning class and calculates our confidence in that decision
     
-    // logits: raw AI scores in the reduced GAMUS order:
-    // ground, low vegetation, building, water, road, tree.
+    // logits: raw AI scores in the deployed six-channel ONNX order:
+    // OTHER, GROUND, LOW_VEGETATION, BUILDING, WATER, ROAD.
     // confidence: AI's overall confidence raster
     // validMask: map telling us which pixels actually have data
  

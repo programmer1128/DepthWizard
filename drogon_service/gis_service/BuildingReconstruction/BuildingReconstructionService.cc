@@ -9,8 +9,10 @@ BuildingCollection BuildingReconstructionService::reconstruct(
      const SemanticScene& semantics,
      const GeoreferencedSurfaceBundle& surface,
      const SpatialMetadata& metadata,
-     const BuildingReconstructionConfig& config)
+     const BuildingReconstructionConfig& config,
+     BuildingReconstructionDiagnostics* diagnostics)
 {
+     if (diagnostics) *diagnostics = {};
      BuildingCollection collection; // Initializes empty. Valid return state if no buildings exist.
 
      //Mask Cleanup
@@ -19,6 +21,7 @@ BuildingCollection BuildingReconstructionService::reconstruct(
         
      if (!maskResult.success) 
      {
+         if (diagnostics) diagnostics->rejectionReasons.push_back(maskResult.errorMessage);
          std::cerr << "[Module 6] Mask processing failed: " << maskResult.errorMessage << "\n";
          return collection;
      }
@@ -28,7 +31,14 @@ BuildingCollection BuildingReconstructionService::reconstruct(
 
      //Instance Extraction
      ComponentExtractionResult extractionResult = BuildingInstanceExtractor::extract(
-         maskResult, semantics, metadata, config);
+         maskResult, semantics, metadata, config, &surface.ndsm);
+     if (diagnostics)
+     {
+         diagnostics->candidateMask = std::move(maskResult.candidateMask);
+         diagnostics->cleanedMask = std::move(maskResult.cleanMask);
+         diagnostics->instanceLabels = extractionResult.labelRaster;
+         if (!extractionResult.success) diagnostics->rejectionReasons.push_back(extractionResult.errorMessage);
+     }
 
      collection.semanticCandidateCount =
          static_cast<std::size_t>(extractionResult.acceptedComponentCount);
@@ -60,6 +70,8 @@ BuildingCollection BuildingReconstructionService::reconstruct(
 
          if (!vectorResult.success) 
          {
+             if (diagnostics) diagnostics->rejectionReasons.push_back(
+                 "Building " + std::to_string(stats.componentId) + ": " + vectorResult.errorMessage);
              ++collection.vectorizationRejectedCount;
              std::cerr << "[Module 6] Rejected semantic candidate "
                        << stats.componentId << ": " << vectorResult.errorMessage << "\n";
@@ -80,6 +92,8 @@ BuildingCollection BuildingReconstructionService::reconstruct(
 
          if (!heightResult.success) 
          {
+             if (diagnostics) diagnostics->rejectionReasons.push_back(
+                 "Building " + std::to_string(stats.componentId) + ": " + heightResult.errorMessage);
              ++collection.physicsRejectedCount;
              std::cerr << "[Module 6] Rejected semantic candidate "
                       << stats.componentId << ": " << heightResult.errorMessage << "\n";

@@ -83,10 +83,13 @@ struct BuildingMesh
 {
     MeshPrimitive roofPrimitive;
     MeshPrimitive wallPrimitive;
+    std::vector<uint32_t> emittedBuildingIds;
+    std::vector<uint32_t> rejectedBuildingIds;
 };
 
 struct SceneMesh 
 {
+    std::string presentationMode{"metric"};
     LocalSceneFrame localFrame;
     MeshPrimitive terrainPrimitive;
     MeshPrimitive roofPrimitive;

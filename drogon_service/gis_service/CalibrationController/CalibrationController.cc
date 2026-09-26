@@ -129,6 +129,7 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::getExportStatus(
     result["dtm"] = exportStateName(status->dtm);
     result["ndsm"] = exportStateName(status->ndsm);
     result["confidence"] = exportStateName(status->confidence);
+    result["diagnostics_status"] = status->diagnosticsState;
 
      if (status->dsm == JobStatus::READY)
      {

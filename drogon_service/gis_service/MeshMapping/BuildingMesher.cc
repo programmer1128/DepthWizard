@@ -305,6 +305,15 @@ BuildingMesh BuildingMesher::generate(
                  config.wallTerrainEmbedDepthMetres,
              frame);
 
+         if (config.flatPresentation)
+         {
+             // Ground is Y=0 in this view. Preserve nDSM metres at 1:1 scale;
+             // absolute terrain/base elevations remain in diagnostics/GeoTIFFs.
+             localRoofY = bldg.heightAboveGround;
+             localBaseY = -config.wallTerrainEmbedDepthMetres;
+             std::fill(localOuterBaseY.begin(), localOuterBaseY.end(), localBaseY);
+         }
+
          /*
          *Roof Generation of building
          */
@@ -315,6 +324,7 @@ BuildingMesh BuildingMesher::generate(
              // Never emit walls without a valid roof. That failure mode is
              // exactly the thin cyan contour seen when roof triangulation
              // silently failed after the local-axis winding reflection.
+             result.rejectedBuildingIds.push_back(bldg.buildingId);
              continue;
          }
 
@@ -407,7 +417,10 @@ BuildingMesh BuildingMesher::generate(
                  pushWallVertex(ptB.x, localRoofY, ptB.z); // Roof B (Index 2)
                  pushWallVertex(ptB.x, baseB, ptB.z); // Base B (Index 3)
 
-                 // Two triangles per wall
+                 // For the canonical CCW XZ outer ring, up x edge is
+                 // (dz, 0, -dx): exactly the outward normal above. Reversing
+                 // these indices would cull the exterior. CW courtyard rings
+                 // intentionally point inward into the courtyard void.
                  result.wallPrimitive.indices.push_back(wallIdxBase + 0);
                  result.wallPrimitive.indices.push_back(wallIdxBase + 1);
                  result.wallPrimitive.indices.push_back(wallIdxBase + 2);
@@ -425,6 +438,7 @@ BuildingMesh BuildingMesher::generate(
          {
              extrudeRing(hole, nullptr);
          }
+         result.emittedBuildingIds.push_back(bldg.buildingId);
      }
 
      result.roofPrimitive.localBounds = roofBounds;

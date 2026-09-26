@@ -29,12 +29,24 @@ BuildingMaskResult createCleanMaskImpl(
      if (width <= 0 || height <= 0 ||
          semantics.buildingProbability.width != width ||
          semantics.buildingProbability.height != height ||
+         semantics.groundProbability.width != width ||
+         semantics.groundProbability.height != height ||
+         semantics.roadProbability.width != width ||
+         semantics.roadProbability.height != height ||
+         semantics.vegetationProbability.width != width ||
+         semantics.vegetationProbability.height != height ||
+         semantics.waterProbability.width != width ||
+         semantics.waterProbability.height != height ||
          semantics.semanticConfidence.width != width ||
          semantics.semanticConfidence.height != height ||
          semantics.finalClassMap.width != width ||
          semantics.finalClassMap.height != height ||
          validMask.width != width || validMask.height != height ||
          !semantics.buildingProbability.isValid() ||
+         !semantics.groundProbability.isValid() ||
+         !semantics.roadProbability.isValid() ||
+         !semantics.vegetationProbability.isValid() ||
+         !semantics.waterProbability.isValid() ||
          !semantics.semanticConfidence.isValid() ||
          !semantics.finalClassMap.isValid() ||
          !validMask.isValid() ||
@@ -48,13 +60,20 @@ BuildingMaskResult createCleanMaskImpl(
      }
 
      // Ensure probability values are finite
-     for (float p : semantics.buildingProbability.data) 
+     const auto validProbability = [](const RasterGrid<float>& grid)
      {
-         if (!std::isfinite(p) || p < 0.0f || p > 1.0f) 
-         {
-             result.errorMessage = "Building probabilities contain non-finite values or exceed [0,1].";
-             return result;
-         }
+         return std::all_of(grid.data.begin(), grid.data.end(), [](float p) {
+             return std::isfinite(p) && p >= 0.0f && p <= 1.0f;
+         });
+     };
+     if (!validProbability(semantics.buildingProbability) ||
+         !validProbability(semantics.groundProbability) ||
+         !validProbability(semantics.roadProbability) ||
+         !validProbability(semantics.vegetationProbability) ||
+         !validProbability(semantics.waterProbability))
+     {
+         result.errorMessage = "Semantic probabilities contain non-finite values or exceed [0,1].";
+         return result;
      }
 
      for (float confidence : semantics.semanticConfidence.data)
@@ -94,6 +113,8 @@ BuildingMaskResult createCleanMaskImpl(
      const std::size_t totalPixels =
          static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
      std::vector<uint8_t> candidateBytes(totalPixels, 0);
+     std::vector<uint8_t> recoveryBytes(totalPixels, 0);
+     std::vector<uint8_t> allowedBytes(totalPixels, 255);
      for (std::size_t index = 0; index < totalPixels; ++index)
      {
          const bool isBuilding =
@@ -110,17 +131,25 @@ BuildingMaskResult createCleanMaskImpl(
              semantics.finalClassMap.data[index] == SemanticClass::UNKNOWN &&
              semantics.buildingProbability.data[index] >=
                  config.buildingRecoveryProbabilityThreshold &&
+             // The UNKNOWN decision may be a softmax margin failure at a
+             // blurred roof edge. Do not grow into a pixel that instead has
+             // stronger evidence for road, vegetation, water, or ground.
+             semantics.buildingProbability.data[index] >= std::max({
+                 semantics.groundProbability.data[index],
+                 semantics.roadProbability.data[index],
+                 semantics.vegetationProbability.data[index],
+                 semantics.waterProbability.data[index]}) &&
              std::isfinite(metricNdsm->data[index]) &&
              metricNdsm->data[index] >= config.minRecoveryNdsmHeightMetres;
 
-         if (recoveredBuilding)
-         {
-             ++result.recoveredCandidatePixelCount;
-         }
-
+         recoveryBytes[index] = recoveredBuilding ? 255 : 0;
+         const auto cls = semantics.finalClassMap.data[index];
+         // A positive ground/road/water/vegetation decision is a barrier.
+         // Morphology must not turn these pixels back into buildings.
+         allowedBytes[index] = (validMask.data[index] != 0 &&
+             (cls == SemanticClass::BUILDING || cls == SemanticClass::UNKNOWN)) ? 255 : 0;
          candidateBytes[index] = static_cast<uint8_t>(
-             ((isBuilding && probabilityAccepted && confidenceAccepted) ||
-              recoveredBuilding) ? 255 : 0);
+             (isBuilding && probabilityAccepted && confidenceAccepted) ? 255 : 0);
      }
      cv::Mat binaryMask(height, width, CV_8UC1, candidateBytes.data());
 
@@ -128,6 +157,35 @@ BuildingMaskResult createCleanMaskImpl(
      cv::Mat validMat255;
      cv::compare(validMat, 0, validMat255, cv::CMP_GT);
      cv::bitwise_and(binaryMask, validMat255, binaryMask);
+
+     // Bounded, edge-connected growth from strong roofs. Unlike unconstrained
+     // UNKNOWN recovery, this cannot invent distant islands from nDSM noise.
+     const cv::Mat allowed(height, width, CV_8UC1, allowedBytes.data());
+     const cv::Mat recovery(height, width, CV_8UC1, recoveryBytes.data());
+     cv::Mat inverseStrong, distanceToStrong;
+     cv::bitwise_not(binaryMask, inverseStrong);
+     cv::distanceTransform(inverseStrong, distanceToStrong, cv::DIST_L2, 3);
+     cv::Mat recoveryZone;
+     cv::compare(distanceToStrong, config.recoveryDistanceMetres / std::max(colRes, rowRes),
+                 recoveryZone, cv::CMP_LE);
+     cv::bitwise_and(recoveryZone, recovery, recoveryZone);
+     cv::bitwise_and(recoveryZone, allowed, recoveryZone);
+     const int growthSteps = static_cast<int>(std::ceil(
+         config.recoveryDistanceMetres / std::min(colRes, rowRes)));
+     const cv::Mat cross = cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(3, 3));
+     for (int step = 0; step < growthSteps; ++step)
+     {
+         cv::Mat grown;
+         cv::dilate(binaryMask, grown, cross);
+         cv::bitwise_and(grown, recoveryZone, grown);
+         cv::bitwise_or(binaryMask, grown, binaryMask);
+     }
+     cv::Mat recovered;
+     cv::bitwise_and(binaryMask, recovery, recovered);
+     result.recoveredCandidatePixelCount = cv::countNonZero(recovered);
+     result.candidateMask.width = width;
+     result.candidateMask.height = height;
+     result.candidateMask.data = candidateBytes;
 
      //Affine-Aware Morphology
      //std::ceil to prevent truncation, generating independent width/height for rectangular pixels
@@ -152,6 +210,7 @@ BuildingMaskResult createCleanMaskImpl(
         
          // Dilation can push building pixels into cloud/NoData regions. Re-apply mask.
          cv::bitwise_and(binaryMask, validMat255, binaryMask);
+         cv::bitwise_and(binaryMask, allowed, binaryMask);
      }
 
      // Closing (Dilation -> Erosion)
@@ -163,6 +222,7 @@ BuildingMaskResult createCleanMaskImpl(
         
          // Dilation can push building pixels into cloud/NoData regions. Re-apply mask.
          cv::bitwise_and(binaryMask, validMat255, binaryMask);
+         cv::bitwise_and(binaryMask, allowed, binaryMask);
      }
 
      //Connected Components (Small Region Rejection)

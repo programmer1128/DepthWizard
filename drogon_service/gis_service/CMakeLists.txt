@@ -32,7 +32,7 @@ find_package(Halide REQUIRED)
 find_package(Eigen3 REQUIRED)
 
 # Building reconstruction uses OpenCV morphology, connected components and polygons.
-find_package(OpenCV REQUIRED COMPONENTS core imgproc)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs photo)
 
 #SOURCE FILE DISCOVERY (Package-by-Feature Architecture)
 # Explicitly grab sources from each dedicated service folder

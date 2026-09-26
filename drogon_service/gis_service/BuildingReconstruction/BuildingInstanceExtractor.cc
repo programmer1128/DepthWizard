@@ -1,4 +1,5 @@
 #include "BuildingInstanceExtractor.h"
+#include "BuildingInstanceSplitter.h"
 #include <opencv2/opencv.hpp>
 #include <algorithm>
 #include <cmath>
@@ -10,7 +11,8 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
      const BuildingMaskResult& maskResult,
      const SemanticScene& semantics,
      const SpatialMetadata& metadata,
-     const BuildingReconstructionConfig& config)
+     const BuildingReconstructionConfig& config,
+     const RasterGrid<float>* ndsm)
 {
      ComponentExtractionResult result;
 
@@ -45,7 +47,8 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
          return result;
      }
 
-     if (!maskResult.cleanMask.isValid() || !semantics.buildingProbability.isValid() || !semantics.semanticConfidence.isValid()) 
+     if (!maskResult.cleanMask.isValid() || !semantics.buildingProbability.isValid() || !semantics.semanticConfidence.isValid() ||
+         (ndsm && (!ndsm->isValid() || ndsm->width != width || ndsm->height != height)))
      {
          result.errorMessage = "Invalid memory buffers detected in grids.";
          return result;
@@ -90,48 +93,47 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
          result.labelRaster.data.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);
      };
 
-     cv::Mat binaryMask(height, width, CV_8UC1, const_cast<uint8_t*>(maskResult.cleanMask.data.data()));
-
-    
-     //WATERSHED SPLITTING (Severing connected urban blocks/bridges)
-   
-     cv::Mat distTransform;
-     cv::distanceTransform(binaryMask, distTransform, cv::DIST_L2, 5);
-
-     // Calculate dynamic peak threshold based on physical meters (e.g., 2.5 meters to reach "sure" center)
-     double gsd = std::sqrt(pixelArea);
-     double distThreshPixels = std::max(1.0, 2.5 / gsd);
-
-     cv::Mat sureFg;
-     cv::threshold(distTransform, sureFg, distThreshPixels, 255, cv::THRESH_BINARY);
-     sureFg.convertTo(sureFg, CV_8U);
-
-     cv::Mat sureBg;
-     cv::dilate(binaryMask, sureBg, cv::Mat(), cv::Point(-1, -1), 2);
-     cv::Mat unknown = sureBg - sureFg;
-
-     cv::Mat markers;
-     cv::connectedComponents(sureFg, markers, config.connectivity, CV_32S);
-     markers = markers + 1; // Background = 1
-     markers.setTo(0, unknown == 255); // Unknown boundaries = 0
-
-     // Watershed requires a 3-channel dummy image
-     cv::Mat dummyRgb;
-     cv::cvtColor(binaryMask, dummyRgb, cv::COLOR_GRAY2BGR);
-     cv::watershed(dummyRgb, markers);
-
-     // Reconstruct the mask with boundaries (-1) explicitly severed
-     cv::Mat splitMask = cv::Mat::zeros(binaryMask.size(), CV_8UC1);
-     splitMask.setTo(255, markers > 1);
-
-     //apply open cv connected components on mask
-     cv::Mat labels, stats, centroids;
-     int numLabels = cv::connectedComponentsWithStats(splitMask, labels, stats, centroids, config.connectivity, CV_32S);
+     // Split only with supported markers, then compile statistics directly
+     // from integer labels. Binary relabelling here would erase all the cuts.
+     RasterGrid<int32_t> instances = BuildingInstanceSplitter::label(
+         maskResult.cleanMask, semantics, ndsm, pixelArea, config);
+     cv::Mat labels(height, width, CV_32S, instances.data.data());
+     const int numLabels = *std::max_element(instances.data.begin(), instances.data.end()) + 1;
+     cv::Mat stats = cv::Mat::zeros(numLabels, 5, CV_32S);
+     cv::Mat centroids = cv::Mat::zeros(numLabels, 2, CV_64F);
+     std::vector<int> right(numLabels, -1), bottom(numLabels, -1);
+     for (int id = 0; id < numLabels; ++id) 
+     {
+         stats.at<int>(id, cv::CC_STAT_LEFT) = width;
+         stats.at<int>(id, cv::CC_STAT_TOP) = height;
+     }
+     for (int y = 0; y < height; ++y)
+         for (int x = 0; x < width; ++x) {
+             const int id = labels.at<int>(y, x);
+             if (!id) continue;
+             ++stats.at<int>(id, cv::CC_STAT_AREA);
+             stats.at<int>(id, cv::CC_STAT_LEFT) = std::min(x, stats.at<int>(id, cv::CC_STAT_LEFT));
+             stats.at<int>(id, cv::CC_STAT_TOP) = std::min(y, stats.at<int>(id, cv::CC_STAT_TOP));
+             right[id] = std::max(right[id], x); bottom[id] = std::max(bottom[id], y);
+             centroids.at<double>(id, 0) += x; centroids.at<double>(id, 1) += y;
+         }
+     for (int id = 1; id < numLabels; ++id) {
+         const int area = stats.at<int>(id, cv::CC_STAT_AREA);
+         if (!area) continue;
+         stats.at<int>(id, cv::CC_STAT_WIDTH) = right[id] - stats.at<int>(id, cv::CC_STAT_LEFT) + 1;
+         stats.at<int>(id, cv::CC_STAT_HEIGHT) = bottom[id] - stats.at<int>(id, cv::CC_STAT_TOP) + 1;
+         centroids.at<double>(id, 0) /= area; centroids.at<double>(id, 1) /= area;
+     }
+     if (config.connectivity != 4)
+     {
+         result.warnings.push_back(
+             "Instance polygons use edge connectivity; diagonal contacts were separated.");
+     }
 
      if (numLabels <= 1) {
          allocateZeroRaster();
          result.success = true;
-         result.warnings.push_back("No valid building components remained after watershed splitting.");
+         result.warnings.push_back("No building components in the cleaned mask.");
          return result;
      }
 
@@ -173,6 +175,7 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
      for (int i = 1; i < numLabels; ++i) 
      {
          int pixelCount = stats.at<int>(i, cv::CC_STAT_AREA);
+         if (pixelCount == 0) continue;
          double physicalArea = pixelCount * pixelArea;
 
          if (physicalArea >= config.minBuildingAreaSquareMetres) 

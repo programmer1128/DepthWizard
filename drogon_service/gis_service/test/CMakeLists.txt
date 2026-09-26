@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 find_package(GTest REQUIRED)
-find_package(OpenCV REQUIRED COMPONENTS core imgproc)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs photo)
 include(GoogleTest)
 
 option(
@@ -104,10 +104,12 @@ add_executable(
 )
 
 configure_depthwizard_test(reference_dem_preprocessor_test)
+target_include_directories(reference_dem_preprocessor_test PRIVATE ${OpenCV_INCLUDE_DIRS})
 
 target_link_libraries(
     reference_dem_preprocessor_test
     PRIVATE
+    ${OpenCV_LIBS}
     GTest::gtest_main
     Drogon::Drogon
     OpenMP::OpenMP_CXX
@@ -281,6 +283,7 @@ add_building_reconstruction_test(
     building_instance_extractor_test
     BuildingInstanceExtractor_test.cc
     ../BuildingReconstruction/BuildingInstanceExtractor.cc
+    ../BuildingReconstruction/BuildingInstanceSplitter.cc
 )
 
 add_building_reconstruction_test(
@@ -301,6 +304,7 @@ add_building_reconstruction_test(
     ../BuildingReconstruction/BuildingReconstructionService.cc
     ../BuildingReconstruction/BuildingMaskProcessor.cc
     ../BuildingReconstruction/BuildingInstanceExtractor.cc
+    ../BuildingReconstruction/BuildingInstanceSplitter.cc
     ../BuildingReconstruction/FootprintVectorizer.cc
     ../BuildingReconstruction/BuildingHeightEstimator.cc
 )
@@ -314,6 +318,7 @@ add_executable(
     ../MeshMapping/LocalFrameTransformers.cc
     ../MeshMapping/TerrainMesher.cc
     ../MeshMapping/TerrainSurfaceComposer.cc
+    ../MeshMapping/TerrainTextureComposer.cc
 )
 
 configure_depthwizard_test(mesh_pipeline_test)
@@ -330,6 +335,7 @@ target_link_libraries(
     GTest::gtest_main
     draco
     ${OpenCV_LIBS}
+    opencv_imgcodecs # Encode the optical texture fixture for GLB sampler tests.
 )
 
 gtest_discover_tests(
@@ -337,3 +343,44 @@ gtest_discover_tests(
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     DISCOVERY_MODE PRE_TEST
 )
+
+add_executable(urban_scene_integration_test
+    UrbanSceneIntegration_test.cc
+    ../BuildingReconstruction/BuildingMaskProcessor.cc
+    ../BuildingReconstruction/BuildingInstanceExtractor.cc
+    ../BuildingReconstruction/BuildingInstanceSplitter.cc
+    ../BuildingReconstruction/FootprintVectorizer.cc
+    ../BuildingReconstruction/BuildingHeightEstimator.cc
+    ../BuildingReconstruction/BuildingReconstructionService.cc
+    ../SurfaceFusion/SurfaceFusionService.cc
+    ../MeshMapping/SceneMeshService.cc
+    ../MeshMapping/ScenePresentationSelector.cc
+    ../MeshMapping/SceneAssembler.cc
+    ../MeshMapping/BuildingMesher.cc
+    ../MeshMapping/LocalFrameTransformers.cc
+    ../MeshMapping/TerrainMesher.cc
+    ../MeshMapping/TerrainSurfaceComposer.cc
+    ../MeshMapping/TerrainTextureComposer.cc
+    ../CompressionLib/DracoCompressor.cc
+    ../FileGenerators/GltfPackager.cc)
+configure_depthwizard_test(urban_scene_integration_test)
+target_include_directories(urban_scene_integration_test PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(urban_scene_integration_test PRIVATE
+    GTest::gtest_main draco ${OpenCV_LIBS} OpenMP::OpenMP_CXX)
+gtest_discover_tests(urban_scene_integration_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
+
+add_executable(reconstruction_diagnostics_test ReconstructionDiagnostics_test.cc
+    ../FileGenerators/ReconstructionDiagnosticsWriter.cc)
+configure_depthwizard_test(reconstruction_diagnostics_test)
+target_link_libraries(reconstruction_diagnostics_test PRIVATE
+    GTest::gtest_main Drogon::Drogon ${DEPTHWIZARD_GDAL_TARGET})
+gtest_discover_tests(reconstruction_diagnostics_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
+
+add_executable(scene_presentation_selector_test ScenePresentationSelector_test.cc
+    ../MeshMapping/ScenePresentationSelector.cc)
+configure_depthwizard_test(scene_presentation_selector_test)
+target_link_libraries(scene_presentation_selector_test PRIVATE GTest::gtest_main)
+gtest_discover_tests(scene_presentation_selector_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)

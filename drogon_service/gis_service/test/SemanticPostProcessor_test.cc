@@ -159,4 +159,16 @@ TEST(SemanticPostProcessorTest, RejectsMismatchedRasterShapeAndClassContract)
         std::invalid_argument);
 }
 
+TEST(SemanticPostProcessorTest, OtherClassParticipatesInRunnerUpMargin)
+{
+    // Building 0.52 versus OTHER 0.45 is ambiguous, not a 52% margin win.
+    const auto logits = makeLogits(4, 4, {
+        std::log(0.45F), std::log(0.0075F), std::log(0.0075F),
+        std::log(0.52F), std::log(0.0075F), std::log(0.0075F)});
+    const auto result = SemanticPostProcessor::buildScene(
+        logits, makeConstantGrid(4, 4, 1.0F),
+        makeConstantGrid<uint8_t>(4, 4, 1));
+    EXPECT_EQ(result.finalClassMap.data[0], SemanticClass::UNKNOWN);
+    EXPECT_FLOAT_EQ(result.semanticConfidence.data[0], 0.0F);
+}
 } // namespace

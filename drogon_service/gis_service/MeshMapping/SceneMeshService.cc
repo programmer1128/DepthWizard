@@ -2,10 +2,12 @@
 #include "LocalFrameTransformer.h"
 #include "TerrainMesher.h"
 #include "TerrainSurfaceComposer.h"
+#include "TerrainTextureComposer.h"
 #include "BuildingMesher.h"
 #include "SceneAssembler.h"
 #include "../FileGenerators/GltfPackager.h"
 #include <iostream>
+#include <unordered_set>
 
 GlbBuildResult SceneMeshService::generateGlb(
      const SceneInput& scene,
@@ -15,6 +17,12 @@ GlbBuildResult SceneMeshService::generateGlb(
      const MeshBuildConfig& config)
 {
      GlbBuildResult result;
+     auto terrainConfig = config.terrain;
+     auto buildingConfig = config.building;
+     const bool flat = config.presentation == ScenePresentation::FLAT_URBAN;
+     if (flat) terrainConfig.elevationSource = TerrainElevationSource::FLAT_PRESENTATION;
+     terrainConfig.generateSkirt = !flat;
+     buildingConfig.flatPresentation = flat;
 
      //Establish Mathematical Anchor
      LocalSceneFrame frame = LocalFrameTransformer::create(metadata, surface);
@@ -27,16 +35,21 @@ GlbBuildResult SceneMeshService::generateGlb(
              metadata,
              config.terrain.buildingTerrainClearanceMetres);
 
-     // Generate independent geometry. Beneath accepted buildings the terrain
-     // uses DTM, preventing a textured molten DSM mound from competing with
-     // the sharp solid roof/wall primitives.
+     // Default scene mode uses DTM throughout the continuous terrain.
+     // Missing/rejected objects cannot become textured DSM mounds. The
+     // scientific DSM stays in surface for exports and measurement.
      TerrainMesh terrain = TerrainMesher::generate(
          surface,
          acceptedBuildingMask,
          metadata,
          frame,
-         config.terrain);
-     BuildingMesh bldgMesh = BuildingMesher::generate(buildings, frame, config.building);
+         terrainConfig);
+     BuildingMesh bldgMesh = BuildingMesher::generate(buildings, frame, buildingConfig);
+     for (uint32_t id : bldgMesh.rejectedBuildingIds)
+     {
+         result.geometryWarnings.push_back(
+             "Building " + std::to_string(id) + " failed roof triangulation.");
+     }
 
      // An accepted building must materialize as both a roof and wall mesh.
      // Returning a terrain-only GLB in this state would silently recreate the
@@ -52,6 +65,26 @@ GlbBuildResult SceneMeshService::generateGlb(
 
      //Assemble into Unified Scene
      SceneMesh sceneMesh = SceneAssembler::assemble(terrain, bldgMesh, scene, frame);
+     sceneMesh.presentationMode = flat ? "flat_urban" : "metric";
+     if (sceneMesh.texture.has_value() && !bldgMesh.emittedBuildingIds.empty())
+     {
+         // The DTM ground must not display a second photographic copy of the
+         // accepted roofs around their untextured walls. Repair only the GLB
+         // texture; the uploaded image and scientific rasters stay unchanged.
+         const std::unordered_set<uint32_t> emittedIds(
+             bldgMesh.emittedBuildingIds.begin(),
+             bldgMesh.emittedBuildingIds.end());
+         BuildingCollection emittedBuildings;
+         for (const auto& building : buildings.buildings)
+             if (emittedIds.contains(building.buildingId))
+                 emittedBuildings.buildings.push_back(building);
+         const RasterGrid<uint8_t> exactFootprints =
+             TerrainSurfaceComposer::buildAcceptedBuildingMask(
+                 emittedBuildings, metadata, 0.0f);
+         sceneMesh.texture = TerrainTextureComposer::concealAcceptedRoofs(
+             *sceneMesh.texture, exactFootprints, metadata,
+             terrainConfig.buildingTextureHaloMetres);
+     }
 
      //Compress Primitives Independently via Draco
      std::vector<CompressedPrimitive> compressedPrimitives;
@@ -78,6 +111,7 @@ GlbBuildResult SceneMeshService::generateGlb(
          CompressedPrimitive compRoofs = DracoCompressor::compress(sceneMesh.roofPrimitive, config.draco);
          if (!compRoofs.success) {
              result.geometryWarnings.push_back("Failed to compress Roofs: " + compRoofs.errorMessage);
+             return result;
          }
          else
          {
@@ -95,6 +129,7 @@ GlbBuildResult SceneMeshService::generateGlb(
          CompressedPrimitive compWalls = DracoCompressor::compress(sceneMesh.wallPrimitive, config.draco);
          if (!compWalls.success) {
              result.geometryWarnings.push_back("Failed to compress Walls: " + compWalls.errorMessage);
+             return result;
          }
          else
          {
@@ -114,7 +149,7 @@ GlbBuildResult SceneMeshService::generateGlb(
      }
 
      //Binary Packaging
-     size_t buildingCount = buildings.buildings.size();
+     size_t buildingCount = bldgMesh.emittedBuildingIds.size();
     
      GlbBuildResult packagedResult = GltfPackager::buildSceneToMemory(
          sceneMesh, compressedPrimitives, buildingCount);

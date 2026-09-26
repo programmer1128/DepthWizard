@@ -75,12 +75,12 @@ TEST(ImagePreprocessingServiceTest, ProducesExactNormalizationAndQualityMasksFor
     EXPECT_EQ(result.shadowMask.data[1], 1);
     EXPECT_EQ(result.saturationMask.data[2], 1);
     EXPECT_EQ(result.saturationMask.data[3], 1);
-    EXPECT_EQ(result.validPixelMask.data[0], 0);
+    EXPECT_EQ(result.validPixelMask.data[0], 1);
     EXPECT_EQ(result.validPixelMask.data[1], 1);
-    EXPECT_EQ(result.validPixelMask.data[2], 0);
-    EXPECT_EQ(result.validPixelMask.data[3], 0);
+    EXPECT_EQ(result.validPixelMask.data[2], 1);
+    EXPECT_EQ(result.validPixelMask.data[3], 1);
     EXPECT_EQ(result.validPixelMask.data[4], 1);
-    EXPECT_NEAR(result.qualityScore, 13.0F / 16.0F, 1.0e-6F);
+    EXPECT_FLOAT_EQ(result.qualityScore, 1.0F);
 }
 
 TEST(ImagePreprocessingServiceTest, AppliesGrayscaleCloudAndShadowRules)
@@ -103,9 +103,9 @@ TEST(ImagePreprocessingServiceTest, AppliesGrayscaleCloudAndShadowRules)
     EXPECT_EQ(result.shadowMask.data[0], 1);
     EXPECT_EQ(result.cloudMask.data[1], 1);
     EXPECT_EQ(result.validPixelMask.data[0], 1);
-    EXPECT_EQ(result.validPixelMask.data[1], 0);
+    EXPECT_EQ(result.validPixelMask.data[1], 1);
     EXPECT_EQ(result.validPixelMask.data[2], 1);
-    EXPECT_NEAR(result.qualityScore, 15.0F / 16.0F, 1.0e-6F);
+    EXPECT_FLOAT_EQ(result.qualityScore, 1.0F);
 
     EXPECT_NEAR(
         result.normalizedRgbTensor.data[2],
@@ -146,4 +146,21 @@ TEST(ImagePreprocessingServiceTest, RejectsSceneAndDatasetDimensionMismatch)
         std::invalid_argument);
 }
 
+TEST(ImagePreprocessingServiceTest, ExplicitNoDataIsInvalidWhileWhiteRoofRemainsObserved)
+{
+    const auto path = uniqueVsiPath("preprocess_nodata");
+    VsiPathGuard guard(path);
+    std::vector<uint8_t> band(16, 255);
+    band[0] = 0;
+    createByteGeoTiff(path, 4, 4, {band}, nullptr, nullptr);
+    auto* dataset = static_cast<GDALDataset*>(GDALOpen(path.c_str(), GA_Update));
+    ASSERT_NE(dataset, nullptr);
+    const auto status = dataset->GetRasterBand(1)->SetNoDataValue(0);
+    GDALClose(dataset);
+    ASSERT_EQ(status, CE_None);
+    const auto result = ImagePreprocessingService::process(makeScene(path));
+    EXPECT_EQ(result.validPixelMask.data[0], 0);
+    for (std::size_t i = 1; i < 16; ++i)
+        EXPECT_EQ(result.validPixelMask.data[i], 1);
+}
 } // namespace

@@ -47,7 +47,7 @@ class ReferenceDemPreprocessor
 
 
     // Calculates the physical Ground Sample Distance (pixel size in meters)
-    // from the Affine GeoTransform: sqrt(|GT[1] * GT[5]|)
+    // from the full affine determinant, including rotated grids.
     static float computeGsd(const SpatialMetadata& metadata);
 
 

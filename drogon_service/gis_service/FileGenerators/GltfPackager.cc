@@ -21,7 +21,6 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     // 1. Register Global Extensions
     model.extensionsUsed.push_back("KHR_draco_mesh_compression");
     model.extensionsRequired.push_back("KHR_draco_mesh_compression");
-    model.extensionsUsed.push_back("KHR_materials_unlit");
 
     // 2. Metadata Injection (Asset Extras)
     tinygltf::Value::Object extras;
@@ -31,6 +30,9 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     extras["elevationOrigin"] = tinygltf::Value(scene.localFrame.elevationOrigin);
     extras["axisConvention"] = tinygltf::Value(scene.localFrame.axisConvention);
     extras["buildingCount"] = tinygltf::Value(static_cast<int>(totalBuildingCount));
+    extras["presentationMode"] = tinygltf::Value(scene.presentationMode);
+    extras["renderYIsAbsoluteElevationOffset"] = tinygltf::Value(scene.presentationMode == "metric");
+    extras["heightScale"] = tinygltf::Value(1.0);
     model.asset.extras = tinygltf::Value(extras);
     model.asset.generator = "DepthWizard 3D Pipeline";
     model.asset.version = "2.0";
@@ -96,6 +98,15 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
 
         tinygltf::Texture tex;
         tex.source = 0; // Point to image 0
+        // Orthophotos are finite geographic images, not repeating textures.
+        // Clamping also prevents opposite-edge colour bleeding at skirts.
+        tinygltf::Sampler sampler;
+        sampler.wrapS = TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE;
+        sampler.wrapT = TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE;
+        sampler.magFilter = TINYGLTF_TEXTURE_FILTER_LINEAR;
+        sampler.minFilter = TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR;
+        model.samplers.push_back(sampler);
+        tex.sampler = static_cast<int>(model.samplers.size() - 1);
         model.textures.push_back(tex);
         textureImageIndex = 0;
     }
@@ -115,20 +126,18 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
             mat.pbrMetallicRoughness.baseColorTexture.index = textureImageIndex;
             mat.name = "Terrain_Optical";
         } else if (role == MaterialRole::BUILDING_WALL) {
-            // Unlit and emissive keeps the hologram color crisp regardless of
-            // the viewer's lights, exposure, or environment map.
+            // Shaded, untextured walls: hard normals provide directional depth
+            // cues. The viewer must supply lights/environment for PBR shading.
             mat.pbrMetallicRoughness.baseColorFactor = {0.015, 0.10, 0.42, 1.0};
-            mat.emissiveFactor = {0.015, 0.10, 0.42};
-            mat.extensions["KHR_materials_unlit"] =
-                tinygltf::Value(tinygltf::Value::Object{});
+            mat.pbrMetallicRoughness.metallicFactor = 0.0;
+            mat.pbrMetallicRoughness.roughnessFactor = 0.6;
             mat.name = "Hologram_Wall";
         } else if (role == MaterialRole::BUILDING_ROOF) {
             // Slightly brighter blue separates roofs from the darker walls
             // without reintroducing the pink/cyan palette.
             mat.pbrMetallicRoughness.baseColorFactor = {0.025, 0.24, 0.72, 1.0};
-            mat.emissiveFactor = {0.025, 0.24, 0.72};
-            mat.extensions["KHR_materials_unlit"] =
-                tinygltf::Value(tinygltf::Value::Object{});
+            mat.pbrMetallicRoughness.metallicFactor = 0.0;
+            mat.pbrMetallicRoughness.roughnessFactor = 0.65;
             mat.name = "Hologram_Roof";
         }
         

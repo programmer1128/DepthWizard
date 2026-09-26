@@ -7,6 +7,7 @@
 #include "../ImagePreprocessing/RasterIngestService.h"
 #include "../ImageTilingService/TilingService.h"
 #include "../MeshMapping/SceneMeshService.h"
+#include "../MeshMapping/ScenePresentationSelector.h"
 #include "../ReferenceTerrainService/MetricReferenceOrchestrator.h"
 #include "../SemanticContext/GroundSurfaceService.h"
 #include "../SemanticContext/SemanticPostProcessor.h"
@@ -23,6 +24,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <cstdlib>
 
 // RasterIngestService mounts the upload in GDAL's in-memory filesystem.
 // Keep it mounted while preprocessing and reference extraction read it, then
@@ -308,8 +310,12 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
 
          // 7. Turn building pixels into individual footprints and heights,
          //    then assemble terrain, roofs, and walls into one Draco GLB.
+         const char* diagnosticsSetting = std::getenv("DEPTHWIZARD_DIAGNOSTICS");
+         const bool captureDiagnostics = !diagnosticsSetting || std::string(diagnosticsSetting) != "0";
+         BuildingReconstructionDiagnostics stages;
          BuildingCollection buildings = BuildingReconstructionService::reconstruct(
-             semantics, surface, metadata);
+             semantics, surface, metadata, BuildingReconstructionConfig{},
+             captureDiagnostics ? &stages : nullptr);
 
          LOG_INFO << "PipelineService: reconstruction summary for " << jobId
                   << "; semantic_candidates=" << buildings.semanticCandidateCount
@@ -321,10 +327,22 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
                   << "; physics_rejected=" << buildings.physicsRejectedCount
                   << "; accepted_buildings=" << buildings.buildings.size();
          
+         MeshBuildConfig meshConfig;
+         const ScenePresentationDecision sceneDecision = ScenePresentationSelector::select(
+             semantics, surface, buildings);
+         const auto presentation = sceneDecision.presentation;
+         meshConfig.presentation = presentation;
+         LOG_INFO << "PipelineService: automatic scene policy for " << jobId
+                  << "; " << sceneDecision.reason
+                  << "; strong_building_fraction=" << sceneDecision.strongBuildingFraction
+                  << "; vegetation_fraction=" << sceneDecision.vegetationFraction
+                  << "; supported_ground_relief_m=" << sceneDecision.groundReliefMetres;
          GlbBuildResult glb = SceneMeshService::generateGlb(
-            scene, surface, buildings, metadata);
+            scene, surface, buildings, metadata, meshConfig);
 
          LOG_INFO << "PipelineService: mesh summary for " << jobId
+                  << "; presentation=" << (presentation == ScenePresentation::FLAT_URBAN ? "flat_urban" : "metric")
+                  << "; emitted_buildings=" << glb.buildingCount
                   << "; terrain_triangles=" << glb.terrainTriangleCount
                   << "; roof_triangles=" << glb.roofTriangleCount
                   << "; wall_triangles=" << glb.wallTriangleCount
@@ -338,10 +356,35 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          // 8. Upload the finished GLB before replying to the frontend.
          std::string glbUrl = uploadGlb(jobId, glb);
 
+         std::optional<ReconstructionDiagnosticPayload> diagnostics;
+         if (captureDiagnostics)
+         {
+             diagnostics.emplace();
+             diagnostics->buildingProbability = std::move(semantics.buildingProbability);
+             diagnostics->roadProbability = std::move(semantics.roadProbability);
+             diagnostics->vegetationProbability = std::move(semantics.vegetationProbability);
+             diagnostics->semanticConfidence = std::move(semantics.semanticConfidence);
+             diagnostics->finalClasses.width = scene.width;
+             diagnostics->finalClasses.height = scene.height;
+             diagnostics->finalClasses.data.reserve(semantics.finalClassMap.data.size());
+             for (const auto cls : semantics.finalClassMap.data)
+                 diagnostics->finalClasses.data.push_back(static_cast<uint8_t>(cls));
+             diagnostics->rawNdsm = std::move(inference.ndsm.globalMetricNdsm);
+             diagnostics->stages = std::move(stages);
+             diagnostics->buildings = std::move(buildings);
+             diagnostics->presentationMode = presentation == ScenePresentation::FLAT_URBAN ? "flat_urban" : "metric";
+             diagnostics->presentationReason = sceneDecision.reason;
+             diagnostics->strongBuildingFraction = sceneDecision.strongBuildingFraction;
+             diagnostics->vegetationFraction = sceneDecision.vegetationFraction;
+             diagnostics->supportedGroundReliefMetres = sceneDecision.groundReliefMetres;
+             diagnostics->emittedBuildings = glb.buildingCount;
+             diagnostics->meshWarnings = glb.geometryWarnings;
+         }
+
          // 9. Give the raster matrices to the background worker. Its queue
          //    owns them after this move; no request-local references survive.
          if (!BackgroundTiffExportService::instance().enqueue(
-                jobId, std::move(surface)))
+                jobId, std::move(surface), std::move(diagnostics)))
          {
              throw std::runtime_error(
                 "PipelineService: background GeoTIFF export queue is full or stopped");
@@ -358,7 +401,7 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
  
          LOG_INFO << "PipelineService: GLB ready for " << jobId
                   << "; raster exports queued; buildings="
-                  << buildings.buildings.size();
+                  << glb.buildingCount;
  
          // The initial response has only the two fields needed for rendering.
          // The frontend can query raster progress later using this UUID.

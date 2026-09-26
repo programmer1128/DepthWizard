@@ -12,6 +12,7 @@ struct BuildingMaskResult
     bool success{false};
     std::string errorMessage;
     RasterGrid<uint8_t> cleanMask;
+    RasterGrid<uint8_t> candidateMask;
     int smallComponentRejectedPixelCount{0};
     int recoveredCandidatePixelCount{0};
     float thresholdUsed{0.0f};
@@ -52,6 +53,15 @@ struct ComponentExtractionResult
     int acceptedComponentCount{0}; 
     int rejectedComponentCount{0}; 
     std::vector<std::string> warnings;
+};
+
+// Optional stage snapshots, owned by the background diagnostic export job.
+struct BuildingReconstructionDiagnostics
+{
+    RasterGrid<uint8_t> candidateMask;
+    RasterGrid<uint8_t> cleanedMask;
+    RasterGrid<int32_t> instanceLabels;
+    std::vector<std::string> rejectionReasons;
 };
 
 

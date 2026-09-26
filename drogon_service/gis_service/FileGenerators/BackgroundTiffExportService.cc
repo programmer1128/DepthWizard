@@ -7,6 +7,7 @@
 
 #include <stdexcept>
 #include <utility>
+#include <cstdlib>
 
 JobStatus RasterExportStatus::overall() const
 {
@@ -37,7 +38,8 @@ BackgroundTiffExportService::~BackgroundTiffExportService()
 }
 
 bool BackgroundTiffExportService::enqueue(
-    std::string jobId, GeoreferencedSurfaceBundle surface)
+    std::string jobId, GeoreferencedSurfaceBundle surface,
+    std::optional<ReconstructionDiagnosticPayload> diagnostics)
 {
     std::lock_guard lock(mutex_);
 
@@ -50,7 +52,8 @@ bool BackgroundTiffExportService::enqueue(
         worker_ = std::thread(&BackgroundTiffExportService::run, this);
 
     statusByJob_.emplace(jobId, RasterExportStatus{});
-    jobs_.push_back(ExportJob{std::move(jobId), std::move(surface)});
+    if (diagnostics) statusByJob_.at(jobId).diagnosticsState = "queued";
+    jobs_.push_back(ExportJob{std::move(jobId), std::move(surface), std::move(diagnostics)});
     available_.notify_one();
     return true;
 }
@@ -101,6 +104,31 @@ void BackgroundTiffExportService::run()
 void BackgroundTiffExportService::processJob(ExportJob& job)
 {
     SpatialMetadata& metadata = job.surface.spatialMetadata;
+
+    // Local debugging artifacts do not depend on MinIO being available and
+    // do not block the initial GLB response. Failures are explicitly visible.
+    if (job.diagnostics)
+    {
+        try
+        {
+            { std::lock_guard lock(mutex_); statusByJob_.at(job.jobId).diagnosticsState = "processing"; }
+            const char* configured = std::getenv("DEPTHWIZARD_DIAGNOSTICS_DIR");
+            const auto folder = ReconstructionDiagnosticsWriter::write(
+                configured && *configured ? configured : "reconstruction_diagnostics",
+                job.jobId, *job.diagnostics, job.surface);
+            { std::lock_guard lock(mutex_);
+              statusByJob_.at(job.jobId).diagnosticsState = "ready";
+              statusByJob_.at(job.jobId).diagnosticsDirectory = folder.string(); }
+            LOG_INFO << "Reconstruction diagnostics for " << job.jobId << ": " << folder.string();
+        }
+        catch (const std::exception& error)
+        {
+            std::lock_guard lock(mutex_);
+            statusByJob_.at(job.jobId).diagnosticsState = "failed";
+            statusByJob_.at(job.jobId).errors.push_back(std::string("diagnostics: ") + error.what());
+            LOG_ERROR << "Diagnostics for " << job.jobId << ": " << error.what();
+        }
+    }
 
     // The DSM key keeps the existing UUID-based height-query API compatible.
     exportOne(job.jobId, "dsm", job.surface.dsm, metadata);

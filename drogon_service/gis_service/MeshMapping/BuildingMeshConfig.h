@@ -4,6 +4,7 @@
 
 struct BuildingMeshConfig 
 {
+     bool flatPresentation{false}; // Set centrally by SceneMeshService.
      bool generateRoofUVs{false}; 
      bool generateWallUVs{false};
 

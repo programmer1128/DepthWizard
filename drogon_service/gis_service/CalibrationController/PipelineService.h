@@ -1,6 +1,7 @@
 #pragma once
 #include <drogon/MultiPart.h>
 #include <drogon/drogon.h>
+#include "../MeshMapping/MeshBuildConfig.h"
 
 class PipelineService
 {

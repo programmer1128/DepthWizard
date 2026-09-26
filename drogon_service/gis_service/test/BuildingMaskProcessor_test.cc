@@ -229,6 +229,7 @@ TEST(BuildingMaskProcessorTest, RecoversUnknownRoofUsingProbabilityAndMetricNdsm
     config.buildingProbabilityThreshold = 0.50F;
     config.buildingRecoveryProbabilityThreshold = 0.35F;
     config.minRecoveryNdsmHeightMetres = 2.0F;
+    config.recoveryDistanceMetres = 1.0F;
 
     const BuildingMaskResult result = BuildingMaskProcessor::createCleanMask(
         semantics,
@@ -238,13 +239,56 @@ TEST(BuildingMaskProcessorTest, RecoversUnknownRoofUsingProbabilityAndMetricNdsm
         config);
 
     ASSERT_TRUE(result.success) << result.errorMessage;
-    EXPECT_EQ(result.recoveredCandidatePixelCount, 36);
+    // Height alone cannot invent a building with no strong semantic seed.
+    EXPECT_EQ(result.recoveredCandidatePixelCount, 0);
     EXPECT_EQ(
         std::count(
             result.cleanMask.data.begin(),
             result.cleanMask.data.end(),
             uint8_t{1}),
-        36);
+        0);
+
+    semantics.finalClassMap.data[2 * 6 + 2] = SemanticClass::BUILDING;
+    semantics.buildingProbability.data[2 * 6 + 2] = 0.95F;
+    semantics.semanticConfidence.data[2 * 6 + 2] = 0.95F;
+    const auto grown = BuildingMaskProcessor::createCleanMask(
+        semantics, ndsm, validMask, makeProjectedMetadata(6, 6), config);
+    ASSERT_TRUE(grown.success);
+    EXPECT_EQ(grown.recoveredCandidatePixelCount, 4);
+    EXPECT_EQ(std::count(grown.cleanMask.data.begin(), grown.cleanMask.data.end(), uint8_t{1}), 5);
+}
+
+TEST(BuildingMaskProcessorTest, MetricEdgeRecoveryStopsAtCompetingClassEvidence)
+{
+    SemanticScene semantics = makeSemanticScene(9, 5, SemanticClass::GROUND);
+    const auto pixel = [](int x) { return 2 * 9 + x; };
+    semantics.finalClassMap.data[pixel(1)] = SemanticClass::BUILDING;
+    semantics.buildingProbability.data[pixel(1)] = 0.95F;
+    for (int x = 2; x <= 4; ++x)
+    {
+        semantics.finalClassMap.data[pixel(x)] = SemanticClass::UNKNOWN;
+        semantics.buildingProbability.data[pixel(x)] = 0.40F;
+    }
+    const auto ndsm = makeConstantGrid(9, 5, 8.0F);
+    const auto valid = makeConstantGrid<uint8_t>(9, 5, uint8_t{1});
+    auto config = noMorphologyConfig();
+    config.recoveryDistanceMetres = 2.0F;
+
+    auto result = BuildingMaskProcessor::createCleanMask(
+        semantics, ndsm, valid, makeProjectedMetadata(9, 5), config);
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_EQ(result.cleanMask.data[pixel(2)], 1);
+    EXPECT_EQ(result.cleanMask.data[pixel(3)], 1);
+    EXPECT_EQ(result.cleanMask.data[pixel(4)], 0);
+
+    // An UNKNOWN margin failure is not permission to cross stronger road
+    // evidence, even when the nDSM happens to be high.
+    semantics.roadProbability.data[pixel(2)] = 0.60F;
+    result = BuildingMaskProcessor::createCleanMask(
+        semantics, ndsm, valid, makeProjectedMetadata(9, 5), config);
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_EQ(result.cleanMask.data[pixel(2)], 0);
+    EXPECT_EQ(result.cleanMask.data[pixel(3)], 0);
 }
 
 TEST(BuildingMaskProcessorTest, DoesNotRecoverKnownVegetationAsBuilding)
@@ -273,4 +317,23 @@ TEST(BuildingMaskProcessorTest, DoesNotRecoverKnownVegetationAsBuilding)
         0);
 }
 
+TEST(BuildingMaskProcessorTest, ClosingCannotBridgeConfidentRoadAlley)
+{
+    auto semantics = makeSemanticScene(24, 20, SemanticClass::BUILDING);
+    semantics.buildingProbability = makeConstantGrid(24, 20, .95F);
+    fillRectangle(semantics.finalClassMap, 11, 0, 13, 20, SemanticClass::ROAD);
+    fillRectangle(semantics.buildingProbability, 11, 0, 13, 20, .05F);
+    auto config = noMorphologyConfig();
+    config.closingRadiusMetres = 1.5F; // Even an oversized kernel must respect the barrier.
+    const auto result = BuildingMaskProcessor::createCleanMask(semantics,
+        makeConstantGrid(24, 20, 10.0F), makeConstantGrid<uint8_t>(24, 20, 1),
+        makeProjectedMetadata(24, 20, .5, -.5), config);
+    ASSERT_TRUE(result.success);
+    for (int y = 0; y < 20; ++y) {
+        EXPECT_EQ(result.cleanMask.data[y * 24 + 11], 0);
+        EXPECT_EQ(result.cleanMask.data[y * 24 + 12], 0);
+        EXPECT_EQ(result.cleanMask.data[y * 24 + 6], 1);
+        EXPECT_EQ(result.cleanMask.data[y * 24 + 18], 1);
+    }
+}
 } // namespace

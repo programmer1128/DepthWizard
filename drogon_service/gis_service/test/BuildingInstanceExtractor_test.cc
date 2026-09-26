@@ -131,4 +131,86 @@ TEST(BuildingInstanceExtractorTest, RejectsMismatchedSemanticDimensions)
     EXPECT_FALSE(result.errorMessage.empty());
 }
 
+TEST(BuildingInstanceExtractorTest, PreservesNarrowTownhouseAndFullPixelArea)
+{
+    BuildingMaskResult mask = makeSuccessfulMask(40, 40);
+    // 2 m wide at 0.5 m/pixel: no pixel can reach the old 2.5 m seed radius.
+    fillRectangle<uint8_t>(mask.cleanMask, 10, 4, 14, 36, uint8_t{1});
+    const auto result = BuildingInstanceExtractor::extract(
+        mask, makeSemanticScene(40, 40),
+        makeProjectedMetadata(40, 40, 0.5, -0.5), noMorphologyConfig());
+    ASSERT_TRUE(result.success);
+    ASSERT_EQ(result.components.size(), 1U);
+    EXPECT_EQ(result.components[0].pixelCount, 128);
+    EXPECT_DOUBLE_EQ(result.components[0].physicalAreaSquareMetres, 32.0);
+    EXPECT_EQ(result.components[0].pixelBoundingBox.width, 4);
+    for (std::size_t i = 0; i < mask.cleanMask.data.size(); ++i)
+        EXPECT_EQ(result.labelRaster.data[i] != 0, mask.cleanMask.data[i] != 0);
+}
+
+TEST(BuildingInstanceExtractorTest, KeepsImageEdgeRoofsAndSeparatesDiagonalContacts)
+{
+    BuildingMaskResult mask = makeSuccessfulMask(12, 12);
+    fillRectangle<uint8_t>(mask.cleanMask, 0, 0, 4, 4, uint8_t{1});
+    fillRectangle<uint8_t>(mask.cleanMask, 4, 4, 8, 8, uint8_t{1});
+    auto config = noMorphologyConfig();
+    config.connectivity = 8; // Output still has one outer ring per instance.
+    const auto result = BuildingInstanceExtractor::extract(
+        mask, makeSemanticScene(12, 12), makeProjectedMetadata(12, 12), config);
+    ASSERT_TRUE(result.success);
+    ASSERT_EQ(result.components.size(), 2U);
+    EXPECT_EQ(result.components[0].pixelCount, 16);
+    EXPECT_EQ(result.components[1].pixelCount, 16);
+    EXPECT_NE(result.labelRaster.data[0], 0);
+}
+TEST(BuildingInstanceExtractorTest, SplitsTouchingRoofsAtHeightStepWithoutLosingPixels)
+{
+    auto mask = makeSuccessfulMask(32, 20);
+    fillRectangle<uint8_t>(mask.cleanMask, 2, 2, 30, 18, 1);
+    auto semantics = makeSemanticScene(32, 20, SemanticClass::BUILDING);
+    semantics.buildingProbability = makeConstantGrid(32, 20, 0.95F);
+    auto heights = makeConstantGrid(32, 20, 10.0F);
+    fillRectangle(heights, 16, 2, 30, 18, 25.0F);
+    auto config = noMorphologyConfig();
+    const auto result = BuildingInstanceExtractor::extract(mask, semantics,
+        makeProjectedMetadata(32, 20), config, &heights);
+    ASSERT_TRUE(result.success);
+    ASSERT_EQ(result.components.size(), 2U);
+    EXPECT_NE(result.labelRaster.data[10 * 32 + 8], result.labelRaster.data[10 * 32 + 24]);
+    for (std::size_t i = 0; i < mask.cleanMask.data.size(); ++i)
+        EXPECT_EQ(result.labelRaster.data[i] != 0, mask.cleanMask.data[i] != 0);
+    const auto repeated = BuildingInstanceExtractor::extract(mask, semantics,
+        makeProjectedMetadata(32, 20), config, &heights);
+    EXPECT_EQ(result.labelRaster.data, repeated.labelRaster.data);
+}
+
+TEST(BuildingInstanceExtractorTest, ProbabilityValleySeparatesRoofsButUniformBlockStaysWhole)
+{
+    auto mask = makeSuccessfulMask(32, 20);
+    fillRectangle<uint8_t>(mask.cleanMask, 2, 2, 30, 18, 1);
+    auto semantics = makeSemanticScene(32, 20, SemanticClass::BUILDING);
+    semantics.buildingProbability = makeConstantGrid(32, 20, 0.95F);
+    auto config = noMorphologyConfig();
+    auto result = BuildingInstanceExtractor::extract(mask, semantics,
+        makeProjectedMetadata(32, 20), config);
+    ASSERT_EQ(result.components.size(), 1U);
+    fillRectangle(semantics.buildingProbability, 15, 2, 17, 18, 0.4F);
+    result = BuildingInstanceExtractor::extract(mask, semantics,
+        makeProjectedMetadata(32, 20), config);
+    ASSERT_EQ(result.components.size(), 2U);
+    EXPECT_EQ(result.components[0].pixelCount + result.components[1].pixelCount, 28 * 16);
+}
+
+TEST(BuildingInstanceExtractorTest, LargeBlockDoesNotEraseSeparateNarrowRoof)
+{
+    auto mask = makeSuccessfulMask(100, 80);
+    fillRectangle<uint8_t>(mask.cleanMask, 2, 2, 60, 70, 1);
+    fillRectangle<uint8_t>(mask.cleanMask, 80, 10, 84, 50, 1);
+    auto semantics = makeSemanticScene(100, 80, SemanticClass::BUILDING);
+    semantics.buildingProbability = makeConstantGrid(100, 80, 0.95F);
+    const auto result = BuildingInstanceExtractor::extract(mask, semantics,
+        makeProjectedMetadata(100, 80, .5, -.5), BuildingReconstructionConfig{});
+    ASSERT_EQ(result.components.size(), 2U);
+    EXPECT_EQ(result.components[1].pixelCount, 160);
+}
 } // namespace

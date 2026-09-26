@@ -1,3 +1,6 @@
+# Per-request diagnostic imagery and elevation data are local artifacts.
+reconstruction_diagnostics/
+
 # Created by https://www.toptal.com/developers/gitignore/api/intellij+all,visualstudio,visualstudiocode,cmake,c,c++
 # Edit at https://www.toptal.com/developers/gitignore?templates=intellij+all,visualstudio,visualstudiocode,cmake,c,c++
 
