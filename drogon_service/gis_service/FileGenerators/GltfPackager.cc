@@ -4,7 +4,6 @@
 #include <sstream>
 #include <unordered_map>
 
-// Only define these in exactly ONE .cc file in your project
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -22,7 +21,7 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     model.extensionsUsed.push_back("KHR_draco_mesh_compression");
     model.extensionsRequired.push_back("KHR_draco_mesh_compression");
 
-    // 2. Metadata Injection (Asset Extras)
+    // 2. Metadata Injection
     tinygltf::Value::Object extras;
     extras["horizontalCrs"] = tinygltf::Value(scene.localFrame.horizontalCrs);
     extras["projectedOriginX"] = tinygltf::Value(scene.localFrame.projectedOriginX);
@@ -37,10 +36,11 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     // 3. Main Binary Buffer Assembly
     tinygltf::Buffer mainBuffer;
     size_t currentOffset = 0;
-    
-    // First Pass: Calculate total required memory to avoid reallocations
+
+    // First Pass: Calculate total required memory (skip failed primitives)
     size_t totalMemoryRequired = 0;
     for (const auto& prim : compressedPrimitives) {
+        if (!prim.success) continue; // SKIP failed primitives entirely
         size_t bytes = prim.compressedBytes.size();
         totalMemoryRequired += bytes + ((4 - (bytes % 4)) % 4);
     }
@@ -48,13 +48,18 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
         size_t bytes = scene.texture->bytes.size();
         totalMemoryRequired += bytes + ((4 - (bytes % 4)) % 4);
     }
-    
+
     mainBuffer.data.resize(totalMemoryRequired);
-    
-    // 4. Construct Buffer Views & Append Bytes
-    std::vector<int> dracoBufferViewIndices;
-    
-    for (const auto& prim : compressedPrimitives) {
+
+    // 4. Construct Buffer Views & Append Bytes (skip failed primitives)
+    // Parallel index tracking: dracoBufferViewIndices[i] corresponds to compressedPrimitives[i]
+    // Failed primitives get index -1
+    std::vector<int> dracoBufferViewIndices(compressedPrimitives.size(), -1);
+
+    for (size_t i = 0; i < compressedPrimitives.size(); ++i) {
+        const auto& prim = compressedPrimitives[i];
+        if (!prim.success) continue; // SKIP: no BufferView, no offset increment
+
         size_t dracoLen = prim.compressedBytes.size();
         size_t pad = (4 - (dracoLen % 4)) % 4;
 
@@ -66,7 +71,7 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
         bView.byteOffset = currentOffset;
         bView.byteLength = dracoLen;
         model.bufferViews.push_back(bView);
-        dracoBufferViewIndices.push_back(model.bufferViews.size() - 1);
+        dracoBufferViewIndices[i] = static_cast<int>(model.bufferViews.size() - 1);
 
         currentOffset += dracoLen + pad;
     }
@@ -94,35 +99,33 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
         model.images.push_back(image);
 
         tinygltf::Texture tex;
-        tex.source = 0; // Point to image 0
+        tex.source = 0;
         model.textures.push_back(tex);
         textureImageIndex = 0;
     }
-    
+
     model.buffers.push_back(mainBuffer);
 
-    // 6. Define Materials (The Hologram Styling)
+    // 6. Define Materials
     std::unordered_map<MaterialRole, int> materialMap;
-    
+
     auto createMaterial = [&](MaterialRole role) -> int {
         tinygltf::Material mat;
-        mat.pbrMetallicRoughness.metallicFactor = 0.0; // Matte finish
+        mat.pbrMetallicRoughness.metallicFactor = 0.0;
         mat.pbrMetallicRoughness.roughnessFactor = 0.9;
-        mat.doubleSided = false;
+        mat.doubleSided = true; // FIX #1: Prevent hollow terrain from backface culling
 
         if (role == MaterialRole::TERRAIN_TEXTURE && textureImageIndex >= 0) {
             mat.pbrMetallicRoughness.baseColorTexture.index = textureImageIndex;
             mat.name = "Terrain_Optical";
         } else if (role == MaterialRole::BUILDING_WALL) {
-            // Teal/Cyan solid hologram block[cite: 10]
-            mat.pbrMetallicRoughness.baseColorFactor = {0.2, 0.8, 0.7, 1.0}; 
+            mat.pbrMetallicRoughness.baseColorFactor = {0.2, 0.8, 0.7, 1.0};
             mat.name = "Hologram_Wall";
         } else if (role == MaterialRole::BUILDING_ROOF) {
-            // Lighter Salmon/Gray solid block for roofs to distinguish from walls[cite: 10]
             mat.pbrMetallicRoughness.baseColorFactor = {0.9, 0.6, 0.5, 1.0};
             mat.name = "Hologram_Roof";
         }
-        
+
         model.materials.push_back(mat);
         return static_cast<int>(model.materials.size() - 1);
     };
@@ -133,15 +136,25 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
 
     // 7. Assemble Mesh and Primitives
     tinygltf::Mesh mesh;
-    
-    // We assume the accessors array will grow sequentially as we push them
+
     for (size_t i = 0; i < compressedPrimitives.size(); ++i) {
         const auto& prim = compressedPrimitives[i];
         if (!prim.success) continue;
+        if (dracoBufferViewIndices[i] < 0) continue; // Safety: skip if no buffer view
 
         tinygltf::Primitive gltfPrim;
         gltfPrim.mode = TINYGLTF_MODE_TRIANGLES;
-        gltfPrim.material = materialMap[prim.materialRole];
+
+        // FIX #3: Safe material lookup - never silently insert default
+        auto matIt = materialMap.find(prim.materialRole);
+        if (matIt != materialMap.end()) {
+            gltfPrim.material = matIt->second;
+        } else {
+            std::cerr << ">> [GLTF WARNING] Unknown MaterialRole " 
+                      << static_cast<int>(prim.materialRole) 
+                      << " for primitive " << i << ". Falling back to material 0.\n";
+            gltfPrim.material = 0;
+        }
 
         tinygltf::Value::Object dracoExt;
         dracoExt["bufferView"] = tinygltf::Value(dracoBufferViewIndices[i]);
@@ -149,20 +162,28 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
 
         // Position Accessor (Required)
         tinygltf::Accessor posAcc;
-        posAcc.bufferView = -1; // Must be -1 for Draco
+        posAcc.bufferView = -1;
         posAcc.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
         posAcc.type = TINYGLTF_TYPE_VEC3;
         posAcc.count = prim.vertexCount;
+
+        // FIX #4: Always populate min/max (mandatory per glTF spec)
         if (prim.localBounds.isInitialized) {
             posAcc.minValues = { prim.localBounds.minX, prim.localBounds.minY, prim.localBounds.minZ };
             posAcc.maxValues = { prim.localBounds.maxX, prim.localBounds.maxY, prim.localBounds.maxZ };
+        } else {
+            posAcc.minValues = { 0.0, 0.0, 0.0 };
+            posAcc.maxValues = { 0.0, 0.0, 0.0 };
+            std::cerr << ">> [GLTF WARNING] Primitive " << i 
+                      << " has uninitialized bounds. Using zero fallback.\n";
         }
+
         model.accessors.push_back(posAcc);
         int posAccIdx = static_cast<int>(model.accessors.size() - 1);
         gltfPrim.attributes["POSITION"] = posAccIdx;
         dracoAttrs["POSITION"] = tinygltf::Value(prim.posAttrId);
 
-        // Optional Normal Accessor
+        // Normal Accessor
         if (prim.normalAttrId >= 0) {
             tinygltf::Accessor normAcc;
             normAcc.bufferView = -1;
@@ -175,7 +196,7 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
             dracoAttrs["NORMAL"] = tinygltf::Value(prim.normalAttrId);
         }
 
-        // Optional UV Accessor (TEXCOORD_0)
+        // UV Accessor
         if (prim.uvAttrId >= 0) {
             tinygltf::Accessor uvAcc;
             uvAcc.bufferView = -1;
@@ -188,24 +209,24 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
             dracoAttrs["TEXCOORD_0"] = tinygltf::Value(prim.uvAttrId);
         }
 
-        // Optional Feature ID Accessor (For WebGL clicking)
+        // Feature ID Accessor
         if (prim.featureIdAttrId >= 0) {
             tinygltf::Accessor featAcc;
             featAcc.bufferView = -1;
-            featAcc.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
+            featAcc.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT; // Matches Draco DT_UINT16
             featAcc.type = TINYGLTF_TYPE_SCALAR;
             featAcc.count = prim.vertexCount;
             model.accessors.push_back(featAcc);
             int featAccIdx = static_cast<int>(model.accessors.size() - 1);
-            // Standard naming convention for custom per-vertex IDs in glTF
-            gltfPrim.attributes["_FEATURE_ID_0"] = featAccIdx; 
+            gltfPrim.attributes["_FEATURE_ID_0"] = featAccIdx;
             dracoAttrs["_FEATURE_ID_0"] = tinygltf::Value(prim.featureIdAttrId);
         }
 
-        // Apply Draco Extension to this Primitive
+        // Apply Draco Extension
         dracoExt["attributes"] = tinygltf::Value(dracoAttrs);
         gltfPrim.extensions["KHR_draco_mesh_compression"] = tinygltf::Value(dracoExt);
 
+        // Indices Accessor (UNSIGNED_INT is legal for indices)
         tinygltf::Accessor indexAcc;
         indexAcc.bufferView = -1;
         indexAcc.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
@@ -216,7 +237,7 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
 
         mesh.primitives.push_back(gltfPrim);
     }
-    
+
     model.meshes.push_back(mesh);
 
     // 8. Connect Nodes & Scenes
@@ -232,17 +253,17 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     // 9. Serialize to Binary (.glb)
     tinygltf::TinyGLTF gltfContext;
     std::stringstream stream(std::ios_base::out | std::ios_base::binary);
-    
-    bool success = gltfContext.WriteGltfSceneToStream(&model, stream, false, true);
+
+    // FIX #5: embedImages=true ensures consistent header when image is in buffer
+    bool success = gltfContext.WriteGltfSceneToStream(&model, stream, true, true);
     if (!success) {
         result.geometryWarnings.push_back("Failed to serialize GLTF scene to memory stream.");
-        return result; // Empty glb byte vector
+        return result;
     }
 
     std::string streamStr = stream.str();
     result.compressedGlbByteBuffer = std::vector<uint8_t>(streamStr.begin(), streamStr.end());
-    
-    // Fill final result payload
+
     result.buildingCount = totalBuildingCount;
     result.boundingBox = scene.sceneBounds;
     result.localOrigin = scene.localFrame;
