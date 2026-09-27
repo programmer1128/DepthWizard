@@ -290,12 +290,26 @@ add_building_reconstruction_test(
     footprint_vectorizer_test
     FootprintVectorizer_test.cc
     ../BuildingReconstruction/FootprintVectorizer.cc
+    ../BuildingReconstruction/FootprintGeometryRegularizer.cc
 )
+target_link_libraries(footprint_vectorizer_test PRIVATE CGAL::CGAL ${DEPTHWIZARD_GDAL_TARGET})
 
 add_building_reconstruction_test(
     building_height_estimator_test
     BuildingHeightEstimator_test.cc
     ../BuildingReconstruction/BuildingHeightEstimator.cc
+)
+
+add_building_reconstruction_test(
+    building_footprint_decomposer_test
+    BuildingFootprintDecomposer_test.cc
+    ../BuildingReconstruction/BuildingFootprintDecomposer.cc
+)
+
+add_building_reconstruction_test(
+    building_roof_modeler_test
+    BuildingRoofModeler_test.cc
+    ../BuildingReconstruction/BuildingRoofModeler.cc
 )
 
 add_building_reconstruction_test(
@@ -306,8 +320,12 @@ add_building_reconstruction_test(
     ../BuildingReconstruction/BuildingInstanceExtractor.cc
     ../BuildingReconstruction/BuildingInstanceSplitter.cc
     ../BuildingReconstruction/FootprintVectorizer.cc
+    ../BuildingReconstruction/FootprintGeometryRegularizer.cc
     ../BuildingReconstruction/BuildingHeightEstimator.cc
+    ../BuildingReconstruction/BuildingFootprintDecomposer.cc
+    ../BuildingReconstruction/BuildingRoofModeler.cc
 )
+target_link_libraries(building_reconstruction_service_test PRIVATE CGAL::CGAL ${DEPTHWIZARD_GDAL_TARGET})
 
 add_executable(
     mesh_pipeline_test
@@ -333,6 +351,7 @@ target_link_libraries(
     mesh_pipeline_test
     PRIVATE
     GTest::gtest_main
+    ${DEPTHWIZARD_GDAL_TARGET}
     draco
     ${OpenCV_LIBS}
     opencv_imgcodecs # Encode the optical texture fixture for GLB sampler tests.
@@ -350,7 +369,10 @@ add_executable(urban_scene_integration_test
     ../BuildingReconstruction/BuildingInstanceExtractor.cc
     ../BuildingReconstruction/BuildingInstanceSplitter.cc
     ../BuildingReconstruction/FootprintVectorizer.cc
+    ../BuildingReconstruction/FootprintGeometryRegularizer.cc
     ../BuildingReconstruction/BuildingHeightEstimator.cc
+    ../BuildingReconstruction/BuildingFootprintDecomposer.cc
+    ../BuildingReconstruction/BuildingRoofModeler.cc
     ../BuildingReconstruction/BuildingReconstructionService.cc
     ../SurfaceFusion/SurfaceFusionService.cc
     ../MeshMapping/SceneMeshService.cc
@@ -366,7 +388,7 @@ add_executable(urban_scene_integration_test
 configure_depthwizard_test(urban_scene_integration_test)
 target_include_directories(urban_scene_integration_test PRIVATE ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(urban_scene_integration_test PRIVATE
-    GTest::gtest_main draco ${OpenCV_LIBS} OpenMP::OpenMP_CXX)
+    GTest::gtest_main ${DEPTHWIZARD_GDAL_TARGET} draco ${OpenCV_LIBS} OpenMP::OpenMP_CXX CGAL::CGAL)
 gtest_discover_tests(urban_scene_integration_test
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
 

@@ -11,5 +11,6 @@ public:
     static RasterGrid<int32_t> label(
         const RasterGrid<uint8_t>& mask, const SemanticScene& semantics,
         const RasterGrid<float>* ndsm, double pixelArea,
-        const BuildingReconstructionConfig& config);
+        const BuildingReconstructionConfig& config,
+        const RasterGrid<uint8_t>* opticalGray = nullptr);
 };

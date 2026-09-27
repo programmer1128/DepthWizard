@@ -136,7 +136,8 @@ BuildingMaskResult createCleanMaskImpl(
              metricNdsm != nullptr &&
              std::isfinite(metricNdsm->data[index]) &&
              metricNdsm->data[index] >= 3.0f &&
-             semantics.buildingProbability.data[index] >= 0.02f;
+             semantics.buildingProbability.data[index] >=
+                 config.buildingRecoveryProbabilityThreshold;
 
          const float competitorBarrier = allowVegPassage
              ? std::max({semantics.groundProbability.data[index],
@@ -181,10 +182,47 @@ BuildingMaskResult createCleanMaskImpl(
      cv::compare(validMat, 0, validMat255, cv::CMP_GT);
      cv::bitwise_and(binaryMask, validMat255, binaryMask);
 
-     // Bounded, edge-connected growth from strong roofs. Unlike unconstrained
-     // UNKNOWN recovery, this cannot invent distant islands from nDSM noise.
      const cv::Mat allowed(height, width, CV_8UC1, allowedBytes.data());
      const cv::Mat recovery(height, width, CV_8UC1, recoveryBytes.data());
+
+     // Apply shape cleanup before competitive instance separation. Applying
+     // closing after the Voronoi pass used to seal the one-pixel conflict
+     // boundaries and merge the roofs straight back into city-block blobs.
+     auto calcKernelDim = [](float radius, double res) -> int
+     {
+         if (radius <= 0.0f) return 1;
+         int pixels = static_cast<int>(std::ceil(radius / res));
+         return std::max(1, (pixels * 2) + 1);
+     };
+
+     result.openingKernelWidth  = calcKernelDim(config.openingRadiusMetres, colRes);
+     result.openingKernelHeight = calcKernelDim(config.openingRadiusMetres, rowRes);
+     result.closingKernelWidth  = calcKernelDim(config.closingRadiusMetres, colRes);
+     result.closingKernelHeight = calcKernelDim(config.closingRadiusMetres, rowRes);
+
+     if (result.openingKernelWidth >= 3 || result.openingKernelHeight >= 3)
+     {
+         const cv::Mat openKernel = cv::getStructuringElement(
+             cv::MORPH_RECT,
+             cv::Size(result.openingKernelWidth, result.openingKernelHeight));
+         cv::morphologyEx(binaryMask, binaryMask, cv::MORPH_OPEN, openKernel);
+     }
+
+     if (result.closingKernelWidth >= 3 || result.closingKernelHeight >= 3)
+     {
+         const cv::Mat closeKernel = cv::getStructuringElement(
+             cv::MORPH_RECT,
+             cv::Size(result.closingKernelWidth, result.closingKernelHeight));
+         cv::morphologyEx(binaryMask, binaryMask, cv::MORPH_CLOSE, closeKernel);
+     }
+
+     // Morphology is never allowed to cross NoData or a confidently competing
+     // semantic class.
+     cv::bitwise_and(binaryMask, validMat255, binaryMask);
+     cv::bitwise_and(binaryMask, allowed, binaryMask);
+
+     // Bounded, edge-connected growth from strong roofs. Unlike unconstrained
+     // UNKNOWN recovery, this cannot invent distant islands from nDSM noise.
      // COMPETITIVE ERODE-LABEL-EXPAND TO PREVENT ALLEYWAY MERGING
      // 1. Erode to break isthmuses (leaves party walls separated)
      int sepRadius = std::max(1, static_cast<int>(std::ceil(0.8 / std::min(colRes, rowRes))));
@@ -286,44 +324,6 @@ BuildingMaskResult createCleanMaskImpl(
      result.candidateMask.width = width;
      result.candidateMask.height = height;
      result.candidateMask.data = candidateBytes;
-
-     //Affine-Aware Morphology
-     //std::ceil to prevent truncation, generating independent width/height for rectangular pixels
-     auto calcKernelDim = [](float radius, double res) -> int
-     {
-         if (radius <= 0.0f) return 1;
-         int pixels = static_cast<int>(std::ceil(radius / res));
-         return std::max(1, (pixels * 2) + 1);
-     };
-
-     result.openingKernelWidth  = calcKernelDim(config.openingRadiusMetres, colRes);
-     result.openingKernelHeight = calcKernelDim(config.openingRadiusMetres, rowRes);
-     result.closingKernelWidth  = calcKernelDim(config.closingRadiusMetres, colRes);
-     result.closingKernelHeight = calcKernelDim(config.closingRadiusMetres, rowRes);
-
-     // Opening (Erosion -> Dilation)
-     if (result.openingKernelWidth >= 3 || result.openingKernelHeight >= 3)
-     {
-         cv::Mat openKernel = cv::getStructuringElement(cv::MORPH_RECT,
-             cv::Size(result.openingKernelWidth, result.openingKernelHeight));
-         cv::morphologyEx(binaryMask, binaryMask, cv::MORPH_OPEN, openKernel);
-
-         // Dilation can push building pixels into cloud/NoData regions. Re-apply mask.
-         cv::bitwise_and(binaryMask, validMat255, binaryMask);
-         cv::bitwise_and(binaryMask, allowed, binaryMask);
-     }
-
-     // Closing (Dilation -> Erosion)
-     if (result.closingKernelWidth >= 3 || result.closingKernelHeight >= 3)
-     {
-         cv::Mat closeKernel = cv::getStructuringElement(cv::MORPH_RECT,
-             cv::Size(result.closingKernelWidth, result.closingKernelHeight));
-         cv::morphologyEx(binaryMask, binaryMask, cv::MORPH_CLOSE, closeKernel);
-
-         // Dilation can push building pixels into cloud/NoData regions. Re-apply mask.
-         cv::bitwise_and(binaryMask, validMat255, binaryMask);
-         cv::bitwise_and(binaryMask, allowed, binaryMask);
-     }
 
      //Connected Components (Small Region Rejection)
      cv::Mat labels, stats, centroids;

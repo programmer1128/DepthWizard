@@ -12,6 +12,7 @@
 #include "tiny_gltf.h"
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -387,7 +388,7 @@ TEST(MeshPipelineTest, BuildingPrimitivesAreUntexturedShadedAndSeparateFromTerra
     EXPECT_DOUBLE_EQ(wallPbr.baseColorFactor[2], 1.0);
     EXPECT_DOUBLE_EQ(wallPbr.metallicFactor, 0.10);
     EXPECT_DOUBLE_EQ(wallPbr.roughnessFactor, 0.40);
-    EXPECT_EQ(model.materials[wall.material].alphaMode, "BLEND");
+    EXPECT_EQ(model.materials[wall.material].alphaMode, "OPAQUE");
     EXPECT_TRUE(model.materials[wall.material].doubleSided);
     EXPECT_DOUBLE_EQ(roofPbr.baseColorFactor[0], 1.0);
     EXPECT_DOUBLE_EQ(roofPbr.baseColorFactor[1], 1.0);
@@ -395,7 +396,7 @@ TEST(MeshPipelineTest, BuildingPrimitivesAreUntexturedShadedAndSeparateFromTerra
     EXPECT_DOUBLE_EQ(roofPbr.baseColorFactor[3], 1.0);
     EXPECT_DOUBLE_EQ(roofPbr.metallicFactor, 0.10);
     EXPECT_DOUBLE_EQ(roofPbr.roughnessFactor, 0.40);
-    EXPECT_EQ(model.materials[roof.material].alphaMode, "BLEND");
+    EXPECT_EQ(model.materials[roof.material].alphaMode, "OPAQUE");
     EXPECT_TRUE(model.materials[roof.material].doubleSided);
 }
 
@@ -544,6 +545,179 @@ TEST(MeshPipelineTest, CourtyardRoofNeverEmitsOutOfRangeBridgeIndices)
         EXPECT_LT(index, roofVertexCount);
     }
 }
+
+TEST(MeshPipelineTest, Lod2GableBlockProducesSlopedRoofAndCrispWalls)
+{
+    BuildingInstance building;
+    building.buildingId = 21;
+    building.heightAboveGround = 15.0F;
+    building.representativeBaseElevation = 100.0F;
+    building.roofElevation = 115.0F;
+    building.projectedFootprint.outerRing = {
+        {0.0, 0.0}, {20.0, 0.0}, {20.0, 10.0}, {0.0, 10.0}};
+    DecomposedBuildingBlock block;
+    block.projectedCorners = {
+        ProjectedPoint{0.0, 0.0}, ProjectedPoint{20.0, 0.0},
+        ProjectedPoint{20.0, 10.0}, ProjectedPoint{0.0, 10.0}};
+    block.roof.type = RoofType::GABLE;
+    block.roof.eaveHeightAboveGround = 10.0F;
+    block.roof.ridgeHeightAboveGround = 15.0F;
+    // Evidence says the ridge runs along the shorter north/south axis. The
+    // mesher must honor that fitted direction instead of assuming long-axis.
+    block.roof.ridgeStartProjected = {10.0, 0.0};
+    block.roof.ridgeEndProjected = {10.0, 10.0};
+    building.blocks.push_back(block);
+
+    BuildingCollection buildings;
+    buildings.buildings.push_back(building);
+    LocalSceneFrame frame;
+    frame.elevationOrigin = 100.0;
+
+    const BuildingMesh mesh = BuildingMesher::generate(buildings, frame);
+
+    ASSERT_EQ(mesh.emittedBuildingIds, std::vector<uint32_t>{21});
+    ASSERT_EQ(mesh.roofPrimitive.indices.size(), 12U);
+    ASSERT_EQ(mesh.wallPrimitive.indices.size(), 30U);
+    ASSERT_TRUE(mesh.roofPrimitive.normals.has_value());
+    float minimumRoofY = std::numeric_limits<float>::max();
+    float maximumRoofY = std::numeric_limits<float>::lowest();
+    float minimumRidgeX = std::numeric_limits<float>::max();
+    float maximumRidgeX = std::numeric_limits<float>::lowest();
+    float minimumRidgeZ = std::numeric_limits<float>::max();
+    float maximumRidgeZ = std::numeric_limits<float>::lowest();
+    bool foundSlopedNormal = false;
+    for (std::size_t vertex = 0;
+         vertex < mesh.roofPrimitive.positions.size() / 3; ++vertex)
+    {
+        minimumRoofY = std::min(
+            minimumRoofY, mesh.roofPrimitive.positions[vertex * 3 + 1]);
+        maximumRoofY = std::max(
+            maximumRoofY, mesh.roofPrimitive.positions[vertex * 3 + 1]);
+        if (std::abs(mesh.roofPrimitive.positions[vertex * 3 + 1] - 15.0F) <
+            1.0e-5F)
+        {
+            minimumRidgeX = std::min(
+                minimumRidgeX, mesh.roofPrimitive.positions[vertex * 3]);
+            maximumRidgeX = std::max(
+                maximumRidgeX, mesh.roofPrimitive.positions[vertex * 3]);
+            minimumRidgeZ = std::min(
+                minimumRidgeZ, mesh.roofPrimitive.positions[vertex * 3 + 2]);
+            maximumRidgeZ = std::max(
+                maximumRidgeZ, mesh.roofPrimitive.positions[vertex * 3 + 2]);
+        }
+        const auto& normals = *mesh.roofPrimitive.normals;
+        foundSlopedNormal = foundSlopedNormal ||
+            std::abs(normals[vertex * 3]) > 0.05F ||
+            std::abs(normals[vertex * 3 + 2]) > 0.05F;
+    }
+    EXPECT_FLOAT_EQ(minimumRoofY, 10.0F);
+    EXPECT_FLOAT_EQ(maximumRoofY, 15.0F);
+    EXPECT_TRUE(foundSlopedNormal);
+    EXPECT_NEAR(maximumRidgeX - minimumRidgeX, 0.0F, 1.0e-5F);
+    EXPECT_NEAR(maximumRidgeZ - minimumRidgeZ, 10.0F, 1.0e-5F);
+}
+
+TEST(MeshPipelineTest, SetbackEmitsOnlyExposedStepWall)
+{
+    BuildingInstance building;
+    building.buildingId = 22;
+    building.heightAboveGround = 45.0F;
+    building.representativeBaseElevation = 100.0F;
+    building.roofElevation = 145.0F;
+    building.projectedFootprint.outerRing = {
+        {0.0, 0.0}, {20.0, 0.0}, {20.0, 10.0}, {0.0, 10.0}};
+    DecomposedBuildingBlock podium, tower;
+    podium.projectedCorners = {{{0.0, 0.0}, {10.0, 0.0},
+                                {10.0, 10.0}, {0.0, 10.0}}};
+    tower.projectedCorners = {{{10.0, 0.0}, {20.0, 0.0},
+                               {20.0, 10.0}, {10.0, 10.0}}};
+    podium.roof.eaveHeightAboveGround = 20.0F;
+    podium.roof.ridgeHeightAboveGround = 20.0F;
+    tower.roof.eaveHeightAboveGround = 45.0F;
+    tower.roof.ridgeHeightAboveGround = 45.0F;
+    building.blocks = {podium, tower};
+    BuildingCollection buildings;
+    buildings.buildings.push_back(building);
+    LocalSceneFrame frame;
+    frame.elevationOrigin = 100.0;
+
+    const auto mesh = BuildingMesher::generate(buildings, frame);
+
+    int stepTriangles = 0;
+    const auto& positions = mesh.wallPrimitive.positions;
+    for (std::size_t index = 0; index < positions.size(); index += 9)
+    {
+        const float x0 = positions[index];
+        const float x1 = positions[index + 3];
+        const float x2 = positions[index + 6];
+        if (std::abs(x0 - 10.0F) < 1e-4F &&
+            std::abs(x1 - 10.0F) < 1e-4F &&
+            std::abs(x2 - 10.0F) < 1e-4F)
+        {
+            ++stepTriangles;
+            EXPECT_GE(std::min({positions[index + 1], positions[index + 4],
+                                positions[index + 7]}), 20.0F);
+            EXPECT_LE(std::max({positions[index + 1], positions[index + 4],
+                                positions[index + 7]}), 45.0F);
+        }
+    }
+    EXPECT_EQ(stepTriangles, 2);
+}
+
+TEST(MeshPipelineTest, PartialSharedEdgeKeepsUncoveredExteriorWall)
+{
+    BuildingInstance building;
+    building.buildingId = 23;
+    building.heightAboveGround = 20.0F;
+    building.representativeBaseElevation = 100.0F;
+    building.roofElevation = 120.0F;
+    building.projectedFootprint.outerRing = {
+        {0.0, 0.0}, {20.0, 0.0}, {20.0, 5.0},
+        {10.0, 5.0}, {10.0, 10.0}, {0.0, 10.0}};
+    DecomposedBuildingBlock left, upperRight;
+    left.projectedCorners = {{{0.0, 0.0}, {10.0, 0.0},
+                              {10.0, 10.0}, {0.0, 10.0}}};
+    upperRight.projectedCorners = {{{10.0, 0.0}, {20.0, 0.0},
+                                    {20.0, 5.0}, {10.0, 5.0}}};
+    for (auto* block : {&left, &upperRight})
+    {
+        block->roof.type = RoofType::FLAT;
+        block->roof.eaveHeightAboveGround = 20.0F;
+        block->roof.ridgeHeightAboveGround = 20.0F;
+    }
+    building.blocks = {left, upperRight};
+    BuildingCollection buildings;
+    buildings.buildings.push_back(building);
+    LocalSceneFrame frame;
+    frame.elevationOrigin = 100.0;
+
+    const auto mesh = BuildingMesher::generate(buildings, frame);
+    int uncoveredWallTriangles = 0;
+    int coveredWallTriangles = 0;
+    const auto& positions = mesh.wallPrimitive.positions;
+    for (std::size_t index = 0; index < positions.size(); index += 9)
+    {
+        if (std::abs(positions[index] - 10.0F) > 1.0e-4F ||
+            std::abs(positions[index + 3] - 10.0F) > 1.0e-4F ||
+            std::abs(positions[index + 6] - 10.0F) > 1.0e-4F)
+            continue;
+        const float minZ = std::min({positions[index + 2],
+                                     positions[index + 5],
+                                     positions[index + 8]});
+        const float maxZ = std::max({positions[index + 2],
+                                     positions[index + 5],
+                                     positions[index + 8]});
+        if (minZ >= -10.0F - 1.0e-4F &&
+            maxZ <= -5.0F + 1.0e-4F)
+            ++uncoveredWallTriangles;
+        if (minZ >= -5.0F - 1.0e-4F &&
+            maxZ <= 0.0F + 1.0e-4F)
+            ++coveredWallTriangles;
+    }
+    EXPECT_EQ(uncoveredWallTriangles, 2);
+    EXPECT_EQ(coveredWallTriangles, 0);
+}
+
 TEST(MeshPipelineTest, DefaultTerrainUsesDtmEvenWhenNoBuildingsAreAccepted)
 {
     GeoreferencedSurfaceBundle surface;
@@ -615,23 +789,23 @@ TEST(MeshPipelineTest, BuildingMesherAssignsHeightBinnedMapflowColors)
 {
     BuildingInstance lowRise;
     lowRise.buildingId = 1;
-    lowRise.heightAboveGround = 8.0F; // < 12m: Electric Aqua / Cyan
+    lowRise.heightAboveGround = 8.0F;
     lowRise.representativeBaseElevation = 100.0F;
     lowRise.roofElevation = 108.0F;
     lowRise.projectedFootprint.outerRing = {{0,0}, {10,0}, {10,10}, {0,10}};
 
     BuildingInstance midRise;
     midRise.buildingId = 2;
-    midRise.heightAboveGround = 18.0F; // 12m <= h < 24m: Sunset Amber / Coral Orange
+    midRise.heightAboveGround = 35.0F;
     midRise.representativeBaseElevation = 100.0F;
-    midRise.roofElevation = 118.0F;
+    midRise.roofElevation = 135.0F;
     midRise.projectedFootprint.outerRing = {{20,0}, {30,0}, {30,10}, {20,10}};
 
     BuildingInstance highRise;
     highRise.buildingId = 3;
-    highRise.heightAboveGround = 35.0F; // >= 24m: Crimson / Ruby Red
+    highRise.heightAboveGround = 50.0F;
     highRise.representativeBaseElevation = 100.0F;
-    highRise.roofElevation = 135.0F;
+    highRise.roofElevation = 150.0F;
     highRise.projectedFootprint.outerRing = {{40,0}, {50,0}, {50,10}, {40,10}};
 
     BuildingCollection buildings;
@@ -662,32 +836,31 @@ TEST(MeshPipelineTest, BuildingMesherAssignsHeightBinnedMapflowColors)
     EXPECT_NEAR((*mesh.edgePrimitive.colors)[2], 1.00F, 1e-4F);
     EXPECT_NEAR((*mesh.edgePrimitive.colors)[3], 0.90F, 1e-4F);
 
-    // Building 1 (standard urban, h < 28m):
-    // Wall: 0.00, 0.82, 0.95, 0.65; Roof: 0.00, 0.65, 0.85, 0.75
+    // Low-rise cyan.
+    // Opaque cyan roof and walls.
     EXPECT_NEAR((*mesh.wallPrimitive.colors)[0], 0.00F, 1e-4F);
     EXPECT_NEAR((*mesh.wallPrimitive.colors)[1], 0.82F, 1e-4F);
     EXPECT_NEAR((*mesh.wallPrimitive.colors)[2], 0.95F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[3], 0.65F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[3], 1.0F, 1e-4F);
 
     EXPECT_NEAR((*mesh.roofPrimitive.colors)[0], 0.00F, 1e-4F);
     EXPECT_NEAR((*mesh.roofPrimitive.colors)[1], 0.65F, 1e-4F);
     EXPECT_NEAR((*mesh.roofPrimitive.colors)[2], 0.85F, 1e-4F);
-    EXPECT_NEAR((*mesh.roofPrimitive.colors)[3], 0.75F, 1e-4F);
+    EXPECT_NEAR((*mesh.roofPrimitive.colors)[3], 1.0F, 1e-4F);
 
-    // Building 2 (standard urban, h < 28m): 4 edges * 4 vertices = 16 wall vertices per building quad
+    // Mid-rise coral. Four edges give 16 wall vertices per building.
     std::size_t midRiseWallColorOffset = 16 * 4;
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 0], 0.00F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 1], 0.82F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 2], 0.95F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 3], 0.65F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 0], 0.95F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 1], 0.28F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 2], 0.35F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 3], 1.0F, 1e-4F);
 
-    // Building 3 (high-rise tower, h >= 28m): 32 wall vertices offset
-    // Wall: 0.95, 0.28, 0.35, 0.65; Roof: 0.80, 0.18, 0.25, 0.75
+    // Tower blue.
     std::size_t highRiseWallColorOffset = 32 * 4;
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 0], 0.95F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 1], 0.28F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 2], 0.35F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 3], 0.65F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 0], 0.20F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 1], 0.37F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 2], 0.95F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 3], 1.0F, 1e-4F);
 }
 
 TEST(MeshPipelineTest, GltfPackagerPacksEdgeHighlightLinesAsUncompressedLinesMode)

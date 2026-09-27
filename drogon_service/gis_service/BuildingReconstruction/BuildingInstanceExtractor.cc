@@ -12,7 +12,8 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
      const SemanticScene& semantics,
      const SpatialMetadata& metadata,
      const BuildingReconstructionConfig& config,
-     const RasterGrid<float>* ndsm)
+     const RasterGrid<float>* ndsm,
+     const RasterGrid<uint8_t>* opticalGray)
 {
      ComponentExtractionResult result;
 
@@ -48,7 +49,9 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
      }
 
      if (!maskResult.cleanMask.isValid() || !semantics.buildingProbability.isValid() || !semantics.semanticConfidence.isValid() ||
-         (ndsm && (!ndsm->isValid() || ndsm->width != width || ndsm->height != height)))
+         (ndsm && (!ndsm->isValid() || ndsm->width != width || ndsm->height != height)) ||
+         (opticalGray && (!opticalGray->isValid() || opticalGray->width != width ||
+                          opticalGray->height != height)))
      {
          result.errorMessage = "Invalid memory buffers detected in grids.";
          return result;
@@ -96,7 +99,8 @@ ComponentExtractionResult BuildingInstanceExtractor::extract(
      // Split only with supported markers, then compile statistics directly
      // from integer labels. Binary relabelling here would erase all the cuts.
      RasterGrid<int32_t> instances = BuildingInstanceSplitter::label(
-         maskResult.cleanMask, semantics, ndsm, pixelArea, config);
+         maskResult.cleanMask, semantics, ndsm, pixelArea, config,
+         opticalGray);
      cv::Mat labels(height, width, CV_32S, instances.data.data());
      const int numLabels = *std::max_element(instances.data.begin(), instances.data.end()) + 1;
      cv::Mat stats = cv::Mat::zeros(numLabels, 5, CV_32S);

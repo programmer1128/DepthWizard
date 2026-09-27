@@ -75,6 +75,59 @@ TEST(BuildingHeightEstimatorTest, ComputesRobustBaseHeightAndRoofElevation)
         1.0e-6F);
 }
 
+TEST(BuildingHeightEstimatorTest, UpperTowerIsNotClampedToPodiumMedian)
+{
+    constexpr int width = 30;
+    constexpr int height = 30;
+    auto surface = makeSurface(width, height, 100.0F, 0.0F);
+    auto semantics = makeSemanticScene(width, height, SemanticClass::GROUND);
+    fillRectangle<float>(surface.ndsm, 4, 4, 24, 24, 10.0F);
+    fillRectangle<float>(surface.ndsm, 18, 4, 24, 24, 50.0F);
+    fillRectangle<SemanticClass>(semantics.finalClassMap, 4, 4, 24, 24,
+                                 SemanticClass::BUILDING);
+    auto config = noMorphologyConfig();
+
+    const auto result = BuildingHeightEstimator::estimate(
+        squareFootprint(4, 4, 23, 23), surface, semantics,
+        makeProjectedMetadata(width, height), config);
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_FLOAT_EQ(result.heightAboveGround, 50.0F);
+    EXPECT_FLOAT_EQ(result.roofElevation, 150.0F);
+}
+
+TEST(BuildingHeightEstimatorTest, RoofSamplesStayInsideOwningInstance)
+{
+    constexpr int width = 26;
+    constexpr int height = 22;
+    auto surface = makeSurface(width, height, 100.0F, 0.0F);
+    auto semantics = makeSemanticScene(width, height, SemanticClass::GROUND);
+    fillRectangle<float>(surface.ndsm, 4, 4, 22, 18, 10.0F);
+    fillRectangle<float>(surface.ndsm, 12, 4, 22, 18, 40.0F);
+    fillRectangle<SemanticClass>(semantics.finalClassMap, 4, 4, 22, 18,
+                                 SemanticClass::BUILDING);
+    RasterGrid<int32_t> labels;
+    labels.width = width;
+    labels.height = height;
+    labels.data.assign(width * height, 0);
+    fillRectangle<int32_t>(labels, 4, 4, 12, 18, 1);
+    fillRectangle<int32_t>(labels, 12, 4, 22, 18, 2);
+
+    const auto footprint = squareFootprint(4, 4, 21, 17);
+    const auto config = noMorphologyConfig();
+    const auto unconstrained = BuildingHeightEstimator::estimate(
+        footprint, surface, semantics, makeProjectedMetadata(width, height),
+        config);
+    const auto constrained = BuildingHeightEstimator::estimate(
+        footprint, surface, semantics, makeProjectedMetadata(width, height),
+        config, nullptr, &labels, 1);
+
+    ASSERT_TRUE(unconstrained.success) << unconstrained.errorMessage;
+    ASSERT_TRUE(constrained.success) << constrained.errorMessage;
+    EXPECT_FLOAT_EQ(unconstrained.heightAboveGround, 40.0F);
+    EXPECT_FLOAT_EQ(constrained.heightAboveGround, 10.0F);
+}
+
 TEST(BuildingHeightEstimatorTest, FallsBackToUnerodedFootprintForSmallRoof)
 {
     constexpr int width = 12;

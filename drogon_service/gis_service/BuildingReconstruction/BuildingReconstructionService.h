@@ -12,5 +12,7 @@ class BuildingReconstructionService
          const GeoreferencedSurfaceBundle& surface,
          const SpatialMetadata& metadata,
          const BuildingReconstructionConfig& config = BuildingReconstructionConfig(),
-         BuildingReconstructionDiagnostics* diagnostics = nullptr);
+         BuildingReconstructionDiagnostics* diagnostics = nullptr,
+         const RasterGrid<float>* reconstructionNdsm = nullptr,
+         const std::vector<uint8_t>* opticalImageBytes = nullptr);
 };

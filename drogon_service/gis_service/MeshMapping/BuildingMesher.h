@@ -19,9 +19,8 @@ class BuildingMesher
          std::vector<uint32_t> indices;
      };
 
-     // Lightweight ear-clipping triangulator supporting holes via bridge
-     // edges. Vertices are returned with indices because bridging duplicates
-     // vertices and changes their order.
+     // Constrained triangulation for complex footprints and courtyards;
+     // compact ear clipping remains the fallback for simple rings.
      static TriangulationResult triangulate(
          const std::vector<LocalPoint>& outerRing, 
          const std::vector<std::vector<LocalPoint>>& holes);

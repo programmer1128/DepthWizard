@@ -107,4 +107,28 @@ TEST(BuildingReconstructionServiceTest, InvalidConfigurationFailsClosedWithEmpty
     EXPECT_TRUE(collection.buildings.empty());
 }
 
+TEST(BuildingReconstructionServiceTest, UsesUnsuppressedReconstructionNdsmForRoofEvidence)
+{
+    constexpr int width = 24;
+    constexpr int height = 24;
+    auto semantics = makeSemanticScene(width, height, SemanticClass::GROUND);
+    auto surface = makeSurface(width, height, 100.0F, 0.0F);
+    fillRectangle(semantics.finalClassMap, 6, 6, 18, 18,
+                  SemanticClass::BUILDING);
+    fillRectangle(semantics.buildingProbability, 6, 6, 18, 18, 0.95F);
+    fillRectangle(semantics.semanticConfidence, 6, 6, 18, 18, 0.95F);
+    auto evidenceNdsm = makeConstantGrid(width, height, 0.0F);
+    fillRectangle(evidenceNdsm, 6, 6, 18, 18, 14.0F);
+
+    auto config = noMorphologyConfig();
+    config.minBuildingAreaSquareMetres = 20.0F;
+    const auto collection = BuildingReconstructionService::reconstruct(
+        semantics, surface, makeProjectedMetadata(width, height), config,
+        nullptr, &evidenceNdsm);
+
+    ASSERT_EQ(collection.buildings.size(), 1U);
+    EXPECT_FLOAT_EQ(collection.buildings.front().heightAboveGround, 14.0F);
+    EXPECT_FLOAT_EQ(collection.buildings.front().roofElevation, 114.0F);
+}
+
 } // namespace

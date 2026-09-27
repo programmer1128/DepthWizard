@@ -9,6 +9,17 @@
 
 namespace
 {
+const char* roofTypeName(RoofType type)
+{
+    switch (type)
+    {
+        case RoofType::GABLE: return "gable";
+        case RoofType::HIP: return "hip";
+        case RoofType::FLAT: return "flat";
+    }
+    return "flat";
+}
+
 template<class T>
 void writeGrid(const std::filesystem::path& path, const RasterGrid<T>& grid,
                const SpatialMetadata& metadata, GDALDataType type)
@@ -50,6 +61,9 @@ std::filesystem::path ReconstructionDiagnosticsWriter::write(
     if (d.semanticConfidence.isValid()) writeGrid(folder / "semantic_confidence.tif", d.semanticConfidence, meta, GDT_Float32);
     if (d.finalClasses.isValid()) writeGrid(folder / "final_semantic_class.tif", d.finalClasses, meta, GDT_Byte);
     writeGrid(folder / "raw_ndsm.tif", d.rawNdsm, meta, GDT_Float32);
+    if (d.reconstructionNdsm.isValid())
+        writeGrid(folder / "reconstruction_ndsm.tif", d.reconstructionNdsm,
+                  meta, GDT_Float32);
     writeGrid(folder / "dtm.tif", surface.dtm, meta, GDT_Float32);
     writeGrid(folder / "fused_ndsm.tif", surface.ndsm, meta, GDT_Float32);
     if (d.stages.candidateMask.isValid()) writeGrid(folder / "candidate_mask.tif", d.stages.candidateMask, meta, GDT_Byte);
@@ -74,6 +88,10 @@ std::filesystem::path ReconstructionDiagnosticsWriter::write(
     summary["vectorization_rejected"] = Json::UInt64(d.buildings.vectorizationRejectedCount);
     summary["height_rejected"] = Json::UInt64(d.buildings.physicsRejectedCount);
     summary["recovered_pixels"] = Json::UInt64(d.buildings.recoveredCandidatePixelCount);
+    summary["lod2_blocks"] = Json::UInt64(d.buildings.lod2BlockCount);
+    summary["flat_roof_blocks"] = Json::UInt64(d.buildings.flatRoofBlockCount);
+    summary["gable_roof_blocks"] = Json::UInt64(d.buildings.gableRoofBlockCount);
+    summary["hip_roof_blocks"] = Json::UInt64(d.buildings.hipRoofBlockCount);
     summary["buildings"] = Json::Value(Json::arrayValue);
     summary["rejections"] = Json::Value(Json::arrayValue);
     summary["mesh_warnings"] = Json::Value(Json::arrayValue);
@@ -86,6 +104,19 @@ std::filesystem::path ReconstructionDiagnosticsWriter::write(
         item["base_elevation_m"] = b.representativeBaseElevation;
         item["roof_elevation_m"] = b.roofElevation;
         item["building_probability"] = b.semanticConfidence;
+        item["lod2_blocks"] = Json::Value(Json::arrayValue);
+        for (const auto& block : b.blocks)
+        {
+            Json::Value blockItem;
+            blockItem["area_m2"] = block.footprintAreaSquareMetres;
+            blockItem["roof_type"] = roofTypeName(block.roof.type);
+            blockItem["eave_height_agl_m"] =
+                block.roof.eaveHeightAboveGround;
+            blockItem["ridge_height_agl_m"] =
+                block.roof.ridgeHeightAboveGround;
+            blockItem["roof_fit_confidence"] = block.roof.confidence;
+            item["lod2_blocks"].append(blockItem);
+        }
         item["warnings"] = Json::Value(Json::arrayValue);
         for (const auto& warning : b.geometryWarnings) item["warnings"].append(warning);
         summary["buildings"].append(item);

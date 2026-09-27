@@ -315,7 +315,9 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          BuildingReconstructionDiagnostics stages;
          BuildingCollection buildings = BuildingReconstructionService::reconstruct(
              semantics, surface, metadata, BuildingReconstructionConfig{},
-             captureDiagnostics ? &stages : nullptr);
+             captureDiagnostics ? &stages : nullptr,
+             &correction.correctedMetricNdsm,
+             &scene.rgbTextureBytes);
 
          LOG_INFO << "PipelineService: reconstruction summary for " << jobId
                   << "; semantic_candidates=" << buildings.semanticCandidateCount
@@ -394,6 +396,8 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
              for (const auto cls : semantics.finalClassMap.data)
                  diagnostics->finalClasses.data.push_back(static_cast<uint8_t>(cls));
              diagnostics->rawNdsm = std::move(inference.ndsm.globalMetricNdsm);
+             diagnostics->reconstructionNdsm =
+                 std::move(correction.correctedMetricNdsm);
              diagnostics->stages = std::move(stages);
              diagnostics->buildings = std::move(buildings);
              diagnostics->presentationMode = presentation == ScenePresentation::FLAT_URBAN ? "flat_urban" : "metric";

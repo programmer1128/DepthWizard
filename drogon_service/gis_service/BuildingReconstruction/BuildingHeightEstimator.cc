@@ -13,12 +13,23 @@ float BuildingHeightEstimator::calculateRobustPeak(std::vector<float>& samples)
      return samples[n];
 }
 
+float BuildingHeightEstimator::calculateRobustRoofHeight(
+     std::vector<float>& samples)
+{
+     if (samples.empty()) return 0.0f;
+     // Preserve a supported upper roof instead of clamping it to a broad podium.
+     return calculateRobustPeak(samples);
+}
+
 BuildingHeightEstimate BuildingHeightEstimator::estimate(
      const FootprintPolygon<PixelPoint>& pixelFootprint,
      const GeoreferencedSurfaceBundle& surface,
      const SemanticScene& semantics,
      const SpatialMetadata& metadata,
-     const BuildingReconstructionConfig& config)
+     const BuildingReconstructionConfig& config,
+     const RasterGrid<float>* reconstructionNdsm,
+     const RasterGrid<int32_t>* instanceLabels,
+     int32_t instanceId)
 {
     BuildingHeightEstimate result;
 
@@ -28,7 +39,12 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
          return result;
      }
 
+     const RasterGrid<float>& roofNdsm = reconstructionNdsm != nullptr
+         ? *reconstructionNdsm
+         : surface.ndsm;
+
      if (!surface.dtm.isValid() || !surface.ndsm.isValid() ||
+         !roofNdsm.isValid() ||
          !surface.validMask.isValid() ||
          !semantics.finalClassMap.isValid() ||
          !semantics.buildingProbability.isValid())
@@ -49,9 +65,11 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
      if (width <= 0 || height <= 0 ||
          !hasExpectedShape(surface.dtm) ||
          !hasExpectedShape(surface.ndsm) ||
+         !hasExpectedShape(roofNdsm) ||
          !hasExpectedShape(surface.validMask) ||
          !hasExpectedShape(semantics.finalClassMap) ||
-         !hasExpectedShape(semantics.buildingProbability))
+         !hasExpectedShape(semantics.buildingProbability) ||
+         (instanceLabels && (!hasExpectedShape(*instanceLabels) || instanceId <= 0)))
      {
          result.errorMessage = "Surface, semantic, and metadata dimensions do not match.";
          return result;
@@ -173,14 +191,15 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
              // Sample Interior Roof from strict or metric-recovered building
              // evidence. Requiring only the final class here would discard
              // every candidate recovered from a softmax margin failure.
-             if (intRow[c] > 0)
+             if (intRow[c] > 0 &&
+                 (!instanceLabels || instanceLabels->data[idx] == instanceId))
              {
-                 if (supportsBuildingHeight && std::isfinite(surface.ndsm.data[idx])) {
-                     if (surface.ndsm.data[idx] > 0.5f) { // Ignore suppression zeros
-                         roofSamples.push_back(surface.ndsm.data[idx]);
+                 if (supportsBuildingHeight && std::isfinite(roofNdsm.data[idx])) {
+                     if (roofNdsm.data[idx] > 0.0f) {
+                         roofSamples.push_back(roofNdsm.data[idx]);
                          // If this pixel is a strong seed, add it to the core samples
                          if (semantics.buildingProbability.data[idx] >= config.instanceSeedProbability) {
-                             coreSamples.push_back(surface.ndsm.data[idx]);
+                             coreSamples.push_back(roofNdsm.data[idx]);
                          }
                      }
                  }
@@ -267,12 +286,12 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
                       semantics.buildingProbability.data[idx] >=
                           config.buildingRecoveryProbabilityThreshold);
                  if (footRow[c] > 0 && surface.validMask.data[idx] != 0 &&
+                     (!instanceLabels || instanceLabels->data[idx] == instanceId) &&
                      supportsBuildingHeight &&
-                     std::isfinite(surface.ndsm.data[idx]))
+                     std::isfinite(roofNdsm.data[idx]))
                  {
-                     // Ignore artificial zeros injected by SurfaceFusion suppression
-                     if (surface.ndsm.data[idx] > 0.5f) {
-                         roofSamples.push_back(surface.ndsm.data[idx]);
+                     if (roofNdsm.data[idx] > 0.0f) {
+                         roofSamples.push_back(roofNdsm.data[idx]);
                      }
                  }
              }
@@ -286,15 +305,15 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
              return result;
          }
 
-         result.heightAboveGround = calculateRobustPeak(roofSamples);
+         result.heightAboveGround = calculateRobustRoofHeight(roofSamples);
      }
      else
      {
-         if (static_cast<int>(coreSamples.size()) >= config.minRequiredSamples) {
-             result.heightAboveGround = calculateRobustPeak(coreSamples);
-         } else {
-             result.heightAboveGround = calculateRobustPeak(roofSamples);
-         }
+         result.heightAboveGround = calculateRobustRoofHeight(roofSamples);
+         if (static_cast<int>(coreSamples.size()) >= config.minRequiredSamples)
+             result.heightAboveGround = std::max(
+                 result.heightAboveGround,
+                 calculateRobustRoofHeight(coreSamples));
      }
      result.heightAboveGround *= config.heightScaleMultiplier;
 

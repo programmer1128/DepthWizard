@@ -173,8 +173,8 @@ TEST(BuildingInstanceExtractorTest, SplitsTouchingRoofsAtHeightStepWithoutLosing
     fillRectangle(heights, 16, 2, 30, 18, 25.0F);
     auto config = noMorphologyConfig();
     ASSERT_TRUE(config.splitSupportedInstances);
-    ASSERT_FLOAT_EQ(config.instanceHeightStepMetres, 2.0F);
-    ASSERT_FLOAT_EQ(config.minInstanceSeedAreaSquareMetres, 15.0F);
+    ASSERT_FLOAT_EQ(config.instanceHeightStepMetres, 3.0F);
+    ASSERT_FLOAT_EQ(config.minInstanceSeedAreaSquareMetres, 25.0F);
     const auto result = BuildingInstanceExtractor::extract(mask, semantics,
         makeProjectedMetadata(32, 20), config, &heights);
     ASSERT_TRUE(result.success);
@@ -203,6 +203,105 @@ TEST(BuildingInstanceExtractorTest, ProbabilityValleySeparatesRoofsButUniformBlo
         makeProjectedMetadata(32, 20), config);
     ASSERT_EQ(result.components.size(), 2U);
     EXPECT_EQ(result.components[0].pixelCount + result.components[1].pixelCount, 28 * 16);
+}
+
+TEST(BuildingInstanceExtractorTest, OpticalFacadeEdgeGuidesAmbiguousInstanceBoundary)
+{
+    auto mask = makeSuccessfulMask(48, 24);
+    fillRectangle<uint8_t>(mask.cleanMask, 2, 2, 46, 22, 1);
+    auto semantics = makeSemanticScene(48, 24, SemanticClass::BUILDING);
+    semantics.buildingProbability = makeConstantGrid(48, 24, 0.95F);
+    fillRectangle(semantics.buildingProbability, 17, 2, 29, 22, 0.40F);
+    auto optical = makeConstantGrid<uint8_t>(48, 24, 30);
+    fillRectangle<uint8_t>(optical, 26, 0, 48, 24, 200);
+    const auto metadata = makeProjectedMetadata(48, 24);
+    const auto config = noMorphologyConfig();
+    const auto baseline = BuildingInstanceExtractor::extract(
+        mask, semantics, metadata, config);
+    const auto guided = BuildingInstanceExtractor::extract(
+        mask, semantics, metadata, config, nullptr, &optical);
+    ASSERT_TRUE(baseline.success) << baseline.errorMessage;
+    ASSERT_TRUE(guided.success) << guided.errorMessage;
+    ASSERT_EQ(baseline.components.size(), 2U);
+    ASSERT_EQ(guided.components.size(), 2U);
+    const auto lastLeftPixel = [](const auto& labels)
+    {
+        const int32_t leftId = labels.data[12 * 48 + 6];
+        int last = 2;
+        for (int column = 2; column < 46; ++column)
+            if (labels.data[12 * 48 + column] == leftId) last = column;
+        return last;
+    };
+    EXPECT_GT(lastLeftPixel(guided.labelRaster),
+              lastLeftPixel(baseline.labelRaster));
+    for (std::size_t index = 0; index < mask.cleanMask.data.size(); ++index)
+        EXPECT_EQ(guided.labelRaster.data[index] != 0,
+                  mask.cleanMask.data[index] != 0);
+}
+
+TEST(BuildingInstanceExtractorTest, SmoothMetricHeightRampStillSeparatesAdjacentRoofs)
+{
+    auto mask = makeSuccessfulMask(44, 24);
+    fillRectangle<uint8_t>(mask.cleanMask, 2, 2, 42, 22, 1);
+    auto semantics = makeSemanticScene(44, 24, SemanticClass::BUILDING);
+    semantics.buildingProbability = makeConstantGrid(44, 24, 0.95F);
+    auto heights = makeConstantGrid(44, 24, 10.0F);
+    fillRectangle(heights, 20, 2, 21, 22, 12.0F);
+    fillRectangle(heights, 21, 2, 22, 22, 15.0F);
+    fillRectangle(heights, 22, 2, 23, 22, 18.0F);
+    fillRectangle(heights, 23, 2, 42, 22, 20.0F);
+
+    auto config = noMorphologyConfig();
+    config.splitSupportedInstances = true;
+    const auto result = BuildingInstanceExtractor::extract(
+        mask, semantics, makeProjectedMetadata(44, 24), config, &heights);
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    ASSERT_EQ(result.components.size(), 2U);
+    EXPECT_NE(result.labelRaster.data[12 * 44 + 10],
+              result.labelRaster.data[12 * 44 + 34]);
+}
+
+TEST(BuildingInstanceExtractorTest, BimodalRoofPlateausSplitAcrossBroadRamp)
+{
+    auto mask = makeSuccessfulMask(70, 25);
+    fillRectangle<uint8_t>(mask.cleanMask, 2, 2, 68, 23, 1);
+    auto semantics = makeSemanticScene(70, 25, SemanticClass::BUILDING);
+    semantics.buildingProbability = makeConstantGrid(70, 25, 0.95F);
+    auto heights = makeConstantGrid(70, 25, 5.0F);
+    for (int row = 2; row < 23; ++row)
+        for (int column = 20; column < 68; ++column)
+            heights.data[static_cast<std::size_t>(row) * 70 + column] =
+                column < 50 ? 5.0F + (column - 20) * 0.5F : 20.0F;
+
+    auto config = noMorphologyConfig();
+    config.splitSupportedInstances = true;
+    const auto result = BuildingInstanceExtractor::extract(
+        mask, semantics, makeProjectedMetadata(70, 25), config, &heights);
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    ASSERT_EQ(result.components.size(), 2U);
+    EXPECT_NE(result.labelRaster.data[12 * 70 + 10],
+              result.labelRaster.data[12 * 70 + 60]);
+    EXPECT_EQ(result.components[0].pixelCount + result.components[1].pixelCount,
+              66 * 21);
+}
+
+TEST(BuildingInstanceExtractorTest, HeightStepUsesCalibratedMetres)
+{
+    auto mask = makeSuccessfulMask(44, 24);
+    fillRectangle<uint8_t>(mask.cleanMask, 2, 2, 42, 22, 1);
+    auto semantics = makeSemanticScene(44, 24, SemanticClass::BUILDING);
+    semantics.buildingProbability = makeConstantGrid(44, 24, 0.95F);
+    auto heights = makeConstantGrid(44, 24, 5.0F);
+    fillRectangle(heights, 22, 2, 42, 22, 7.0F);
+    auto config = noMorphologyConfig();
+    config.heightScaleMultiplier = 1.85F;
+    const auto result = BuildingInstanceExtractor::extract(
+        mask, semantics, makeProjectedMetadata(44, 24), config, &heights);
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    ASSERT_EQ(result.components.size(), 2U);
+    EXPECT_NE(result.labelRaster.data[12 * 44 + 10],
+              result.labelRaster.data[12 * 44 + 34]);
 }
 
 TEST(BuildingInstanceExtractorTest, LargeBlockDoesNotEraseSeparateNarrowRoof)

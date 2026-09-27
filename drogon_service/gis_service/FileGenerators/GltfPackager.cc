@@ -230,7 +230,7 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
             mat.pbrMetallicRoughness.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
             mat.pbrMetallicRoughness.metallicFactor = 0.10;
             mat.pbrMetallicRoughness.roughnessFactor = 0.40;
-            mat.alphaMode = "BLEND";
+            mat.alphaMode = "OPAQUE";
             mat.doubleSided = true;
             mat.name = "Building_Wall";
         } else if (role == MaterialRole::BUILDING_ROOF) {
@@ -239,7 +239,7 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
             mat.pbrMetallicRoughness.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
             mat.pbrMetallicRoughness.metallicFactor = 0.10;
             mat.pbrMetallicRoughness.roughnessFactor = 0.40;
-            mat.alphaMode = "BLEND";
+            mat.alphaMode = "OPAQUE";
             mat.doubleSided = true;
             mat.name = "Building_Roof";
         } else if (role == MaterialRole::BUILDING_EDGE) {

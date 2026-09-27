@@ -11,6 +11,7 @@ struct ReconstructionDiagnosticPayload
     RasterGrid<float> semanticConfidence;
     RasterGrid<uint8_t> finalClasses;
     RasterGrid<float> rawNdsm;
+    RasterGrid<float> reconstructionNdsm;
     BuildingReconstructionDiagnostics stages;
     BuildingCollection buildings;
     std::string presentationMode;

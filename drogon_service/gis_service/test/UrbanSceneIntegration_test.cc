@@ -33,8 +33,10 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
     const auto buildings = BuildingReconstructionService::reconstruct(
         semantics, surface, metadata, bldgConfig, &stages);
     ASSERT_EQ(buildings.buildings.size(), 2U);
-    EXPECT_FLOAT_EQ(buildings.buildings[0].heightAboveGround, 19.0F);
-    EXPECT_FLOAT_EQ(buildings.buildings[1].heightAboveGround, 47.5F);
+    EXPECT_FLOAT_EQ(buildings.buildings[0].heightAboveGround,
+                    10.0F * bldgConfig.heightScaleMultiplier);
+    EXPECT_FLOAT_EQ(buildings.buildings[1].heightAboveGround,
+                    25.0F * bldgConfig.heightScaleMultiplier);
     ASSERT_TRUE(stages.instanceLabels.isValid());
 
     SceneInput scene; scene.width = scene.height = n; scene.spatialMetadata = metadata;
@@ -70,8 +72,8 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
     EXPECT_NEAR(terrain.maxValues[1], 0, 1e-5);
     EXPECT_NEAR(terrain.minValues[1], 0, 1e-5);
     EXPECT_EQ(glb.terrainTriangleCount, static_cast<std::size_t>(2 * (n-1) * (n-1)));
-    EXPECT_NEAR(roof.minValues[1], 19.0, 1e-5);
-    EXPECT_NEAR(roof.maxValues[1], 47.5, 1e-5);
+    EXPECT_NEAR(roof.minValues[1], 10.0 * bldgConfig.heightScaleMultiplier, 1e-5);
+    EXPECT_NEAR(roof.maxValues[1], 25.0 * bldgConfig.heightScaleMultiplier, 1e-5);
     // Verify actual compressed positions, not only accessor bounding boxes.
     for (std::size_t primitiveIndex = 0; primitiveIndex < 2; ++primitiveIndex)
     {
@@ -107,7 +109,8 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
                 EXPECT_NEAR(position[2], uv[1] * n * .5 - n * .25, .02);
             }
             else
-                EXPECT_TRUE(std::abs(y - 19.0F) < .02F || std::abs(y - 47.5F) < .02F);
+                EXPECT_TRUE(std::abs(y - 10.0F * bldgConfig.heightScaleMultiplier) < .02F ||
+                            std::abs(y - 25.0F * bldgConfig.heightScaleMultiplier) < .02F);
         }
     }
     EXPECT_EQ(surface.dtm.data, originalDtm);
@@ -141,8 +144,11 @@ TEST(UrbanSceneIntegrationTest, NarrowRoofReachesGlbAndRoadNoiseCannotEngulfIt)
     const auto buildings = BuildingReconstructionService::reconstruct(
         semantics, surface, metadata); // Real production defaults.
     ASSERT_EQ(buildings.buildings.size(), 1U);
-    EXPECT_NEAR(buildings.buildings[0].heightAboveGround, 22.8F, 1e-4F);
-    EXPECT_NEAR(buildings.buildings[0].roofElevation, 122.8F, 1e-4F);
+    EXPECT_NEAR(buildings.buildings[0].heightAboveGround,
+                12.0F * BuildingReconstructionConfig{}.heightScaleMultiplier, 1e-4F);
+    EXPECT_NEAR(buildings.buildings[0].roofElevation,
+                100.0F + 12.0F * BuildingReconstructionConfig{}.heightScaleMultiplier,
+                1e-4F);
 
     SceneInput scene;
     scene.width = scene.height = size;

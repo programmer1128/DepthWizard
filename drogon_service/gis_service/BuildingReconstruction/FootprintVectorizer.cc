@@ -1,4 +1,5 @@
 #include "FootprintVectorizer.h"
+#include "FootprintGeometryRegularizer.h"
 #include <opencv2/opencv.hpp>
 #include <cmath>
 #include <algorithm>
@@ -9,6 +10,129 @@
 #include <cstddef>
 #include <numbers>
 
+namespace
+{
+std::vector<ProjectedPoint> snapToOpticalLines(
+    const std::vector<ProjectedPoint>& ring,
+    const std::vector<cv::Vec4f>& opticalLines,
+    const SpatialMetadata& metadata,
+    double maxShiftMetres)
+{
+    if (ring.size() < 4 || opticalLines.empty()) return ring;
+    const auto& gt = metadata.geoTransform;
+    const double determinant = gt[1] * gt[5] - gt[2] * gt[4];
+    if (std::abs(determinant) < 1.0e-12) return ring;
+    const double metresPerPixel = std::sqrt(std::abs(determinant));
+    const double maxOffsetPixels = std::min(
+        3.0, maxShiftMetres / metresPerPixel);
+    struct Point { double x; double y; };
+    const auto toPixel = [&](const ProjectedPoint& point)
+    {
+        const double east = point.easting - gt[0];
+        const double north = point.northing - gt[3];
+        return Point{(gt[5] * east - gt[2] * north) / determinant,
+                     (-gt[4] * east + gt[1] * north) / determinant};
+    };
+    std::vector<Point> points;
+    points.reserve(ring.size());
+    for (const auto& point : ring) points.push_back(toPixel(point));
+
+    struct Line { double nx; double ny; double offset; };
+    std::vector<Line> fitted;
+    fitted.reserve(points.size());
+    std::size_t supportedEdges = 0;
+    for (std::size_t index = 0; index < points.size(); ++index)
+    {
+        const Point a = points[index];
+        const Point b = points[(index + 1) % points.size()];
+        const double dx = b.x - a.x, dy = b.y - a.y;
+        const double length = std::hypot(dx, dy);
+        if (length < 1.0e-6) return ring;
+        const double tx = dx / length, ty = dy / length;
+        const double nx = -ty, ny = tx;
+        double offset = nx * a.x + ny * a.y;
+        std::vector<std::pair<double, double>> evidence;
+        double totalSupport = 0.0;
+        if (length >= 10.0)
+        {
+            for (const auto& optical : opticalLines)
+            {
+                const double lx = optical[2] - optical[0];
+                const double ly = optical[3] - optical[1];
+                const double lineLength = std::hypot(lx, ly);
+                if (lineLength < 8.0) continue;
+                if (std::abs(tx * ly - ty * lx) / lineLength > 0.17)
+                    continue;
+                const double alongA =
+                    (optical[0] - a.x) * tx + (optical[1] - a.y) * ty;
+                const double alongB =
+                    (optical[2] - a.x) * tx + (optical[3] - a.y) * ty;
+                const double overlap = std::max(0.0,
+                    std::min(length, std::max(alongA, alongB)) -
+                    std::max(0.0, std::min(alongA, alongB)));
+                if (overlap < 5.0) continue;
+                const double distanceA =
+                    nx * optical[0] + ny * optical[1] - offset;
+                const double distanceB =
+                    nx * optical[2] + ny * optical[3] - offset;
+                const double distance = 0.5 * (distanceA + distanceB);
+                if (std::abs(distance) > maxOffsetPixels ||
+                    std::abs(distanceA - distanceB) > 2.0) continue;
+                const double weight = overlap /
+                    (1.0 + std::abs(distance));
+                evidence.emplace_back(distance, weight);
+                totalSupport += overlap;
+            }
+        }
+        if (totalSupport >= std::max(8.0, 0.25 * length))
+        {
+            std::sort(evidence.begin(), evidence.end());
+            double cumulative = 0.0, totalWeight = 0.0;
+            for (const auto& item : evidence) totalWeight += item.second;
+            for (const auto& item : evidence)
+            {
+                cumulative += item.second;
+                if (cumulative >= 0.5 * totalWeight)
+                {
+                    offset += item.first;
+                    ++supportedEdges;
+                    break;
+                }
+            }
+        }
+        fitted.push_back({nx, ny, offset});
+    }
+    if (supportedEdges < 2) return ring;
+
+    std::vector<ProjectedPoint> snapped;
+    snapped.reserve(points.size());
+    for (std::size_t index = 0; index < points.size(); ++index)
+    {
+        const auto& before = fitted[(index + fitted.size() - 1) % fitted.size()];
+        const auto& after = fitted[index];
+        const double det = before.nx * after.ny -
+                           before.ny * after.nx;
+        Point corner = points[index];
+        if (std::abs(det) > 0.15)
+        {
+            const Point intersection{
+                (before.offset * after.ny -
+                 before.ny * after.offset) / det,
+                (before.nx * after.offset -
+                 before.offset * after.nx) / det};
+            if (std::hypot(intersection.x - corner.x,
+                           intersection.y - corner.y) <=
+                maxShiftMetres / metresPerPixel)
+                corner = intersection;
+        }
+        snapped.push_back({
+            gt[0] + corner.x * gt[1] + corner.y * gt[2],
+            gt[3] + corner.x * gt[4] + corner.y * gt[5]});
+    }
+    return snapped;
+}
+} // namespace
+
 std::vector<ProjectedPoint> FootprintVectorizer::regularizeEdges(
     const std::vector<ProjectedPoint>& ring,
     double maxShift,
@@ -16,19 +140,13 @@ std::vector<ProjectedPoint> FootprintVectorizer::regularizeEdges(
 {
     if (ring.size() < 4 || maxShift <= 0.0) return ring;
 
-    // STEP 2.1: Dominant Orientation Estimation
-    // For each polygon ring, examine edges with length L_i >= 2.0 metres.
-    constexpr double quarterTurn = std::numbers::pi / 2.0;
-    constexpr double halfQuarterTurn = std::numbers::pi / 4.0;
-    constexpr double cos80 = 0.17364817766693033; // cos(4 * 20 deg)
-
-    struct QualifyingEdge {
-        double angle;
-        double length;
-    };
-    std::vector<QualifyingEdge> edges;
+    // Fit a shared Manhattan frame from the long, supported sides. Short
+    // contour details are not allowed to rotate the entire building.
+    struct EdgeAngle { double angle; double length; };
+    std::vector<EdgeAngle> edges;
     double totalLength = 0.0;
-    for (std::size_t i = 0; i < ring.size(); ++i) {
+    for (std::size_t i = 0; i < ring.size(); ++i)
+    {
         const auto& a = ring[i];
         const auto& b = ring[(i + 1) % ring.size()];
         const double dx = b.easting - a.easting;
@@ -38,301 +156,202 @@ std::vector<ProjectedPoint> FootprintVectorizer::regularizeEdges(
         edges.push_back({std::atan2(dy, dx), length});
         totalLength += length;
     }
-    if (edges.empty() || totalLength < 1e-6) return ring;
+    if (edges.empty()) return ring;
 
-    // Find the candidate orientation angle phi* with maximum length-weighted support
+    constexpr double alignment = 0.5; // within 15 degrees of an axis
     double bestSupport = 0.0;
     double bestAngle = 0.0;
-    for (const auto& candidate : edges) {
+    for (const auto& candidate : edges)
+    {
         double support = 0.0;
-        for (const auto& e : edges) {
-            if (std::cos(4.0 * (e.angle - candidate.angle)) >= cos80) {
-                support += e.length;
-            }
-        }
-        if (support > bestSupport) {
+        for (const auto& edge : edges)
+            if (std::cos(4.0 * (edge.angle - candidate.angle)) >= alignment)
+                support += edge.length;
+        if (support > bestSupport)
+        {
             bestSupport = support;
             bestAngle = candidate.angle;
         }
     }
-
-    // Only perform Manhattan orthogonalization when at least 15% of qualifying edge-length
-    // support is consistent with the dominant orthogonal orientation.
-    if (bestSupport < 0.15 * totalLength) return ring;
-
-    // Refine dominant Manhattan orientation theta using four-fold formula over dominant cluster
-    double S = 0.0;
-    double C = 0.0;
-    for (const auto& e : edges) {
-        if (std::cos(4.0 * (e.angle - bestAngle)) >= cos80) {
-            S += e.length * std::sin(4.0 * e.angle);
-            C += e.length * std::cos(4.0 * e.angle);
+    if (bestSupport < 0.35 * totalLength) return ring;
+    double sine = 0.0, cosine = 0.0;
+    for (const auto& edge : edges)
+        if (std::cos(4.0 * (edge.angle - bestAngle)) >= alignment)
+        {
+            sine += edge.length * std::sin(4.0 * edge.angle);
+            cosine += edge.length * std::cos(4.0 * edge.angle);
         }
-    }
-    double theta = 0.25 * std::atan2(S, C);
-    // Normalize theta to [-pi/4, pi/4]
-    while (theta > halfQuarterTurn) theta -= quarterTurn;
-    while (theta < -halfQuarterTurn) theta += quarterTurn;
-
-    // Confirm support for refined theta
-    double refinedSupport = 0.0;
-    for (const auto& e : edges) {
-        if (std::cos(4.0 * (e.angle - theta)) >= cos80) {
-            refinedSupport += e.length;
-        }
-    }
-    if (refinedSupport < 0.15 * totalLength) return ring;
-
-    // STEP 2.2: Rotate into Manhattan frame (-theta relative to centroid)
-    ProjectedPoint centroid{0.0, 0.0};
-    for (const auto& pt : ring) {
-        centroid.easting += pt.easting;
-        centroid.northing += pt.northing;
-    }
-    centroid.easting /= ring.size();
-    centroid.northing /= ring.size();
-
-    const double cosTheta = std::cos(theta);
-    const double sinTheta = std::sin(theta);
-
-    struct LocalPt { double u, v; };
-    std::vector<LocalPt> localPts;
-    localPts.reserve(ring.size());
-    for (const auto& pt : ring) {
-        const double rx = pt.easting - centroid.easting;
-        const double ry = pt.northing - centroid.northing;
-        localPts.push_back({
-            rx * cosTheta + ry * sinTheta,
-            -rx * sinTheta + ry * cosTheta
-        });
+    const double theta = 0.25 * std::atan2(sine, cosine);
+    const double ct = std::cos(theta), st = std::sin(theta);
+    const ProjectedPoint origin = ring.front();
+    struct Point { double x; double y; };
+    std::vector<Point> local;
+    local.reserve(ring.size());
+    for (const auto& point : ring)
+    {
+        const double x = point.easting - origin.easting;
+        const double y = point.northing - origin.northing;
+        local.push_back({x * ct + y * st, -x * st + y * ct});
     }
 
-    // STEP 2.3: Strict Orthogonal Step Insertion
-    std::vector<LocalPt> stepped;
-    LocalPt current = localPts[0];
-    stepped.push_back(current);
-
-    const std::size_t numLocal = localPts.size();
-    for (std::size_t i = 0; i < numLocal; ++i) {
-        LocalPt target = localPts[(i + 1) % numLocal];
-        const double du = std::abs(target.u - current.u);
-        const double dv = std::abs(target.v - current.v);
-        const double edgeLen = std::hypot(target.u - current.u, target.v - current.v);
-
-        if (du < 1e-4) {
-            // Already vertical
-            target.u = current.u;
-            if (i < numLocal - 1) {
-                stepped.push_back(target);
-                current = target;
-            } else {
-                stepped.back().u = stepped[0].u;
-            }
-        } else if (dv < 1e-4) {
-            // Already horizontal
-            target.v = current.v;
-            if (i < numLocal - 1) {
-                stepped.push_back(target);
-                current = target;
-            } else {
-                stepped.back().v = stepped[0].v;
-            }
-        } else if (edgeLen >= 3.0 && du > 1e-3 && dv > 1e-3 &&
-                   std::min(du, dv) / std::max(du, dv) > 0.36) {
-            // Genuine diagonal edge (angle between ~20 deg and 70 deg to axes, length >= 3.0m):
-            // Preserve the diagonal wall rather than forcing an artificial 90-degree step.
-            if (i < numLocal - 1) {
-                stepped.push_back(target);
-                current = target;
-            }
-        } else if (du >= dv) {
-            // Predominantly horizontal: insert (target.u, current.v) then target
-            LocalPt mid{target.u, current.v};
-            stepped.push_back(mid);
-            if (i < numLocal - 1) {
-                stepped.push_back(target);
-                current = target;
-            }
-        } else {
-            // Predominantly vertical: insert (current.u, target.v) then target
-            LocalPt mid{current.u, target.v};
-            stepped.push_back(mid);
-            if (i < numLocal - 1) {
-                stepped.push_back(target);
-                current = target;
-            }
+    // A short diagonal between two perpendicular supported walls is usually
+    // a raster chamfer. Join the walls at their intersection without adding
+    // a two-edge staircase to the footprint.
+    for (std::size_t pass = 0; pass < ring.size() && local.size() > 4; ++pass)
+    {
+        bool changed = false;
+        for (std::size_t i = 0; i < local.size(); ++i)
+        {
+            const std::size_t j = (i + 1) % local.size();
+            const Point prev = local[(i + local.size() - 1) % local.size()];
+            const Point a = local[i], b = local[j];
+            const Point next = local[(j + 1) % local.size()];
+            if (std::hypot(b.x - a.x, b.y - a.y) >
+                2.0 * maxShift) continue;
+            const double px = a.x - prev.x, py = a.y - prev.y;
+            const double nx = next.x - b.x, ny = next.y - b.y;
+            const double beforeLength = std::hypot(px, py);
+            const double afterLength = std::hypot(nx, ny);
+            if (beforeLength < 2.0 || afterLength < 2.0) continue;
+            const bool horizontalThenVertical =
+                std::abs(py) < 0.15 * std::abs(px) &&
+                std::abs(nx) < 0.15 * std::abs(ny);
+            const bool verticalThenHorizontal =
+                std::abs(px) < 0.15 * std::abs(py) &&
+                std::abs(ny) < 0.15 * std::abs(nx);
+            if (!horizontalThenVertical && !verticalThenHorizontal) continue;
+            const Point corner = horizontalThenVertical
+                ? Point{b.x, a.y} : Point{a.x, b.y};
+            if (std::hypot(corner.x - a.x, corner.y - a.y) > maxShift ||
+                std::hypot(corner.x - b.x, corner.y - b.y) > maxShift)
+                continue;
+            local[i] = corner;
+            local.erase(local.begin() + j);
+            changed = true;
+            break;
         }
+        if (!changed) break;
     }
 
-    // STEP 2.4: Collinear and duplicate vertex pruning helper
-    auto pruneCollinearAndDuplicates = [](std::vector<LocalPt>& pts) {
-        bool changed = true;
-        for (int iter = 0; iter < 100 && changed && pts.size() >= 3; ++iter) {
-            changed = false;
-
-            // 1. Collinear vertices along U or V axis
-            for (std::size_t i = 0; i < pts.size(); ++i) {
-                if (pts.size() <= 3) break;
-                const std::size_t prevIdx = (i + pts.size() - 1) % pts.size();
-                const std::size_t nextIdx = (i + 1) % pts.size();
-                const auto& A = pts[prevIdx];
-                const auto& B = pts[i];
-                const auto& C = pts[nextIdx];
-
-                constexpr double eps = 1e-3;
-                const bool collinearU = (std::abs(A.u - B.u) < eps && std::abs(B.u - C.u) < eps);
-                const bool collinearV = (std::abs(A.v - B.v) < eps && std::abs(B.v - C.v) < eps);
-
-                if (collinearU || collinearV) {
-                    pts.erase(pts.begin() + i);
-                    changed = true;
-                    break;
-                }
+    // Suppress tiny three-sided bays on an otherwise straight wall. The
+    // raster mask can include HVAC and shadows as 1-2 m outward jogs.
+    for (std::size_t pass = 0; pass < ring.size() && local.size() >= 8; ++pass)
+    {
+        bool changed = false;
+        for (std::size_t i = 0; i < local.size(); ++i)
+        {
+            std::rotate(local.begin(), local.begin() + i, local.end());
+            const Point a = local[0], b = local[1], c = local[2];
+            const Point d = local[3], e = local[4], f = local[5];
+            const double abx = b.x - a.x, aby = b.y - a.y;
+            const double efx = f.x - e.x, efy = f.y - e.y;
+            const double ab = std::hypot(abx, aby);
+            const double ef = std::hypot(efx, efy);
+            const bool sameWall = ab > 1.0 && ef > 1.0 &&
+                abx * efx + aby * efy > 0.98 * ab * ef &&
+                std::abs(abx * (e.y - a.y) - aby * (e.x - a.x)) /
+                    ab < 0.2;
+            const bool shortJog =
+                std::hypot(c.x - b.x, c.y - b.y) <= maxShift &&
+                std::hypot(d.x - c.x, d.y - c.y) <= maxShift &&
+                std::hypot(e.x - d.x, e.y - d.y) <= maxShift;
+            if (sameWall && shortJog)
+            {
+                local.erase(local.begin() + 1, local.begin() + 5);
+                changed = true;
+                break;
             }
-            if (changed) continue;
-
-            // 2. Near-duplicate vertices (< 0.2m)
-            for (std::size_t i = 0; i < pts.size(); ++i) {
-                if (pts.size() <= 3) break;
-                const std::size_t nextIdx = (i + 1) % pts.size();
-                const double dist = std::hypot(pts[nextIdx].u - pts[i].u,
-                                               pts[nextIdx].v - pts[i].v);
-                if (dist < 0.2) {
-                    pts.erase(pts.begin() + nextIdx);
-                    changed = true;
-                    break;
-                }
-            }
+            std::rotate(local.begin(), local.begin() + local.size() - i,
+                        local.end());
         }
-    };
-
-    // Initial pruning pass
-    pruneCollinearAndDuplicates(stepped);
-
-    // STEP 2.4.1: LOD1 short-edge collapse. Fifteen bounded passes remove
-    // orthogonal raster staircases shorter than five metres while the final
-    // topology, area, mask-overlap and neighbouring-instance checks still
-    // reject an unsupported result. A four/six-corner ring is already a
-    // compact architectural primitive (rectangle or L-shape), not a raster
-    // staircase; do not erase its intentional wing/recess.
-    const bool hasRasterStaircase = stepped.size() > 6;
-    for (int pass = 0;
-         hasRasterStaircase && pass < 15 && stepped.size() > 4;
-         ++pass) {
-        double minLen = 2.5;
-        std::size_t bestIdx = stepped.size();
-
-        for (std::size_t i = 0; i < stepped.size(); ++i) {
-            const std::size_t nextIdx = (i + 1) % stepped.size();
-            const std::size_t prevIdx = (i + stepped.size() - 1) % stepped.size();
-            const std::size_t afterNextIdx = (nextIdx + 1) % stepped.size();
-
-            const bool isVert = std::abs(stepped[nextIdx].u - stepped[i].u) < 1e-3;
-            const bool isHoriz = std::abs(stepped[nextIdx].v - stepped[i].v) < 1e-3;
-            if (!isVert && !isHoriz) continue;
-
-            const bool prevIsHoriz = std::abs(stepped[i].v - stepped[prevIdx].v) < 1e-3;
-            const bool prevIsVert = std::abs(stepped[i].u - stepped[prevIdx].u) < 1e-3;
-            const bool nextIsHoriz = std::abs(stepped[afterNextIdx].v - stepped[nextIdx].v) < 1e-3;
-            const bool nextIsVert = std::abs(stepped[afterNextIdx].u - stepped[nextIdx].u) < 1e-3;
-
-            if (isVert && (!prevIsHoriz || !nextIsHoriz)) continue;
-            if (isHoriz && (!prevIsVert || !nextIsVert)) continue;
-
-            const double edgeLen = std::hypot(stepped[nextIdx].u - stepped[i].u,
-                                              stepped[nextIdx].v - stepped[i].v);
-            if (edgeLen < minLen) {
-                minLen = edgeLen;
-                bestIdx = i;
-            }
-        }
-
-        if (bestIdx >= stepped.size()) break; // No collapsible staircase edges < 2.5m remaining
-
-        const std::size_t i = bestIdx;
-        const std::size_t nextIdx = (i + 1) % stepped.size();
-        const std::size_t prevIdx = (i + stepped.size() - 1) % stepped.size();
-        const std::size_t afterNextIdx = (nextIdx + 1) % stepped.size();
-
-        const bool isVertical = std::abs(stepped[nextIdx].u - stepped[i].u) < 1e-3;
-
-        if (isVertical) {
-            const double L0 = std::abs(stepped[i].u - stepped[prevIdx].u);
-            const double L2 = std::abs(stepped[afterNextIdx].u - stepped[nextIdx].u);
-            if (L0 >= L2) {
-                stepped[afterNextIdx].v = stepped[prevIdx].v;
-            } else {
-                stepped[prevIdx].v = stepped[afterNextIdx].v;
-            }
-        } else {
-            const double L0 = std::abs(stepped[i].v - stepped[prevIdx].v);
-            const double L2 = std::abs(stepped[afterNextIdx].v - stepped[nextIdx].v);
-            if (L0 >= L2) {
-                stepped[afterNextIdx].u = stepped[prevIdx].u;
-            } else {
-                stepped[prevIdx].u = stepped[afterNextIdx].u;
-            }
-        }
-
-        if (nextIdx > i) {
-            stepped.erase(stepped.begin() + nextIdx);
-            stepped.erase(stepped.begin() + i);
-        } else {
-            stepped.erase(stepped.begin() + i);
-            stepped.erase(stepped.begin());
-        }
-
-        pruneCollinearAndDuplicates(stepped);
+        if (!changed) break;
     }
 
-    if (stepped.size() < 3) return ring;
-
-    // STEP 2.5: Rotate back to world coordinates
-    std::vector<ProjectedPoint> regularized;
-    regularized.reserve(stepped.size());
-    for (const auto& pt : stepped) {
-        ProjectedPoint p;
-        p.easting = centroid.easting + pt.u * cosTheta - pt.v * sinTheta;
-        p.northing = centroid.northing + pt.u * sinTheta + pt.v * cosTheta;
-        regularized.push_back(p);
-    }
-
-    // STEP 2.6: Polygon Validation
-    if (regularized.size() < 3) return ring;
-
-    for (std::size_t i = 0; i < regularized.size(); ++i) {
-        const auto& p1 = regularized[i];
-        const auto& p2 = regularized[(i + 1) % regularized.size()];
-        if (std::hypot(p2.easting - p1.easting, p2.northing - p1.northing) < 1e-4) {
-            return ring;
+    // Represent each edge as a single infinite line. A near-axis edge keeps
+    // its observed midpoint and takes the common axis direction. This avoids
+    // inventing a staircase vertex for every slightly diagonal raster edge.
+    struct FittedLine { double nx; double ny; double offset; };
+    std::vector<FittedLine> lines;
+    lines.reserve(local.size());
+    constexpr double axisRatio = 0.36; // about 20 degrees
+    for (std::size_t i = 0; i < local.size(); ++i)
+    {
+        const Point a = local[i], b = local[(i + 1) % local.size()];
+        const double dx = b.x - a.x, dy = b.y - a.y;
+        const double length = std::hypot(dx, dy);
+        if (length < 1.0e-6) return ring;
+        if (std::abs(dy) <= axisRatio * std::abs(dx))
+            lines.push_back({0.0, 1.0, 0.5 * (a.y + b.y)});
+        else if (std::abs(dx) <= axisRatio * std::abs(dy))
+            lines.push_back({1.0, 0.0, 0.5 * (a.x + b.x)});
+        else
+        {
+            const double nx = -dy / length, ny = dx / length;
+            lines.push_back({nx, ny, nx * a.x + ny * a.y});
         }
     }
 
-    const double origSignedArea = calculateSignedArea(ring);
-    double newSignedArea = calculateSignedArea(regularized);
+    std::vector<ProjectedPoint> fitted;
+    fitted.reserve(ring.size());
+    for (std::size_t i = 0; i < local.size(); ++i)
+    {
+        const auto& before = lines[(i + lines.size() - 1) % lines.size()];
+        const auto& after = lines[i];
+        const double determinant = before.nx * after.ny -
+                                   before.ny * after.nx;
+        Point corner = local[i];
+        if (std::abs(determinant) > 0.15)
+        {
+            const Point intersection{
+                (before.offset * after.ny -
+                 before.ny * after.offset) / determinant,
+                (before.nx * after.offset -
+                 before.offset * after.nx) / determinant};
+            if (std::hypot(intersection.x - corner.x,
+                           intersection.y - corner.y) <= maxShift)
+                corner = intersection;
+        }
+        fitted.push_back({
+            origin.easting + corner.x * ct - corner.y * st,
+            origin.northing + corner.x * st + corner.y * ct});
+    }
 
-    if (!std::isfinite(origSignedArea) || !std::isfinite(newSignedArea) || std::abs(newSignedArea) < 1e-6) {
+    // Remove repeated/collinear fitted corners. Topology and pixel agreement
+    // are validated by the vectorizer before a fitted ring is accepted.
+    for (int pass = 0; pass < 3 && fitted.size() > 3; ++pass)
+    {
+        bool changed = false;
+        for (std::size_t i = 0; i < fitted.size(); ++i)
+        {
+            const auto& a = fitted[(i + fitted.size() - 1) % fitted.size()];
+            const auto& b = fitted[i];
+            const auto& c = fitted[(i + 1) % fitted.size()];
+            const double abx = b.easting - a.easting;
+            const double aby = b.northing - a.northing;
+            const double bcx = c.easting - b.easting;
+            const double bcy = c.northing - b.northing;
+            const double ab = std::hypot(abx, aby);
+            const double bc = std::hypot(bcx, bcy);
+            const double cross = std::abs(abx * bcy - aby * bcx);
+            if (ab < 0.2 || bc < 0.2 ||
+                (ab > 0.0 && bc > 0.0 && cross < 0.02 * ab * bc &&
+                 abx * bcx + aby * bcy > 0.0))
+            {
+                fitted.erase(fitted.begin() + i);
+                changed = true;
+                break;
+            }
+        }
+        if (!changed) break;
+    }
+    if (fitted.size() < 3 || hasSelfIntersections(fitted)) return ring;
+    const double originalArea = calculateSignedArea(ring);
+    const double fittedArea = calculateSignedArea(fitted);
+    if (!std::isfinite(fittedArea) || originalArea * fittedArea <= 0.0 ||
+        std::abs(fittedArea - originalArea) >
+            areaDeviationTolerance * std::abs(originalArea))
         return ring;
-    }
-
-    // Ensure winding matches original
-    if (origSignedArea * newSignedArea < 0.0) {
-        std::reverse(regularized.begin(), regularized.end());
-        newSignedArea = calculateSignedArea(regularized);
-    }
-
-    // LOD1 collapse may move a material amount of pixel-boundary area. This
-    // ring-local guard is followed by whole-footprint area and mask-IoU checks.
-    const double allowedAreaTol = std::max(0.45, areaDeviationTolerance);
-    if (std::abs(std::abs(newSignedArea) - std::abs(origSignedArea)) > allowedAreaTol * std::abs(origSignedArea)) {
-        return ring;
-    }
-
-    if (hasSelfIntersections(regularized)) {
-        return ring;
-    }
-
-    return regularized;
+    return fitted;
 }
 
 //topological helpers
@@ -461,7 +480,8 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
      const ComponentStats& stats,
      const RasterGrid<int32_t>& labelRaster,
      const SpatialMetadata& metadata,
-     const BuildingReconstructionConfig& config)
+     const BuildingReconstructionConfig& config,
+     const std::vector<cv::Vec4f>* opticalLines)
 {
      FootprintVectorizationResult result;
 
@@ -583,13 +603,22 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
      }
 
      //Exact Raster-Cell Edge Polygonization (Replaces OpenCV findContours)
-     std::unordered_map<int64_t, int64_t> edgeMap;
+     struct BoundaryEdge
+     {
+         int64_t start;
+         int64_t end;
+         bool used{false};
+     };
+     std::vector<BoundaryEdge> edges;
+     std::unordered_map<int64_t, std::vector<std::size_t>> outgoing;
      auto encodeNode = [](int32_t x, int32_t y) -> int64_t { return (static_cast<int64_t>(y) << 32) | static_cast<uint32_t>(x); };
      auto decodeNode = [](int64_t val, int32_t& x, int32_t& y) { y = static_cast<int32_t>(val >> 32); x = static_cast<int32_t>(val & 0xFFFFFFFF); };
 
      auto addEdge = [&](int32_t x1, int32_t y1, int32_t x2, int32_t y2)
      {
-         edgeMap[encodeNode(x1, y1)] = encodeNode(x2, y2);
+         const int64_t start = encodeNode(x1, y1);
+         outgoing[start].push_back(edges.size());
+         edges.push_back({start, encodeNode(x2, y2)});
      };
 
      auto isMasked = [&](int32_t c, int32_t r) -> bool {
@@ -624,34 +653,123 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
          }
      }
 
-     //Assemble Rings from Edge Map
-     std::vector<std::vector<ProjectedPoint>> rawRings;
-     while (!edgeMap.empty())
+     // A corner can have two outgoing edges when separate background regions
+     // touch diagonally. Keep both; a single-entry map silently drops one.
+     auto direction = [&](int64_t start, int64_t end)
      {
-         auto it = edgeMap.begin();
-         int64_t startNode = it->first;
-         int64_t currNode = startNode;
-
-         std::vector<ProjectedPoint> ring;
-         do
+         int32_t x0, y0, x1, y1;
+         decodeNode(start, x0, y0);
+         decodeNode(end, x1, y1);
+         if (x1 > x0) return 0; // east
+         if (y1 > y0) return 1; // south
+         if (x1 < x0) return 2; // west
+         return 3;             // north
+     };
+     auto turnPriority = [](int turn)
+     {
+         switch (turn)
          {
-             int32_t px, py;
-             decodeNode(currNode, px, py);
-
-             // Generate Project Corner Coordinate exactly
-             double E = metadata.geoTransform[0] + px * metadata.geoTransform[1] + py * metadata.geoTransform[2];
-             double N = metadata.geoTransform[3] + px * metadata.geoTransform[4] + py * metadata.geoTransform[5];
-             ring.push_back({E, N});
-
-             int64_t nextNode = edgeMap[currNode];
-             edgeMap.erase(currNode);
-             currNode = nextNode;
+             case 1: return 0; // right
+             case 0: return 1; // straight
+             case 3: return 2; // left
+             default: return 3;
          }
-         while (currNode != startNode && edgeMap.count(currNode));
+     };
 
-         if (ring.size() >= 3)
+     std::vector<std::vector<ProjectedPoint>> rawRings;
+     for (std::size_t first = 0; first < edges.size(); ++first)
+     {
+         if (edges[first].used) continue;
+         const int64_t startNode = edges[first].start;
+         std::size_t current = first;
+
+         std::vector<int64_t> ringNodes;
+         bool closed = false;
+         for (std::size_t count = 0; count < edges.size(); ++count)
          {
-             rawRings.push_back(ring);
+             ringNodes.push_back(edges[current].start);
+
+             edges[current].used = true;
+             const int64_t nextNode = edges[current].end;
+             if (nextNode == startNode)
+             {
+                 closed = true;
+                 break;
+             }
+             const auto candidates = outgoing.find(nextNode);
+             if (candidates == outgoing.end()) break;
+             const int incoming = direction(edges[current].start, nextNode);
+             std::size_t next = edges.size();
+             int bestPriority = 4;
+             for (std::size_t candidate : candidates->second)
+             {
+                 if (edges[candidate].used) continue;
+                 const int turn = (direction(nextNode, edges[candidate].end) -
+                                   incoming + 4) % 4;
+                 const int priority = turnPriority(turn);
+                 if (priority < bestPriority)
+                 {
+                     bestPriority = priority;
+                     next = candidate;
+                 }
+             }
+             if (next == edges.size()) break;
+             current = next;
+         }
+         if (!closed)
+         {
+             result.errorMessage = "Building boundary contains an open cell-edge ring.";
+             return result;
+         }
+         // A ring can touch itself at a single cell corner. Separate its two
+         // cycles so a small touching courtyard does not make the entire
+         // building appear multipart or self-intersecting.
+         std::vector<std::vector<int64_t>> pending;
+         pending.push_back(std::move(ringNodes));
+         while (!pending.empty())
+         {
+             auto nodes = std::move(pending.back());
+             pending.pop_back();
+             std::unordered_map<int64_t, std::size_t> seen;
+             bool divided = false;
+             for (std::size_t index = 0; index < nodes.size(); ++index)
+             {
+                 const auto [it, inserted] = seen.emplace(nodes[index], index);
+                 if (inserted) continue;
+                 const std::size_t firstIndex = it->second;
+                 std::vector<int64_t> cycleA(
+                     nodes.begin() + firstIndex, nodes.begin() + index);
+                 std::vector<int64_t> cycleB(
+                     nodes.begin() + index, nodes.end());
+                 cycleB.insert(cycleB.end(), nodes.begin(),
+                               nodes.begin() + firstIndex);
+                 if (cycleA.size() < 3 || cycleB.size() < 3)
+                 {
+                     result.errorMessage = "Building boundary contains a degenerate touching ring.";
+                     return result;
+                 }
+                 pending.push_back(std::move(cycleA));
+                 pending.push_back(std::move(cycleB));
+                 divided = true;
+                 break;
+             }
+             if (divided) continue;
+             if (nodes.size() < 3) continue;
+             std::vector<ProjectedPoint> ring;
+             ring.reserve(nodes.size());
+             for (int64_t node : nodes)
+             {
+                 int32_t px, py;
+                 decodeNode(node, px, py);
+                 ring.push_back({
+                     metadata.geoTransform[0] +
+                         px * metadata.geoTransform[1] +
+                         py * metadata.geoTransform[2],
+                     metadata.geoTransform[3] +
+                         px * metadata.geoTransform[4] +
+                         py * metadata.geoTransform[5]});
+             }
+             rawRings.push_back(std::move(ring));
          }
      }
 
@@ -693,6 +811,26 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
              std::abs(projectedSignedArea) >=
                  config.minHoleAreaSquareMetres)
          {
+             // Small segmentation voids around rooftop equipment are often
+             // triangular or ragged. Retain compact, rectilinear light wells
+             // while removing these unsupported punctures from flat roofs.
+             const double holeArea = std::abs(projectedSignedArea);
+             if (holeArea < 20.0 && ring.size() >= 3)
+             {
+                 const auto origin = ring.front();
+                 std::vector<cv::Point2f> local;
+                 local.reserve(ring.size());
+                 for (const auto& point : ring)
+                     local.emplace_back(
+                         static_cast<float>(point.easting - origin.easting),
+                         static_cast<float>(point.northing - origin.northing));
+                 const cv::RotatedRect box = cv::minAreaRect(local);
+                 const double boxArea = static_cast<double>(box.size.width) *
+                                        box.size.height;
+                 if (boxArea <= 0.0 || holeArea / boxArea < 0.72 ||
+                     std::min(box.size.width, box.size.height) < 1.0f)
+                     continue;
+             }
              // Canonical projected-coordinate output: holes are CW.
              if (projectedSignedArea > 0.0)
              {
@@ -896,6 +1034,18 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
              result.projectedFootprint.outerRing,
              config.maxCornerAdjustmentMetres,
              config.footprintAreaDeviationTolerance);
+         // CGAL can align several facade directions in one closed contour.
+         // Keep the established fit when the candidate moves too far, changes
+         // winding/area, or introduces a crossing.
+         auto cgalRing =
+             FootprintGeometryRegularizer::regularizeContourWithCgal(
+                 result.projectedFootprint.outerRing,
+                 config.maxCornerAdjustmentMetres,
+                 config.footprintAreaDeviationTolerance);
+         if (!cgalRing.empty() &&
+             cgalRing.size() <= result.projectedFootprint.outerRing.size() &&
+             !hasSelfIntersections(cgalRing))
+             result.projectedFootprint.outerRing = std::move(cgalRing);
          finalProjectedArea = std::abs(calculateSignedArea(result.projectedFootprint.outerRing));
      }
 
@@ -907,10 +1057,19 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
          // Retry the exact pixel-edge geometry before rejecting topology.
          if (validHole.empty()) validHole = rawHole;
          if (config.regularizeSupportedEdges)
+         {
              validHole = regularizeEdges(
                  validHole,
                  config.maxCornerAdjustmentMetres,
                  config.footprintAreaDeviationTolerance);
+             auto cgalHole =
+                 FootprintGeometryRegularizer::regularizeContourWithCgal(
+                     validHole, config.maxCornerAdjustmentMetres,
+                     config.footprintAreaDeviationTolerance);
+             if (!cgalHole.empty() && cgalHole.size() <= validHole.size() &&
+                 !hasSelfIntersections(cgalHole))
+                 validHole = std::move(cgalHole);
+         }
          if (!isPointInPolygon(validHole[0], result.projectedFootprint.outerRing) ||
              ringsIntersect(validHole, result.projectedFootprint.outerRing))
          {
@@ -976,6 +1135,31 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
          std::erase(result.warnings,
              std::string("Near-rectangular footprint regularized to supported axes."));
          result.warnings.push_back("Architectural fit exceeded area tolerance; retained observed boundary.");
+     }
+
+     if (opticalLines != nullptr && !opticalLines->empty())
+     {
+         const auto previous = result.projectedFootprint.outerRing;
+         auto snapped = snapToOpticalLines(
+             previous, *opticalLines, metadata,
+             config.maxCornerAdjustmentMetres);
+         const double previousArea = calculateSignedArea(previous);
+         const double snappedArea = calculateSignedArea(snapped);
+         double snappedNetArea = std::abs(snappedArea);
+         for (const auto& hole : result.projectedFootprint.holes)
+             snappedNetArea -= std::abs(calculateSignedArea(hole));
+         if (snapped.size() == previous.size() &&
+             previousArea * snappedArea > 0.0 &&
+             !hasSelfIntersections(snapped) &&
+             std::abs(snappedArea - previousArea) <=
+                 0.05 * std::abs(previousArea) &&
+             std::abs(snappedNetArea - referenceArea) <=
+                 config.footprintAreaDeviationTolerance * referenceArea)
+         {
+             result.projectedFootprint.outerRing = std::move(snapped);
+             if (!validCourtyards())
+                 result.projectedFootprint.outerRing = previous;
+         }
      }
 
      //Generate Corresponding Pixel Polygon (Preserves exact Projected Vertex Correspondence)
@@ -1056,6 +1240,46 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
      };
 
      bool coversNeighbour = false;
+     // GEOS simplifies the complete polygon, including its courtyards, as a
+     // single topology. Admit its candidate only when the same pixel and
+     // neighbour checks used for the architectural fit still pass.
+     const auto beforeGeos = result.projectedFootprint;
+     auto geosCandidate =
+         FootprintGeometryRegularizer::simplifyPolygonWithGeos(
+             beforeGeos,
+             std::min(1.0, 0.25 *
+                 static_cast<double>(config.footprintSimplificationToleranceMetres)));
+     const auto vertexCount = [](const auto& polygon)
+     {
+         std::size_t count = polygon.outerRing.size();
+         for (const auto& hole : polygon.holes) count += hole.size();
+         return count;
+     };
+     if (!geosCandidate.outerRing.empty() &&
+         vertexCount(geosCandidate) < vertexCount(beforeGeos))
+     {
+         const auto netArea = [&](const auto& polygon)
+         {
+             double area = std::abs(calculateSignedArea(polygon.outerRing));
+             for (const auto& hole : polygon.holes)
+                 area -= std::abs(calculateSignedArea(hole));
+             return area;
+         };
+         const double oldArea = netArea(beforeGeos);
+         const double newArea = netArea(geosCandidate);
+         if (oldArea > 0.0 &&
+             std::abs(newArea - oldArea) <= 0.05 * oldArea &&
+             std::abs(newArea - referenceArea) <=
+                 config.footprintAreaDeviationTolerance * referenceArea)
+         {
+             result.projectedFootprint = std::move(geosCandidate);
+             bool geosCoversNeighbour = false;
+             if (!validCourtyards() ||
+                 !fitsInstance(result.projectedFootprint,
+                               geosCoversNeighbour))
+                 result.projectedFootprint = beforeGeos;
+         }
+     }
      if (!fitsInstance(result.projectedFootprint, coversNeighbour))
      {
          initialNeighbourOverlap = coversNeighbour;

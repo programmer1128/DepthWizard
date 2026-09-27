@@ -60,38 +60,31 @@ Metric exports are unchanged, not independently verified ground truth.
    reapplied after morphology so alleys survive. Elevated vegetation pixels
    are traversable only when they also retain credible building evidence.
 3. `BuildingInstanceSplitter` labels edge-connected components, finds sizeable
-   high-probability cores separated by probability valleys or median-filtered
-   nDSM steps, and floods integer instance labels within the original mask.
-   It is enabled by default. A median-filtered 5.5 m nDSM step and at least
-   15 m² of supported seed area separate adjacent roofs without responding to
-   most rooftop equipment. It does not normalize distance against the largest building in the scene.
+   high-probability cores separated by probability valleys or edge-preserving
+   filtered nDSM steps, and floods integer instance labels within the original
+   mask. It is enabled by default. The defaults use a 3 m calibrated nDSM step
+   and 25 m² of supported seed area. An optional, slightly blurred grayscale
+   copy of the uploaded image increases the cost of crossing strong optical
+   edges while assigning ambiguous pixels. It does not normalize distance
+   against the largest building in the scene.
    Every original mask pixel keeps a label. Poorly supported cuts, excessive
    markers and single-core components retain the original component.
+
 4. Each instance is vectorized and gets its own robust height estimate. The
-   observed exterior is widened by 1.5 m to compensate for semantic edge blur;
-   this outward dilation explicitly restores enclosed courtyards and cannot
-   consume pixels belonging to another instance. RDP starts at 3 m and retries
-   smaller tolerances when topology or the configured 25% whole-footprint area
-   budget would be violated. Valid raw rings remain the last fallback.
-   Rectangle candidates need at least 75% box fill and supported observed
-   corners; the former 96% convex-hull-solidity veto is gone. Pixel support,
-   mask IoU, neighbour exclusion and courtyard topology remain mandatory, so
-   fill ratio alone cannot turn a deep L/U-shaped recess into a box.
-   Supported edges are Manhattan-regularized with at most 2.5 m corner
-   movement. Up to 15 collapse passes remove orthogonal raster steps shorter
-   than 5 m, with a 35% ring-local area allowance. Compact four/six-corner
-   architectural primitives are exempt from staircase collapse, and the final
-   footprint still has the stricter whole-object checks. Facade axes are inferred
-   from the strongest perpendicular edge group, so diagonal wings do not
-   disable fitting of an otherwise well-supported right-angle corner. A fitted footprint must
-   retain at least 80% mask IoU and cannot cover any other labelled instance's
-   pixel centres. If it fails, progressively smaller simplifications are tried
-   before falling back to the exact observed boundary.
-   This is a raster-resolution overlap guard, not continuous polygon packing.
-   Courtyard simplification
-   retries original boundaries or reports rejection; it never silently fills
-   a retained courtyard.
-5. Terrain, blue walls and blue roofs become separate Draco primitives.
+   optional exterior dilation is disabled by default. Metric RDP simplification
+   starts at 4 m and backs off when it violates area or ring topology. Supported
+   rectangles require at least 84% box fill, supported corners, and 96% convex
+   hull solidity. The existing Manhattan fitter and CGAL closed-contour
+   regularizer each work within a 3 m corner adjustment budget. GEOS-backed
+   topology-preserving simplification can remove remaining small steps from the
+   complete polygon while retaining its courtyards. Every candidate must still
+   pass area, courtyard, mask IoU, and neighbouring-instance checks. The exact
+   observed boundary remains the fallback.
+5. LoD2 decomposition uses up to three rectangular blocks by default. A 92%
+   coverage setting admits supported L/T forms, while a connected-residual
+   check rejects missing wings. Complex courtyards and shapes that need more
+   blocks retain a continuous outer footprint.
+6. Terrain, colored walls and roofs become separate Draco primitives.
    Buildings have no photographic UV texture; PBR materials and hard normals
    provide face shading. The GLB's terrain texture conceals the photographic
    roof beneath emitted buildings plus a 1 m fringe; the original optical
@@ -102,6 +95,36 @@ These are heuristic instances, not guaranteed property/building identities.
 Two equal-height touching roofs with no semantic boundary can remain one block.
 Multiple roof levels of one real building may become separate render objects.
 Missing model evidence cannot safely be replaced with invented buildings.
+
+## Reference methods and limits
+
+- [Sat3DGen](https://github.com/qianmingduowan/Sat3DGen) constrains learned
+  volumetric density during model training. Its gravity and depth losses are
+  not mesh postprocessors, and its public inference path requires PyTorch,
+  CUDA, and trained weights. This backend keeps explicit building geometry
+  and uses the uploaded optical image, semantic probabilities, and nDSM as
+  deterministic boundary evidence.
+- [Sat2City v2](https://ai4city-hkust.github.io/Sat2City-v2/) trains a
+  satellite-conditioned mesh generator on paired imagery and textured meshes.
+  Its project page currently labels the code as forthcoming, so there is no
+  C++ implementation to adapt.
+- [3DMeshGen](https://github.com/sergyDwhiz/3DMeshGen) demonstrates basic
+  polygon extrusion. `BuildingMesher` already extrudes rings and handles
+  courtyards, roof facets, and setbacks; the useful architectural principle
+  here is retaining hard footprint walls rather than meshing raw depth pixels.
+- [terrain-builder](https://github.com/AlpineMapsOrg/terrain-builder) builds
+  tiled terrain assets from orthophotos and heightmaps. Tiling is relevant to
+  future large-area throughput, but it does not recover building footprints.
+- [DSMtoPointcloud](https://github.com/tersite1/DSMtoPointcloud) converts a
+  depth raster to a point cloud and smooth surface mesh. Applying Poisson
+  reconstruction to buildings would blur the vertical walls that this pipeline
+  represents explicitly.
+
+The quality ceiling remains the uploaded image's semantic mask and inferred
+nDSM. Strong optical edges can improve the division of a merged candidate,
+but they cannot recover a building whose roof was never segmented or infer a
+physically accurate height absent reliable depth evidence. No external
+building polygons are consumed by this reconstruction stage.
 
 ## Viewer requirements
 
@@ -163,6 +186,8 @@ Files are:
 - `cleaned_mask.tif`: accepted pixels after morphology/area filtering.
 - `instance_labels.tif`: integer instance IDs before geometry rejection.
 - `raw_ndsm.tif`: stitched model heights before bias correction/fusion.
+- `reconstruction_ndsm.tif`: bias-corrected model heights supplied directly
+  to instance splitting, roof fitting, and height estimation.
 - `fused_ndsm.tif`: corrected/semantically gated heights.
 - `dtm.tif`: unflattened reference-derived terrain used for metric geometry.
 - `summary.json`: accepted/emitted counts, stage rejections, per-building

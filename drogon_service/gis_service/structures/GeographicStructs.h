@@ -50,6 +50,37 @@ struct GroundPlane
     float c{0.0f};
 };
 
+// Parametric roof information produced by the C++ LoD2 fitting stage. These
+// domain types intentionally avoid OpenCV objects so geometry can cross the
+// reconstruction, meshing, diagnostics and serialization layers safely.
+enum class RoofType : uint8_t
+{
+    FLAT,
+    GABLE,
+    HIP
+};
+
+struct RoofParameters
+{
+    RoofType type{RoofType::FLAT};
+    float eaveHeightAboveGround{0.0f};
+    float ridgeHeightAboveGround{0.0f};
+    PixelPoint ridgeStartPixel;
+    PixelPoint ridgeEndPixel;
+    ProjectedPoint ridgeStartProjected;
+    ProjectedPoint ridgeEndProjected;
+    float confidence{0.0f};
+};
+
+struct DecomposedBuildingBlock
+{
+    // Four corners, open and counter-clockwise in projected coordinates.
+    std::array<PixelPoint, 4> pixelCorners;
+    std::array<ProjectedPoint, 4> projectedCorners;
+    RoofParameters roof;
+    float footprintAreaSquareMetres{0.0f};
+};
+
 struct BuildingInstance 
 {
     uint32_t buildingId{0};
@@ -69,6 +100,7 @@ struct BuildingInstance
     float footprintAreaSquareMetres{0.0f};
     float semanticConfidence{0.0f};
     float heightConfidence{0.0f};
+    std::vector<DecomposedBuildingBlock> blocks;
     std::vector<std::string> geometryWarnings;
 };
 
@@ -83,4 +115,8 @@ struct BuildingCollection
     std::size_t componentRejectedCount{0};
     std::size_t vectorizationRejectedCount{0};
     std::size_t physicsRejectedCount{0};
+    std::size_t lod2BlockCount{0};
+    std::size_t flatRoofBlockCount{0};
+    std::size_t gableRoofBlockCount{0};
+    std::size_t hipRoofBlockCount{0};
 };

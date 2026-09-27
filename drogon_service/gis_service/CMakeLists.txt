@@ -34,6 +34,9 @@ find_package(Eigen3 REQUIRED)
 # Building reconstruction uses OpenCV morphology, connected components and polygons.
 find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs photo)
 
+# Closed footprint contour regularization.
+find_package(CGAL REQUIRED)
+
 #SOURCE FILE DISCOVERY (Package-by-Feature Architecture)
 # Explicitly grab sources from each dedicated service folder
 
@@ -139,6 +142,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Halide
     Eigen3::Eigen
     ${OpenCV_LIBS}
+    CGAL::CGAL
 )
 
 if (CMAKE_CXX_STANDARD LESS 20)

@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <stdexcept>
 #include <numbers>
+#include <array>
+#include <memory>
+#include <ogr_geometry.h>
 
 double BuildingMesher::signedArea(const std::vector<LocalPoint>& ring)
 {
@@ -18,7 +21,7 @@ double BuildingMesher::signedArea(const std::vector<LocalPoint>& ring)
      return 0.5 * twiceArea;
 }
 
-//ear clipping triangulator
+// Ear clipping fallback for simple footprints.
 float BuildingMesher::crossProduct(const LocalPoint& a, const LocalPoint& b, const LocalPoint& c) 
 {
      return static_cast<float>((b.x - a.x) * (c.z - b.z) - (b.z - a.z) * (c.x - b.x));
@@ -43,6 +46,81 @@ BuildingMesher::TriangulationResult BuildingMesher::triangulate(
      if (outerRing.size() < 3) 
      {
          return result;
+     }
+
+     // GEOS-backed constrained triangulation preserves complex concavities
+     // and courtyard holes. Keep the compact ear-clipped mesh for simple
+     // footprints, and as a fallback if GEOS cannot process a polygon.
+     if (!holes.empty() || outerRing.size() > 8)
+     {
+         OGRPolygon polygon;
+         const auto addRing = [&](const std::vector<LocalPoint>& points)
+         {
+             OGRLinearRing ring;
+             for (const auto& point : points)
+                 ring.addPoint(point.x, point.z);
+             ring.closeRings();
+             return polygon.addRing(&ring) == OGRERR_NONE;
+         };
+         bool ringsAdded = addRing(outerRing);
+         for (const auto& hole : holes)
+             if (hole.size() >= 3)
+                 ringsAdded = addRing(hole) && ringsAdded;
+         if (ringsAdded && polygon.IsValid())
+         {
+             std::unique_ptr<OGRGeometry, decltype(&OGRGeometryFactory::destroyGeometry)>
+                 triangles(polygon.ConstrainedDelaunayTriangulation(),
+                           OGRGeometryFactory::destroyGeometry);
+             const auto* collection = triangles
+                 ? dynamic_cast<const OGRGeometryCollection*>(triangles.get())
+                 : nullptr;
+             if (collection && collection->getNumGeometries() > 0)
+             {
+                 double triangleArea = 0.0;
+                 bool complete = true;
+                 for (int index = 0; index < collection->getNumGeometries(); ++index)
+                 {
+                     const auto* triangle = dynamic_cast<const OGRPolygon*>(
+                         collection->getGeometryRef(index));
+                     const auto* ring = triangle != nullptr
+                         ? triangle->getExteriorRing() : nullptr;
+                     if (ring == nullptr || ring->getNumPoints() != 4)
+                     {
+                         complete = false;
+                         break;
+                     }
+                     std::array<LocalPoint, 3> vertices;
+                     for (int corner = 0; corner < 3; ++corner)
+                         vertices[corner] = LocalPoint{
+                             ring->getX(corner), ring->getY(corner)};
+                     const double signedTriangleArea = 0.5 * (
+                         (vertices[1].x - vertices[0].x) *
+                             (vertices[2].z - vertices[0].z) -
+                         (vertices[1].z - vertices[0].z) *
+                             (vertices[2].x - vertices[0].x));
+                     if (std::abs(signedTriangleArea) <= 1.0e-10) continue;
+                     triangleArea += std::abs(signedTriangleArea);
+                     const uint32_t base = static_cast<uint32_t>(result.vertices.size());
+                     result.vertices.insert(result.vertices.end(),
+                                            vertices.begin(), vertices.end());
+                     if (signedTriangleArea > 0.0)
+                         result.indices.insert(result.indices.end(),
+                                               {base, base + 2, base + 1});
+                     else
+                         result.indices.insert(result.indices.end(),
+                                               {base, base + 1, base + 2});
+                 }
+                 double expectedArea = std::abs(signedArea(outerRing));
+                 for (const auto& hole : holes)
+                     expectedArea -= std::abs(signedArea(hole));
+                 if (complete && expectedArea > 0.0 &&
+                     std::abs(triangleArea - expectedArea) <=
+                         std::max(0.1, 0.005 * expectedArea) &&
+                     !result.indices.empty())
+                     return result;
+                 result = {};
+             }
+         }
      }
 
      std::vector<LocalPoint> poly = outerRing;
@@ -323,22 +401,445 @@ BuildingMesh BuildingMesher::generate(
              std::fill(localOuterBaseY.begin(), localOuterBaseY.end(), localBaseY);
          }
 
-         // Mapflow-style hypsometric height color ramp (Two-class palette)
+         // Three metric height bands: cyan low-rise, coral mid-rise, blue tower.
          float wallR, wallG, wallB, wallA;
          float roofR, roofG, roofB, roofA;
 
-         const float h = bldg.heightAboveGround;
-         if (h >= 28.0f)
+         const auto selectHeightColors = [&](float h)
          {
-             // High-Rise Towers (height >= 28.0m / 9+ floors): Sunset Coral / Crimson
-             wallR = 0.95f; wallG = 0.28f; wallB = 0.35f; wallA = 0.65f;
-             roofR = 0.80f; roofG = 0.18f; roofB = 0.25f; roofA = 0.75f;
-         }
-         else
+             if (h >= 45.0f)
+             {
+                 wallR = 0.20f; wallG = 0.37f; wallB = 0.95f; wallA = 1.0f;
+                 roofR = 0.13f; roofG = 0.27f; roofB = 0.78f; roofA = 1.0f;
+             }
+             else if (h >= 30.0f)
+             {
+                 wallR = 0.95f; wallG = 0.28f; wallB = 0.35f; wallA = 1.0f;
+                 roofR = 0.80f; roofG = 0.18f; roofB = 0.25f; roofA = 1.0f;
+             }
+             else
+             {
+                 wallR = 0.00f; wallG = 0.82f; wallB = 0.95f; wallA = 1.0f;
+                 roofR = 0.00f; roofG = 0.65f; roofB = 0.85f; roofA = 1.0f;
+             }
+         };
+         selectHeightColors(bldg.heightAboveGround);
+
+         // Parametric LoD2 block path. The validated source footprint remains
+         // the terrain cutout, while supported non-overlapping rectangles
+         // provide crisp walls and conservative flat/gable/hip roofs.
+         if (!bldg.blocks.empty())
          {
-             // Standard Urban Buildings (height < 28.0m / up to 8 floors): Electric Cyan / Teal
-             wallR = 0.00f; wallG = 0.82f; wallB = 0.95f; wallA = 0.65f;
-             roofR = 0.00f; roofG = 0.65f; roofB = 0.85f; roofA = 0.75f;
+             struct Vertex3
+             {
+                 double x;
+                 float y;
+                 double z;
+             };
+             struct LocalBlock
+             {
+                 std::array<LocalPoint, 4> corners;
+                 RoofParameters roof;
+                 float eaveY{0.0f};
+                 float ridgeY{0.0f};
+             };
+
+             auto expandBounds = [](AxisAlignedBounds& bounds,
+                                    const Vertex3& vertex)
+             {
+                 bounds.isInitialized = true;
+                 bounds.minX = std::min(bounds.minX, vertex.x);
+                 bounds.maxX = std::max(bounds.maxX, vertex.x);
+                 bounds.minY = std::min(
+                     bounds.minY, static_cast<double>(vertex.y));
+                 bounds.maxY = std::max(
+                     bounds.maxY, static_cast<double>(vertex.y));
+                 bounds.minZ = std::min(bounds.minZ, vertex.z);
+                 bounds.maxZ = std::max(bounds.maxZ, vertex.z);
+             };
+
+             auto emitTriangle = [&](MeshPrimitive& primitive,
+                                     AxisAlignedBounds& bounds,
+                                     Vertex3 a, Vertex3 b, Vertex3 c,
+                                     float colorR, float colorG,
+                                     float colorB, float colorA,
+                                     const std::array<double, 3>& preferred)
+             {
+                 const auto normal = [](const Vertex3& p0,
+                                        const Vertex3& p1,
+                                        const Vertex3& p2)
+                 {
+                     const double abx = p1.x - p0.x;
+                     const double aby = p1.y - p0.y;
+                     const double abz = p1.z - p0.z;
+                     const double acx = p2.x - p0.x;
+                     const double acy = p2.y - p0.y;
+                     const double acz = p2.z - p0.z;
+                     return std::array<double, 3>{
+                         aby * acz - abz * acy,
+                         abz * acx - abx * acz,
+                         abx * acy - aby * acx};
+                 };
+                 auto n = normal(a, b, c);
+                 if (n[0] * preferred[0] + n[1] * preferred[1] +
+                         n[2] * preferred[2] < 0.0)
+                 {
+                     std::swap(b, c);
+                     n = normal(a, b, c);
+                 }
+                 const double length = std::sqrt(
+                     n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+                 if (length <= 1.0e-8) return;
+                 const std::array<float, 3> unit{
+                     static_cast<float>(n[0] / length),
+                     static_cast<float>(n[1] / length),
+                     static_cast<float>(n[2] / length)};
+                 const uint32_t base = static_cast<uint32_t>(
+                     primitive.positions.size() / 3);
+                 for (const Vertex3& vertex : {a, b, c})
+                 {
+                     primitive.positions.push_back(
+                         static_cast<float>(vertex.x));
+                     primitive.positions.push_back(vertex.y);
+                     primitive.positions.push_back(
+                         static_cast<float>(vertex.z));
+                     primitive.normals->insert(
+                         primitive.normals->end(), unit.begin(), unit.end());
+                     primitive.featureIds->push_back(
+                         static_cast<float>(bldg.buildingId));
+                     primitive.colors->insert(
+                         primitive.colors->end(),
+                         {colorR, colorG, colorB, colorA});
+                     expandBounds(bounds, vertex);
+                 }
+                 primitive.indices.insert(
+                     primitive.indices.end(), {base, base + 1, base + 2});
+             };
+
+             auto pushEdge = [&](const Vertex3& a, const Vertex3& b)
+             {
+                 const uint32_t base = static_cast<uint32_t>(
+                     result.edgePrimitive.positions.size() / 3);
+                 result.edgePrimitive.positions.insert(
+                     result.edgePrimitive.positions.end(),
+                     {static_cast<float>(a.x), a.y, static_cast<float>(a.z),
+                      static_cast<float>(b.x), b.y, static_cast<float>(b.z)});
+                 result.edgePrimitive.colors->insert(
+                     result.edgePrimitive.colors->end(),
+                     {1.0f, 1.0f, 1.0f, 0.90f,
+                      1.0f, 1.0f, 1.0f, 0.90f});
+                 result.edgePrimitive.indices.insert(
+                     result.edgePrimitive.indices.end(), {base, base + 1});
+                 expandBounds(edgeBounds, a);
+                 expandBounds(edgeBounds, b);
+             };
+
+             std::vector<LocalBlock> blocks;
+             blocks.reserve(bldg.blocks.size());
+             for (const auto& source : bldg.blocks)
+             {
+                 LocalBlock block;
+                 block.roof = source.roof;
+                 for (std::size_t index = 0; index < 4; ++index)
+                     block.corners[index] = LocalFrameTransformer::toLocal(
+                         source.projectedCorners[index], frame);
+                 std::vector<LocalPoint> winding(
+                     block.corners.begin(), block.corners.end());
+                 if (signedArea(winding) < 0.0)
+                     std::reverse(block.corners.begin(), block.corners.end());
+                 block.eaveY = config.flatPresentation
+                     ? source.roof.eaveHeightAboveGround
+                     : LocalFrameTransformer::toLocalElevation(
+                         bldg.representativeBaseElevation +
+                             source.roof.eaveHeightAboveGround,
+                         frame);
+                 block.ridgeY = config.flatPresentation
+                     ? source.roof.ridgeHeightAboveGround
+                     : LocalFrameTransformer::toLocalElevation(
+                         bldg.representativeBaseElevation +
+                             source.roof.ridgeHeightAboveGround,
+                         frame);
+                 blocks.push_back(block);
+             }
+
+             auto pointInConvexBlock = [](const LocalPoint& point,
+                                          const LocalBlock& block)
+             {
+                 bool hasPositive = false;
+                 bool hasNegative = false;
+                 for (std::size_t index = 0; index < 4; ++index)
+                 {
+                     const auto& a = block.corners[index];
+                     const auto& b = block.corners[(index + 1) % 4];
+                     const double cross = (b.x - a.x) * (point.z - a.z) -
+                         (b.z - a.z) * (point.x - a.x);
+                     hasPositive = hasPositive || cross > 1.0e-5;
+                     hasNegative = hasNegative || cross < -1.0e-5;
+                     if (hasPositive && hasNegative) return false;
+                 }
+                 return true;
+             };
+
+             auto adjacentHeight = [&](std::size_t blockIndex,
+                                       const LocalPoint& a,
+                                       const LocalPoint& b)
+             {
+                 const LocalPoint midpoint{
+                     0.5 * (a.x + b.x), 0.5 * (a.z + b.z)};
+                 float height = -std::numeric_limits<float>::infinity();
+                 for (std::size_t other = 0; other < blocks.size(); ++other)
+                 {
+                     if (other == blockIndex) continue;
+                     if (pointInConvexBlock(midpoint, blocks[other]))
+                         height = std::max(height, blocks[other].eaveY);
+                 }
+                 return height;
+             };
+
+             for (std::size_t blockIndex = 0;
+                  blockIndex < blocks.size(); ++blockIndex)
+             {
+                 const auto& block = blocks[blockIndex];
+                 selectHeightColors(block.roof.ridgeHeightAboveGround);
+                 LocalPoint centre;
+                 for (const auto& corner : block.corners)
+                 {
+                     centre.x += corner.x;
+                     centre.z += corner.z;
+                 }
+                 centre.x /= 4.0;
+                 centre.z /= 4.0;
+
+                 const double edge0 = std::hypot(
+                     block.corners[1].x - block.corners[0].x,
+                     block.corners[1].z - block.corners[0].z);
+                 const double edge1 = std::hypot(
+                     block.corners[2].x - block.corners[1].x,
+                     block.corners[2].z - block.corners[1].z);
+                 bool ridgeRunsAlongEdge0 = edge0 >= edge1;
+                 if (block.roof.type != RoofType::FLAT)
+                 {
+                     const LocalPoint fittedStart =
+                         LocalFrameTransformer::toLocal(
+                             block.roof.ridgeStartProjected, frame);
+                     const LocalPoint fittedEnd =
+                         LocalFrameTransformer::toLocal(
+                             block.roof.ridgeEndProjected, frame);
+                     const double fittedX = fittedEnd.x - fittedStart.x;
+                     const double fittedZ = fittedEnd.z - fittedStart.z;
+                     const double fittedLength = std::hypot(fittedX, fittedZ);
+                     if (fittedLength > 1.0e-6 && edge0 > 1.0e-6 &&
+                         edge1 > 1.0e-6)
+                     {
+                         const double edge0Alignment = std::abs(
+                             fittedX * (block.corners[1].x - block.corners[0].x) +
+                             fittedZ * (block.corners[1].z - block.corners[0].z)) /
+                             (fittedLength * edge0);
+                         const double edge1Alignment = std::abs(
+                             fittedX * (block.corners[2].x - block.corners[1].x) +
+                             fittedZ * (block.corners[2].z - block.corners[1].z)) /
+                             (fittedLength * edge1);
+                         ridgeRunsAlongEdge0 =
+                             edge0Alignment >= edge1Alignment;
+                     }
+                 }
+                 const std::array<int, 2> startEnd = ridgeRunsAlongEdge0
+                     ? std::array<int, 2>{3, 0}
+                     : std::array<int, 2>{0, 1};
+                 const std::array<int, 2> finishEnd = ridgeRunsAlongEdge0
+                     ? std::array<int, 2>{1, 2}
+                     : std::array<int, 2>{2, 3};
+                 const std::array<int, 2> sideA = ridgeRunsAlongEdge0
+                     ? std::array<int, 2>{0, 1}
+                     : std::array<int, 2>{1, 2};
+                 const std::array<int, 2> sideB = ridgeRunsAlongEdge0
+                     ? std::array<int, 2>{3, 2}
+                     : std::array<int, 2>{0, 3};
+
+                 auto midpoint = [&](const std::array<int, 2>& end)
+                 {
+                     return LocalPoint{
+                         0.5 * (block.corners[end[0]].x +
+                                block.corners[end[1]].x),
+                         0.5 * (block.corners[end[0]].z +
+                                block.corners[end[1]].z)};
+                 };
+                 LocalPoint ridgeStart = midpoint(startEnd);
+                 LocalPoint ridgeFinish = midpoint(finishEnd);
+                 if (block.roof.type == RoofType::HIP)
+                 {
+                     const double ridgeLength = std::hypot(
+                         ridgeFinish.x - ridgeStart.x,
+                         ridgeFinish.z - ridgeStart.z);
+                     const double shortWidth = std::min(edge0, edge1);
+                     const double inset = std::min(
+                         0.45 * ridgeLength, 0.5 * shortWidth);
+                     if (ridgeLength > 1.0e-6)
+                     {
+                         const double dirX =
+                             (ridgeFinish.x - ridgeStart.x) / ridgeLength;
+                         const double dirZ =
+                             (ridgeFinish.z - ridgeStart.z) / ridgeLength;
+                         ridgeStart.x += inset * dirX;
+                         ridgeStart.z += inset * dirZ;
+                         ridgeFinish.x -= inset * dirX;
+                         ridgeFinish.z -= inset * dirZ;
+                     }
+                 }
+
+                 const auto eaveVertex = [&](int index)
+                 {
+                     return Vertex3{block.corners[index].x, block.eaveY,
+                                    block.corners[index].z};
+                 };
+                 const Vertex3 ridgeA{
+                     ridgeStart.x, block.ridgeY, ridgeStart.z};
+                 const Vertex3 ridgeB{
+                     ridgeFinish.x, block.ridgeY, ridgeFinish.z};
+
+                 if (block.roof.type == RoofType::FLAT)
+                 {
+                     emitTriangle(result.roofPrimitive, roofBounds,
+                         eaveVertex(0), eaveVertex(1), eaveVertex(2),
+                         roofR, roofG, roofB, roofA, {0.0, 1.0, 0.0});
+                     emitTriangle(result.roofPrimitive, roofBounds,
+                         eaveVertex(0), eaveVertex(2), eaveVertex(3),
+                         roofR, roofG, roofB, roofA, {0.0, 1.0, 0.0});
+                 }
+                 else
+                 {
+                     emitTriangle(result.roofPrimitive, roofBounds,
+                         eaveVertex(sideA[0]), eaveVertex(sideA[1]), ridgeB,
+                         roofR, roofG, roofB, roofA, {0.0, 1.0, 0.0});
+                     emitTriangle(result.roofPrimitive, roofBounds,
+                         eaveVertex(sideA[0]), ridgeB, ridgeA,
+                         roofR, roofG, roofB, roofA, {0.0, 1.0, 0.0});
+                     emitTriangle(result.roofPrimitive, roofBounds,
+                         eaveVertex(sideB[0]), ridgeA, ridgeB,
+                         roofR, roofG, roofB, roofA, {0.0, 1.0, 0.0});
+                     emitTriangle(result.roofPrimitive, roofBounds,
+                         eaveVertex(sideB[0]), ridgeB,
+                         eaveVertex(sideB[1]),
+                         roofR, roofG, roofB, roofA, {0.0, 1.0, 0.0});
+
+                     if (block.roof.type == RoofType::HIP)
+                     {
+                         emitTriangle(result.roofPrimitive, roofBounds,
+                             eaveVertex(startEnd[0]),
+                             eaveVertex(startEnd[1]), ridgeA,
+                             roofR, roofG, roofB, roofA,
+                             {0.0, 1.0, 0.0});
+                         emitTriangle(result.roofPrimitive, roofBounds,
+                             eaveVertex(finishEnd[0]), ridgeB,
+                             eaveVertex(finishEnd[1]),
+                             roofR, roofG, roofB, roofA,
+                             {0.0, 1.0, 0.0});
+                     }
+                     else
+                     {
+                         const auto emitGableEnd = [&](const auto& end,
+                                                       const Vertex3& ridge)
+                         {
+                             const LocalPoint endMid = midpoint(end);
+                             const std::array<double, 3> outward{
+                                 endMid.x - centre.x, 0.0,
+                                 endMid.z - centre.z};
+                             emitTriangle(result.wallPrimitive, wallBounds,
+                                 eaveVertex(end[0]), eaveVertex(end[1]), ridge,
+                                 wallR, wallG, wallB, wallA, outward);
+                         };
+                         emitGableEnd(startEnd, ridgeA);
+                         emitGableEnd(finishEnd, ridgeB);
+                     }
+                 }
+
+                 for (std::size_t edge = 0; edge < 4; ++edge)
+                 {
+                     const auto& a = block.corners[edge];
+                     const auto& b = block.corners[(edge + 1) % 4];
+                     const double dx = b.x - a.x;
+                     const double dz = b.z - a.z;
+                     const double lengthSquared = dx * dx + dz * dz;
+                     if (lengthSquared <= 1.0e-12) continue;
+                     std::vector<double> cuts{0.0, 1.0};
+                     // A neighbour can cover only part of a long edge. Split
+                     // at its corners before deciding which wall spans are
+                     // exterior and which are shared or setback steps.
+                     for (std::size_t other = 0; other < blocks.size(); ++other)
+                     {
+                         if (other == blockIndex) continue;
+                         for (const auto& corner : blocks[other].corners)
+                         {
+                             const double offsetX = corner.x - a.x;
+                             const double offsetZ = corner.z - a.z;
+                             const double t = (offsetX * dx + offsetZ * dz) /
+                                 lengthSquared;
+                             const double distance = std::abs(
+                                 offsetX * dz - offsetZ * dx) /
+                                 std::sqrt(lengthSquared);
+                             if (t > 1.0e-6 && t < 1.0 - 1.0e-6 &&
+                                 distance < 1.0e-4)
+                                 cuts.push_back(t);
+                         }
+                     }
+                     std::sort(cuts.begin(), cuts.end());
+                     cuts.erase(std::unique(cuts.begin(), cuts.end(),
+                         [](double left, double right)
+                         { return std::abs(left - right) < 1.0e-6; }),
+                         cuts.end());
+                     for (std::size_t segment = 0; segment + 1 < cuts.size();
+                          ++segment)
+                     {
+                         const LocalPoint start{
+                             a.x + cuts[segment] * dx,
+                             a.z + cuts[segment] * dz};
+                         const LocalPoint finish{
+                             a.x + cuts[segment + 1] * dx,
+                             a.z + cuts[segment + 1] * dz};
+                         const float neighbourY = adjacentHeight(
+                             blockIndex, start, finish);
+                         if (!std::isfinite(neighbourY) ||
+                             block.eaveY > neighbourY + 0.1f)
+                         {
+                             const LocalPoint edgeMid{
+                                 0.5 * (start.x + finish.x),
+                                 0.5 * (start.z + finish.z)};
+                             const std::array<double, 3> outward{
+                                 edgeMid.x - centre.x, 0.0,
+                                 edgeMid.z - centre.z};
+                             const float wallBaseY = std::isfinite(neighbourY)
+                                 ? neighbourY : localBaseY;
+                             const Vertex3 baseA{start.x, wallBaseY, start.z};
+                             const Vertex3 topA{start.x, block.eaveY, start.z};
+                             const Vertex3 topB{finish.x, block.eaveY, finish.z};
+                             const Vertex3 baseB{finish.x, wallBaseY, finish.z};
+                             emitTriangle(result.wallPrimitive, wallBounds,
+                                 baseA, topA, topB,
+                                 wallR, wallG, wallB, wallA, outward);
+                             emitTriangle(result.wallPrimitive, wallBounds,
+                                 baseA, topB, baseB,
+                                 wallR, wallG, wallB, wallA, outward);
+                             pushEdge(baseA, topA);
+                         }
+                         if (!std::isfinite(neighbourY) ||
+                             std::abs(block.eaveY - neighbourY) > 0.1f)
+                             pushEdge(
+                                 Vertex3{start.x, block.eaveY, start.z},
+                                 Vertex3{finish.x, block.eaveY, finish.z});
+                     }
+                 }
+                 if (block.roof.type != RoofType::FLAT)
+                 {
+                     pushEdge(ridgeA, ridgeB);
+                     pushEdge(eaveVertex(startEnd[0]), ridgeA);
+                     pushEdge(eaveVertex(startEnd[1]), ridgeA);
+                     pushEdge(eaveVertex(finishEnd[0]), ridgeB);
+                     pushEdge(eaveVertex(finishEnd[1]), ridgeB);
+                 }
+             }
+
+             result.emittedBuildingIds.push_back(bldg.buildingId);
+             continue;
          }
 
          /*

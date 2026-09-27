@@ -11,5 +11,6 @@ class BuildingInstanceExtractor
          const SemanticScene& semantics,
          const SpatialMetadata& metadata,
          const BuildingReconstructionConfig& config,
-         const RasterGrid<float>* ndsm = nullptr);
+         const RasterGrid<float>* ndsm = nullptr,
+         const RasterGrid<uint8_t>* opticalGray = nullptr);
 };

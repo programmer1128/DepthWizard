@@ -2,6 +2,7 @@
 #include "BuildingReconstructionTypes.h"
 #include "../structures/GeographicStructs.h"
 #include "BuildingReconstructionConfig.h"
+#include <opencv2/core/types.hpp>
 
 class FootprintVectorizer
 {
@@ -10,7 +11,8 @@ class FootprintVectorizer
          const ComponentStats& stats,
          const RasterGrid<int32_t>& labelRaster,
          const SpatialMetadata& metadata,
-         const BuildingReconstructionConfig& config);
+         const BuildingReconstructionConfig& config,
+         const std::vector<cv::Vec4f>* opticalLines = nullptr);
 
      static std::vector<ProjectedPoint> regularizeEdges(
          const std::vector<ProjectedPoint>& ring,
