@@ -32,7 +32,7 @@ find_package(Halide REQUIRED)
 find_package(Eigen3 REQUIRED)
 
 # Building reconstruction uses OpenCV morphology, connected components and polygons.
-find_package(OpenCV REQUIRED COMPONENTS core imgproc)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs photo)
 
 #SOURCE FILE DISCOVERY (Package-by-Feature Architecture)
 # Explicitly grab sources from each dedicated service folder
@@ -122,7 +122,10 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/structures
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/GraphOrdering
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/HannAssembler
-                           ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/TilingOLS
+                           ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/Tiling
+                           ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/NdsmInference
+                           ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/SemanticInference
+                           ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/OutputStitching
                            ${CMAKE_CURRENT_SOURCE_DIR}/HeightService
                            ${OpenCV_INCLUDE_DIRS}
                            ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers

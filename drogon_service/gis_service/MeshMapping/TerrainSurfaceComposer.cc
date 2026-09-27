@@ -1,6 +1,8 @@
 #include "TerrainSurfaceComposer.h"
 
 #include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/photo.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -53,8 +55,6 @@ RasterGrid<uint8_t> TerrainSurfaceComposer::buildAcceptedBuildingMask(
             continue;
         }
 
-        // Rasterize each building independently. This prevents a courtyard
-        // in one footprint from erasing an overlapping accepted building.
         cv::Mat buildingMask(
             metadata.height, metadata.width, CV_8UC1, cv::Scalar(0));
         const std::vector<cv::Point> outer =
@@ -90,8 +90,10 @@ RasterGrid<uint8_t> TerrainSurfaceComposer::buildAcceptedBuildingMask(
         const int radiusY = std::max(
             1,
             static_cast<int>(std::ceil(clearanceMetres / rowResolution)));
+        
+        // RECT used here to maintain sharp structural boundaries during mask expansion
         const cv::Mat kernel = cv::getStructuringElement(
-            cv::MORPH_ELLIPSE,
+            cv::MORPH_RECT,
             cv::Size(radiusX * 2 + 1, radiusY * 2 + 1));
         cv::dilate(acceptedMask, acceptedMask, kernel);
     }
@@ -114,4 +116,44 @@ RasterGrid<uint8_t> TerrainSurfaceComposer::buildAcceptedBuildingMask(
     }
 
     return result;
+}
+
+std::vector<uint8_t> TerrainSurfaceComposer::inpaintBuildingTextures(
+    const std::vector<uint8_t>& originalJpegBytes,
+    const RasterGrid<uint8_t>& buildingMask,
+    const SpatialMetadata& metadata)
+{
+    if (originalJpegBytes.empty() || !buildingMask.isValid()) 
+    {
+        return originalJpegBytes;
+    }
+
+    cv::Mat image = cv::imdecode(originalJpegBytes, cv::IMREAD_COLOR);
+    if (image.empty() || image.cols != buildingMask.width || image.rows != buildingMask.height) 
+    {
+        return originalJpegBytes;
+    }
+
+    cv::Mat inpaintMask(buildingMask.height, buildingMask.width, CV_8UC1, 
+                        const_cast<uint8_t*>(buildingMask.data.data()));
+
+    // Dynamically calculate dilation kernel size based on a ~2-meter physical spread
+    double colRes = std::hypot(metadata.geoTransform[1], metadata.geoTransform[4]);
+    double rowRes = std::hypot(metadata.geoTransform[2], metadata.geoTransform[5]);
+    
+    int radiusX = (colRes > 0) ? std::max(1, static_cast<int>(std::ceil(2.0 / colRes))) : 5;
+    int radiusY = (rowRes > 0) ? std::max(1, static_cast<int>(std::ceil(2.0 / rowRes))) : 5;
+
+    cv::Mat expandedMask;
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(radiusX * 2 + 1, radiusY * 2 + 1));
+    cv::dilate(inpaintMask, expandedMask, kernel);
+
+    // Fast-marching Telea algorithm synthesizes surrounding dirt/grass over the roof
+    cv::Mat inpaintedImage;
+    cv::inpaint(image, expandedMask, inpaintedImage, 3.0, cv::INPAINT_TELEA);
+
+    std::vector<uint8_t> resultBytes;
+    cv::imencode(".jpg", inpaintedImage, resultBytes, {cv::IMWRITE_JPEG_QUALITY, 92});
+
+    return resultBytes;
 }

@@ -16,31 +16,23 @@ GlbBuildResult SceneMeshService::generateGlb(
 {
      GlbBuildResult result;
 
-     //Establish Mathematical Anchor
      LocalSceneFrame frame = LocalFrameTransformer::create(metadata, surface);
 
-     // Build a render-only mask from buildings that survived semantic,
-     // topology, and physical validation. The scientific DSM remains intact.
      const RasterGrid<uint8_t> acceptedBuildingMask =
          TerrainSurfaceComposer::buildAcceptedBuildingMask(
              buildings,
              metadata,
              config.terrain.buildingTerrainClearanceMetres);
 
-     // Generate independent geometry. Beneath accepted buildings the terrain
-     // uses DTM, preventing a textured molten DSM mound from competing with
-     // the sharp solid roof/wall primitives.
      TerrainMesh terrain = TerrainMesher::generate(
          surface,
          acceptedBuildingMask,
          metadata,
          frame,
          config.terrain);
+         
      BuildingMesh bldgMesh = BuildingMesher::generate(buildings, frame, config.building);
 
-     // An accepted building must materialize as both a roof and wall mesh.
-     // Returning a terrain-only GLB in this state would silently recreate the
-     // molten/textured result while claiming that buildings were reconstructed.
      if (!buildings.buildings.empty() &&
          (bldgMesh.roofPrimitive.indices.empty() ||
           bldgMesh.wallPrimitive.indices.empty()))
@@ -50,13 +42,24 @@ GlbBuildResult SceneMeshService::generateGlb(
          return result;
      }
 
-     //Assemble into Unified Scene
-     SceneMesh sceneMesh = SceneAssembler::assemble(terrain, bldgMesh, scene, frame);
+     // =========================================================================
+     // TEXTURE INPAINTING INTERCEPT (Telea Algorithm)
+     // Delegates directly to the composer. Metadata is passed to calculate 
+     // dynamic GSD-based kernel sizing.
+     // =========================================================================
+     std::vector<uint8_t> inpaintedTextureBytes;
+     if (!scene.rgbTextureBytes.empty() && acceptedBuildingMask.isValid() && !buildings.buildings.empty())
+     {
+         inpaintedTextureBytes = TerrainSurfaceComposer::inpaintBuildingTextures(
+             scene.rgbTextureBytes, acceptedBuildingMask, metadata);
+     }
 
-     //Compress Primitives Independently via Draco
+     // Assemble into Unified Scene using the override parameter cleanly
+     SceneMesh sceneMesh = SceneAssembler::assemble(terrain, bldgMesh, scene, frame, inpaintedTextureBytes);
+
+     // Compress Primitives Independently via Draco
      std::vector<CompressedPrimitive> compressedPrimitives;
     
-     // Compress Terrain
      CompressedPrimitive compTerrain = DracoCompressor::compress(sceneMesh.terrainPrimitive, config.draco);
      if (!compTerrain.success) 
      {
@@ -68,11 +71,9 @@ GlbBuildResult SceneMeshService::generateGlb(
          compressedPrimitives.push_back(std::move(compTerrain));
          result.vertexCount += sceneMesh.terrainPrimitive.positions.size() / 3;
          result.triangleCount += sceneMesh.terrainPrimitive.indices.size() / 3;
-         result.terrainTriangleCount =
-             sceneMesh.terrainPrimitive.indices.size() / 3;
+         result.terrainTriangleCount = sceneMesh.terrainPrimitive.indices.size() / 3;
      }
 
-     // Compress Roofs
      if (!sceneMesh.roofPrimitive.indices.empty())
      {
          CompressedPrimitive compRoofs = DracoCompressor::compress(sceneMesh.roofPrimitive, config.draco);
@@ -84,12 +85,10 @@ GlbBuildResult SceneMeshService::generateGlb(
              compressedPrimitives.push_back(std::move(compRoofs));
              result.vertexCount += sceneMesh.roofPrimitive.positions.size() / 3;
              result.triangleCount += sceneMesh.roofPrimitive.indices.size() / 3;
-             result.roofTriangleCount =
-                 sceneMesh.roofPrimitive.indices.size() / 3;
+             result.roofTriangleCount = sceneMesh.roofPrimitive.indices.size() / 3;
          }
      }
 
-     // Compress Walls (The Holographic Extrusions)
      if (!sceneMesh.wallPrimitive.indices.empty())
      {
          CompressedPrimitive compWalls = DracoCompressor::compress(sceneMesh.wallPrimitive, config.draco);
@@ -101,32 +100,26 @@ GlbBuildResult SceneMeshService::generateGlb(
              compressedPrimitives.push_back(std::move(compWalls));
              result.vertexCount += sceneMesh.wallPrimitive.positions.size() / 3;
              result.triangleCount += sceneMesh.wallPrimitive.indices.size() / 3;
-             result.wallTriangleCount =
-                 sceneMesh.wallPrimitive.indices.size() / 3;
+             result.wallTriangleCount = sceneMesh.wallPrimitive.indices.size() / 3;
          }
      }
 
-     // Abort if no geometry survived compression
      if (compressedPrimitives.empty()) 
      {
-         result.geometryWarnings.push_back("Errror: All primitives failed compression. Cannot generate GLB.");
+         result.geometryWarnings.push_back("Error: All primitives failed compression. Cannot generate GLB.");
          return result;
      }
 
-     //Binary Packaging
      size_t buildingCount = buildings.buildings.size();
-    
      GlbBuildResult packagedResult = GltfPackager::buildSceneToMemory(
          sceneMesh, compressedPrimitives, buildingCount);
  
-     // Merge metadata and pass back to PipelineService
      packagedResult.vertexCount = result.vertexCount;
      packagedResult.triangleCount = result.triangleCount;
      packagedResult.terrainTriangleCount = result.terrainTriangleCount;
      packagedResult.roofTriangleCount = result.roofTriangleCount;
      packagedResult.wallTriangleCount = result.wallTriangleCount;
     
-     // Carry over any geometry warnings triggered during compression
      packagedResult.geometryWarnings.insert(
          packagedResult.geometryWarnings.end(),
          result.geometryWarnings.begin(),

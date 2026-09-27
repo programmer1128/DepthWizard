@@ -105,9 +105,16 @@ BuildingMaskResult createCleanMaskImpl(
              semantics.semanticConfidence.data[index] >=
              config.minBuildingSemanticConfidence;
 
+         // NEW LOGIC: Allow recovery across high-elevation false-positive vegetation (e.g. oxidized copper roofs)
+         const bool isVegetation = 
+             semantics.finalClassMap.data[index] == SemanticClass::VEGETATION;
+         const bool highElevationVeg = 
+             isVegetation && metricNdsm != nullptr && 
+             std::isfinite(metricNdsm->data[index]) && metricNdsm->data[index] >= 3.0f;
+
          const bool recoveredBuilding =
              metricNdsm != nullptr &&
-             semantics.finalClassMap.data[index] == SemanticClass::UNKNOWN &&
+             (semantics.finalClassMap.data[index] == SemanticClass::UNKNOWN || highElevationVeg) &&
              semantics.buildingProbability.data[index] >=
                  config.buildingRecoveryProbabilityThreshold &&
              std::isfinite(metricNdsm->data[index]) &&
@@ -143,10 +150,10 @@ BuildingMaskResult createCleanMaskImpl(
      result.closingKernelWidth  = calcKernelDim(config.closingRadiusMetres, colRes);
      result.closingKernelHeight = calcKernelDim(config.closingRadiusMetres, rowRes);
 
-     // Opening (Erosion -> Dilation)
+     // Opening (Erosion -> Dilation) - UPDATED to MORPH_RECT to preserve sharp 90-degree facade corners
      if (result.openingKernelWidth >= 3 || result.openingKernelHeight >= 3) 
      {
-         cv::Mat openKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, 
+         cv::Mat openKernel = cv::getStructuringElement(cv::MORPH_RECT, 
              cv::Size(result.openingKernelWidth, result.openingKernelHeight));
          cv::morphologyEx(binaryMask, binaryMask, cv::MORPH_OPEN, openKernel);
         
@@ -154,10 +161,10 @@ BuildingMaskResult createCleanMaskImpl(
          cv::bitwise_and(binaryMask, validMat255, binaryMask);
      }
 
-     // Closing (Dilation -> Erosion)
+     // Closing (Dilation -> Erosion) - UPDATED to MORPH_RECT
      if (result.closingKernelWidth >= 3 || result.closingKernelHeight >= 3) 
      {
-         cv::Mat closeKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, 
+         cv::Mat closeKernel = cv::getStructuringElement(cv::MORPH_RECT, 
              cv::Size(result.closingKernelWidth, result.closingKernelHeight));
          cv::morphologyEx(binaryMask, binaryMask, cv::MORPH_CLOSE, closeKernel);
         

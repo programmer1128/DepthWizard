@@ -129,6 +129,50 @@ bool FootprintVectorizer::ringsIntersect(const std::vector<ProjectedPoint>& ring
      return false;
 }
 
+std::vector<ProjectedPoint> FootprintVectorizer::regularizeEdges(
+    const std::vector<ProjectedPoint>& ring,
+    double area,
+    const BuildingReconstructionConfig& config)
+{
+    if (ring.size() < 3) return ring;
+
+    std::vector<cv::Point2f> pts;
+    pts.reserve(ring.size());
+    for (const auto& p : ring) 
+    {
+        pts.push_back(cv::Point2f(static_cast<float>(p.easting), static_cast<float>(p.northing)));
+    }
+
+    // Generate minimum bounding rectangle to square off the facade
+    cv::RotatedRect rect = cv::minAreaRect(pts);
+    cv::Point2f rectPts[4];
+    rect.points(rectPts);
+
+    std::vector<ProjectedPoint> output;
+    for (int i = 0; i < 4; ++i) 
+    {
+        output.push_back({rectPts[i].x, rectPts[i].y});
+    }
+
+    double changed = std::abs(calculateSignedArea(output));
+
+    // Area deviation threshold relaxed to 10% to prevent silently reverting to raw pixels
+    if (output.size() < 3 || area * changed <= 0 ||
+        std::abs(changed - area) > .10 * std::abs(area) || 
+        hasSelfIntersections(output)) 
+    {
+        return ring;
+    }
+
+    // Enforce the original orientation winding
+    if ((calculateSignedArea(ring) > 0) != (calculateSignedArea(output) > 0)) 
+    {
+        std::reverse(output.begin(), output.end());
+    }
+
+    return output;
+}
+
 //vectorisation
 FootprintVectorizationResult FootprintVectorizer::vectorize(
      const ComponentStats& stats,
@@ -358,16 +402,30 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
 
      double finalProjectedArea = std::abs(calculateSignedArea(result.projectedFootprint.outerRing)); 
 
+     // --- REGULARIZE OUTER RING ---
+     // Removed holeRings.empty() condition so courtyard buildings still regularize
+     if (config.regularizeRectangularFootprints) 
+     {
+         result.projectedFootprint.outerRing = regularizeEdges(result.projectedFootprint.outerRing, finalProjectedArea, config);
+         finalProjectedArea = std::abs(calculateSignedArea(result.projectedFootprint.outerRing));
+     }
+
      for (const auto& rawHole : holeRings) 
      {
          std::vector<ProjectedPoint> validHole = simplifyAndValidateRing(rawHole);
          if (!validHole.empty()) 
          {
+             // --- REGULARIZE COURTYARDS (HOLES) ---
+             if (config.regularizeRectangularFootprints) 
+             {
+                 double holeArea = std::abs(calculateSignedArea(validHole));
+                 validHole = regularizeEdges(validHole, holeArea, config);
+             }
+
              // Hole Topological Constraints
              if (isPointInPolygon(validHole[0], result.projectedFootprint.outerRing) && 
                  !ringsIntersect(validHole, result.projectedFootprint.outerRing)) 
              {
-                 
                  result.projectedFootprint.holes.push_back(validHole);
                  finalProjectedArea -= std::abs(calculateSignedArea(validHole));
              }
