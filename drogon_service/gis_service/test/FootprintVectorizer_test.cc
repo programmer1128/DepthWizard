@@ -188,13 +188,13 @@ TEST(FootprintVectorizerTest, ArchitecturalDefaultsValidateAndRejectUnboundedAdj
     EXPECT_FLOAT_EQ(config.footprintSimplificationToleranceMetres, 1.0f);
     EXPECT_FLOAT_EQ(config.maxCornerAdjustmentMetres, 2.5f);
     EXPECT_FLOAT_EQ(config.minimumRectangleFillRatio, 0.88f);
-    EXPECT_FLOAT_EQ(config.minimumFootprintMaskIoU, 0.60f);
+    EXPECT_FLOAT_EQ(config.minimumFootprintMaskIoU, 0.68f);
     EXPECT_FLOAT_EQ(config.footprintAreaDeviationTolerance, 0.25f);
     EXPECT_TRUE(config.splitSupportedInstances);
-    EXPECT_FLOAT_EQ(config.closingRadiusMetres, 1.5f);
-    EXPECT_FLOAT_EQ(config.instanceHeightStepMetres, 3.5f);
+    EXPECT_FLOAT_EQ(config.closingRadiusMetres, 0.75f);
+    EXPECT_FLOAT_EQ(config.instanceHeightStepMetres, 2.0f);
     EXPECT_FLOAT_EQ(config.minInstanceSeedAreaSquareMetres, 15.0f);
-    EXPECT_FLOAT_EQ(config.footprintDilationMetres, 0.5f);
+    EXPECT_FLOAT_EQ(config.footprintDilationMetres, 0.25f);
     config.maxCornerAdjustmentMetres = 3.01f;
     EXPECT_FALSE(config.validate());
     config.maxCornerAdjustmentMetres = 2.5f;

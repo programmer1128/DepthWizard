@@ -171,7 +171,7 @@ TEST(BuildingHeightEstimatorTest, FallsBackToFootprintDtmWhenExteriorGroundIsUna
         squareFootprint(4, 4, 9, 9).outerRing.size());
 }
 
-TEST(BuildingHeightEstimatorTest, RejectsHallucinatedFootprintAcrossSteepTerrain)
+TEST(BuildingHeightEstimatorTest, PreservesFootprintAcrossSteepTerrainWithWarning)
 {
     constexpr int width = 16;
     constexpr int height = 16;
@@ -202,9 +202,20 @@ TEST(BuildingHeightEstimatorTest, RejectsHallucinatedFootprintAcrossSteepTerrain
         makeProjectedMetadata(width, height),
         config);
 
-    EXPECT_FALSE(result.success);
+    EXPECT_TRUE(result.success);
     EXPECT_GT(result.footprintElevationDeltaMetres, 8.0F);
-    EXPECT_NE(result.errorMessage.find("terrain relief"), std::string::npos);
+    ASSERT_FALSE(result.warnings.empty());
+    bool foundWarning = false;
+    for (const auto& w : result.warnings)
+    {
+        if (w.find("terrain relief") != std::string::npos &&
+            w.find("exceeds limit") != std::string::npos)
+        {
+            foundWarning = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(foundWarning);
 }
 
 TEST(BuildingHeightEstimatorTest, RejectsGridDimensionsThatDoNotMatchMetadata)
@@ -222,6 +233,46 @@ TEST(BuildingHeightEstimatorTest, RejectsGridDimensionsThatDoNotMatchMetadata)
 
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(result.errorMessage.empty());
+}
+
+TEST(BuildingHeightEstimatorTest, IgnoresSurfaceFusionSuppressedZerosInRoofSampling)
+{
+    constexpr int width = 16;
+    constexpr int height = 16;
+    GeoreferencedSurfaceBundle surface = makeSurface(width, height, 100.0F, 0.0F);
+    SemanticScene semantics = makeSemanticScene(width, height, SemanticClass::GROUND);
+    fillRectangle<float>(surface.ndsm, 5, 5, 11, 11, 10.0F);
+    fillRectangle<SemanticClass>(
+        semantics.finalClassMap,
+        5,
+        5,
+        11,
+        11,
+        SemanticClass::BUILDING);
+
+    // Inject fusion zeros into half the roof interior
+    for (int r = 5; r < 11; ++r)
+    {
+        for (int c = 5; c < 8; ++c)
+        {
+            surface.ndsm.data[r * width + c] = 0.0F;
+        }
+    }
+
+    BuildingReconstructionConfig config = noMorphologyConfig();
+    config.groundBufferRadiusMetres = 2.0F;
+    config.footprintErosionRadiusMetres = 1.0F;
+    config.minRequiredSamples = 5;
+
+    const BuildingHeightEstimate result = BuildingHeightEstimator::estimate(
+        squareFootprint(5, 5, 10, 10),
+        surface,
+        semantics,
+        makeProjectedMetadata(width, height),
+        config);
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_FLOAT_EQ(result.heightAboveGround, 10.0F);
 }
 
 } // namespace

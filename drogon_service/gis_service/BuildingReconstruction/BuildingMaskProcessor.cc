@@ -119,12 +119,18 @@ BuildingMaskResult createCleanMaskImpl(
      {
          const bool isBuilding =
              semantics.finalClassMap.data[index] == SemanticClass::BUILDING;
+         const bool isUnknown =
+             semantics.finalClassMap.data[index] == SemanticClass::UNKNOWN;
          const bool probabilityAccepted =
              semantics.buildingProbability.data[index] >=
              config.buildingProbabilityThreshold;
          const bool confidenceAccepted =
              semantics.semanticConfidence.data[index] >=
              config.minBuildingSemanticConfidence;
+         const bool hasNdsmHeight =
+             metricNdsm != nullptr &&
+             std::isfinite(metricNdsm->data[index]) &&
+             metricNdsm->data[index] >= config.minRecoveryNdsmHeightMetres;
 
          const bool allowVegPassage =
              metricNdsm != nullptr &&
@@ -161,8 +167,12 @@ BuildingMaskResult createCleanMaskImpl(
          allowedBytes[index] = (validMask.data[index] != 0 &&
              (cls == SemanticClass::BUILDING || cls == SemanticClass::UNKNOWN ||
               (cls == SemanticClass::VEGETATION && allowVegPassage))) ? 255 : 0;
-         candidateBytes[index] = static_cast<uint8_t>(
-             (isBuilding && probabilityAccepted && confidenceAccepted) ? 255 : 0);
+         // Primary seed is either a strict semantic building, OR an uncertain pixel with strong probability and physical height
+         const bool primarySeed =
+             (isBuilding && probabilityAccepted && confidenceAccepted) ||
+             (isUnknown && probabilityAccepted && hasNdsmHeight);
+
+         candidateBytes[index] = static_cast<uint8_t>(primarySeed ? 255 : 0);
      }
      cv::Mat binaryMask(height, width, CV_8UC1, candidateBytes.data());
 
@@ -175,24 +185,101 @@ BuildingMaskResult createCleanMaskImpl(
      // UNKNOWN recovery, this cannot invent distant islands from nDSM noise.
      const cv::Mat allowed(height, width, CV_8UC1, allowedBytes.data());
      const cv::Mat recovery(height, width, CV_8UC1, recoveryBytes.data());
-     cv::Mat inverseStrong, distanceToStrong;
-     cv::bitwise_not(binaryMask, inverseStrong);
-     cv::distanceTransform(inverseStrong, distanceToStrong, cv::DIST_L2, 3);
-     cv::Mat recoveryZone;
-     cv::compare(distanceToStrong, config.recoveryDistanceMetres / std::max(colRes, rowRes),
-                 recoveryZone, cv::CMP_LE);
-     cv::bitwise_and(recoveryZone, recovery, recoveryZone);
-     cv::bitwise_and(recoveryZone, allowed, recoveryZone);
-     const int growthSteps = static_cast<int>(std::ceil(
-         config.recoveryDistanceMetres / std::min(colRes, rowRes)));
-     const cv::Mat cross = cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(3, 3));
-     for (int step = 0; step < growthSteps; ++step)
+     // COMPETITIVE ERODE-LABEL-EXPAND TO PREVENT ALLEYWAY MERGING
+     // 1. Erode to break isthmuses (leaves party walls separated)
+     int sepRadius = std::max(1, static_cast<int>(std::ceil(0.8 / std::min(colRes, rowRes))));
+     cv::Mat sepKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(sepRadius * 2 + 1, sepRadius * 2 + 1));
+     cv::Mat erodedMask;
+     cv::erode(binaryMask, erodedMask, sepKernel);
+
+     // Ensure small/narrow structures that completely vanished during erosion retain a core seed
+     cv::Mat seedLabels, seedStats, seedCentroids;
+     int numSeedComps = cv::connectedComponentsWithStats(
+         binaryMask, seedLabels, seedStats, seedCentroids, config.connectivity);
+     for (int i = 1; i < numSeedComps; ++i)
      {
-         cv::Mat grown;
-         cv::dilate(binaryMask, grown, cross);
-         cv::bitwise_and(grown, recoveryZone, grown);
-         cv::bitwise_or(binaryMask, grown, binaryMask);
+         cv::Mat compMask = (seedLabels == i);
+         if (cv::countNonZero(erodedMask & compMask) == 0)
+         {
+             cv::bitwise_or(erodedMask, compMask, erodedMask);
+         }
      }
+
+     // 2. Distance Transform for nearest-neighbor (Voronoi) assignment
+     cv::Mat distInput, dist, voronoiLabels;
+     cv::compare(erodedMask, 0, distInput, cv::CMP_EQ); // Cores = 0, Background = 255
+     cv::distanceTransform(distInput, dist, voronoiLabels, cv::DIST_L2, 3, cv::DIST_LABEL_CCOMP);
+
+     // 3. Define target bounding mask (Primary + Allowed Recovery)
+     cv::Mat targetMask;
+     cv::bitwise_or(binaryMask, recovery, targetMask);
+     cv::bitwise_and(targetMask, allowed, targetMask);
+
+     // Retain only pixels in targetMask that are edge-connected to a core in erodedMask
+     cv::Mat targetLabels;
+     int numTargetComps = cv::connectedComponents(targetMask, targetLabels, config.connectivity, CV_32S);
+     std::vector<uint8_t> compHasCore(numTargetComps, 0);
+     for (int r = 0; r < height; ++r)
+     {
+         const uint8_t* eRow = erodedMask.ptr<uint8_t>(r);
+         const int32_t* tRow = targetLabels.ptr<int32_t>(r);
+         for (int c = 0; c < width; ++c)
+         {
+             if (eRow[c] > 0 && tRow[c] > 0)
+             {
+                 compHasCore[tRow[c]] = 1;
+             }
+         }
+     }
+     for (int r = 0; r < height; ++r)
+     {
+         uint8_t* targetRow = targetMask.ptr<uint8_t>(r);
+         const int32_t* tRow = targetLabels.ptr<int32_t>(r);
+         for (int c = 0; c < width; ++c)
+         {
+             if (tRow[c] > 0 && !compHasCore[tRow[c]])
+             {
+                 targetRow[c] = 0;
+             }
+         }
+     }
+
+     // 4. Expand labels, strictly preserving a 1-pixel gap at conflict boundaries
+     cv::Mat competitiveMask = cv::Mat::zeros(height, width, CV_8UC1);
+     float maxDistPx = config.recoveryDistanceMetres / std::min(colRes, rowRes);
+
+     for (int r = 0; r < height; ++r)
+     {
+         const uint8_t* targetRow = targetMask.ptr<uint8_t>(r);
+         const uint8_t* targetUp = (r > 0) ? targetMask.ptr<uint8_t>(r - 1) : nullptr;
+         const uint8_t* targetDown = (r + 1 < height) ? targetMask.ptr<uint8_t>(r + 1) : nullptr;
+         const int32_t* voronoiRow = voronoiLabels.ptr<int32_t>(r);
+         const int32_t* voronoiUp = (r > 0) ? voronoiLabels.ptr<int32_t>(r - 1) : nullptr;
+         const int32_t* voronoiDown = (r + 1 < height) ? voronoiLabels.ptr<int32_t>(r + 1) : nullptr;
+         const float* distRow = dist.ptr<float>(r);
+         uint8_t* outRow = competitiveMask.ptr<uint8_t>(r);
+
+         for (int c = 0; c < width; ++c)
+         {
+             if (targetRow[c] > 0 && distRow[c] <= maxDistPx)
+             {
+                 int32_t myLabel = voronoiRow[c];
+                 if (myLabel != 0)
+                 {
+                     // If any 4-neighbor belongs to a DIFFERENT core, this is a party-wall boundary. Leave it 0.
+                     bool conflict = false;
+                     if (c > 0 && targetRow[c - 1] > 0 && voronoiRow[c - 1] != 0 && voronoiRow[c - 1] != myLabel) conflict = true;
+                     if (c + 1 < width && targetRow[c + 1] > 0 && voronoiRow[c + 1] != 0 && voronoiRow[c + 1] != myLabel) conflict = true;
+                     if (targetUp && targetUp[c] > 0 && voronoiUp[c] != 0 && voronoiUp[c] != myLabel) conflict = true;
+                     if (targetDown && targetDown[c] > 0 && voronoiDown[c] != 0 && voronoiDown[c] != myLabel) conflict = true;
+
+                     if (!conflict) outRow[c] = 255;
+                 }
+             }
+         }
+     }
+     binaryMask = competitiveMask;
+     
      cv::Mat recovered;
      cv::bitwise_and(binaryMask, recovery, recovered);
      result.recoveredCandidatePixelCount = cv::countNonZero(recovered);

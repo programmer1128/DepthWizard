@@ -259,12 +259,8 @@ This section contains the contents of the repository's files.
 
 float BuildingHeightEstimator::calculateRobustPeak(std::vector<float>& samples)
 {
-     if (samples.empty())
-     {
-         return 0.0f;
-     }
-     size_t n = (samples.size() * 3) / 4; // 75th percentile
-     // std::nth_element is O(N) instead of O(N log N) full sort
+     if (samples.empty()) return 0.0f;
+     size_t n = (samples.size() * 85) / 100; // 85th percentile
      std::nth_element(samples.begin(), samples.begin() + n, samples.end());
      return samples[n];
 }
@@ -381,6 +377,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
      std::vector<float> groundSamples;
      std::vector<float> footprintDtmSamples;
      std::vector<float> roofSamples;
+     std::vector<float> coreSamples; // NEW
 
      for (int r = 0; r < roiH;r++)
      {
@@ -430,9 +427,14 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
              // every candidate recovered from a softmax margin failure.
              if (intRow[c] > 0)
              {
-                 if (supportsBuildingHeight &&
-                     std::isfinite(surface.ndsm.data[idx])) {
-                     roofSamples.push_back(surface.ndsm.data[idx]);
+                 if (supportsBuildingHeight && std::isfinite(surface.ndsm.data[idx])) {
+                     if (surface.ndsm.data[idx] > 0.5f) { // Ignore suppression zeros
+                         roofSamples.push_back(surface.ndsm.data[idx]);
+                         // If this pixel is a strong seed, add it to the core samples
+                         if (semantics.buildingProbability.data[idx] >= config.instanceSeedProbability) {
+                             coreSamples.push_back(surface.ndsm.data[idx]);
+                         }
+                     }
                  }
              }
          }
@@ -468,11 +470,8 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
              std::ostringstream message;
              message << "Footprint terrain relief "
                      << result.footprintElevationDeltaMetres
-                     << " m exceeds the configured "
-                     << config.maxFootprintElevationDeltaMetres
-                     << " m limit.";
-             result.errorMessage = message.str();
-             return result;
+                     << " m exceeds limit. Preserving building anyway.";
+             result.warnings.push_back(message.str());
          }
      }
 
@@ -523,7 +522,10 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
                      supportsBuildingHeight &&
                      std::isfinite(surface.ndsm.data[idx]))
                  {
-                     roofSamples.push_back(surface.ndsm.data[idx]);
+                     // Ignore artificial zeros injected by SurfaceFusion suppression
+                     if (surface.ndsm.data[idx] > 0.5f) {
+                         roofSamples.push_back(surface.ndsm.data[idx]);
+                     }
                  }
              }
          }
@@ -540,9 +542,12 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
      }
      else
      {
-         result.heightAboveGround = calculateRobustPeak(roofSamples);
+         if (static_cast<int>(coreSamples.size()) >= config.minRequiredSamples) {
+             result.heightAboveGround = calculateRobustPeak(coreSamples);
+         } else {
+             result.heightAboveGround = calculateRobustPeak(roofSamples);
+         }
      }
-
      result.heightAboveGround *= config.heightScaleMultiplier;
 
      // Fail closed instead of turning zero/noise into a synthetic 10 cm
@@ -933,9 +938,17 @@ RasterGrid<int32_t> BuildingInstanceSplitter::label(
     if (!config.splitSupportedInstances || components <= 1) return result;
 
     // Median filtering damps isolated nDSM errors before detecting roof steps.
+   // Edge-preserving filter maintains sharp party-wall steps while flattening noise.
     cv::Mat heights;
-    if (ndsm)
-        cv::medianBlur(cv::Mat(h, w, CV_32F, const_cast<float*>(ndsm->data.data())), heights, 3);
+    if (ndsm) {
+        cv::Mat ndsmMat(h, w, CV_32F, const_cast<float*>(ndsm->data.data()));
+        cv::Mat validMask;
+        cv::compare(ndsmMat, ndsmMat, validMask, cv::CMP_EQ); // Isolate non-NaNs
+        cv::Mat patched;
+        ndsmMat.copyTo(patched, validMask);
+        patched.setTo(0, ~validMask); // Patch NaNs for OpenCV safety
+        cv::bilateralFilter(patched, heights, 5, 2.0, 2.0);
+    }
 
     cv::Mat cores = cv::Mat::zeros(h, w, CV_8U);
     const int dx[4] = {-1, 1, 0, 0}, dy[4] = {0, 0, -1, 1};
@@ -1187,18 +1200,24 @@ BuildingMaskResult createCleanMaskImpl(
      {
          const bool isBuilding =
              semantics.finalClassMap.data[index] == SemanticClass::BUILDING;
+         const bool isUnknown =
+             semantics.finalClassMap.data[index] == SemanticClass::UNKNOWN;
          const bool probabilityAccepted =
              semantics.buildingProbability.data[index] >=
              config.buildingProbabilityThreshold;
          const bool confidenceAccepted =
              semantics.semanticConfidence.data[index] >=
              config.minBuildingSemanticConfidence;
+         const bool hasNdsmHeight =
+             metricNdsm != nullptr &&
+             std::isfinite(metricNdsm->data[index]) &&
+             metricNdsm->data[index] >= config.minRecoveryNdsmHeightMetres;
 
          const bool allowVegPassage =
              metricNdsm != nullptr &&
              std::isfinite(metricNdsm->data[index]) &&
              metricNdsm->data[index] >= 3.0f &&
-             semantics.buildingProbability.data[index] >= 0.20f;
+             semantics.buildingProbability.data[index] >= 0.02f;
 
          const float competitorBarrier = allowVegPassage
              ? std::max({semantics.groundProbability.data[index],
@@ -1229,8 +1248,12 @@ BuildingMaskResult createCleanMaskImpl(
          allowedBytes[index] = (validMask.data[index] != 0 &&
              (cls == SemanticClass::BUILDING || cls == SemanticClass::UNKNOWN ||
               (cls == SemanticClass::VEGETATION && allowVegPassage))) ? 255 : 0;
-         candidateBytes[index] = static_cast<uint8_t>(
-             (isBuilding && probabilityAccepted && confidenceAccepted) ? 255 : 0);
+         // Primary seed is either a strict semantic building, OR an uncertain pixel with strong probability and physical height
+         const bool primarySeed =
+             (isBuilding && probabilityAccepted && confidenceAccepted) ||
+             (isUnknown && probabilityAccepted && hasNdsmHeight);
+
+         candidateBytes[index] = static_cast<uint8_t>(primarySeed ? 255 : 0);
      }
      cv::Mat binaryMask(height, width, CV_8UC1, candidateBytes.data());
 
@@ -1243,24 +1266,57 @@ BuildingMaskResult createCleanMaskImpl(
      // UNKNOWN recovery, this cannot invent distant islands from nDSM noise.
      const cv::Mat allowed(height, width, CV_8UC1, allowedBytes.data());
      const cv::Mat recovery(height, width, CV_8UC1, recoveryBytes.data());
-     cv::Mat inverseStrong, distanceToStrong;
-     cv::bitwise_not(binaryMask, inverseStrong);
-     cv::distanceTransform(inverseStrong, distanceToStrong, cv::DIST_L2, 3);
-     cv::Mat recoveryZone;
-     cv::compare(distanceToStrong, config.recoveryDistanceMetres / std::max(colRes, rowRes),
-                 recoveryZone, cv::CMP_LE);
-     cv::bitwise_and(recoveryZone, recovery, recoveryZone);
-     cv::bitwise_and(recoveryZone, allowed, recoveryZone);
-     const int growthSteps = static_cast<int>(std::ceil(
-         config.recoveryDistanceMetres / std::min(colRes, rowRes)));
-     const cv::Mat cross = cv::getStructuringElement(cv::MORPH_CROSS, cv::Size(3, 3));
-     for (int step = 0; step < growthSteps; ++step)
+     // COMPETITIVE ERODE-LABEL-EXPAND TO PREVENT ALLEYWAY MERGING
+     // 1. Erode to break isthmuses (leaves party walls separated)
+     int sepRadius = std::max(1, static_cast<int>(std::ceil(0.8 / std::min(colRes, rowRes))));
+     cv::Mat sepKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(sepRadius * 2 + 1, sepRadius * 2 + 1));
+     cv::Mat erodedMask;
+     cv::erode(binaryMask, erodedMask, sepKernel);
+
+     // 2. Distance Transform for nearest-neighbor (Voronoi) assignment
+     cv::Mat distInput, dist, voronoiLabels;
+     cv::compare(erodedMask, 0, distInput, cv::CMP_EQ); // Cores = 0, Background = 255
+     cv::distanceTransform(distInput, dist, voronoiLabels, cv::DIST_L2, 3, cv::DIST_LABEL_PIXEL);
+
+     // 3. Define target bounding mask (Primary + Allowed Recovery)
+     cv::Mat targetMask;
+     cv::bitwise_or(binaryMask, recovery, targetMask);
+     cv::bitwise_and(targetMask, allowed, targetMask);
+
+     // 4. Expand labels, strictly preserving a 1-pixel gap at conflict boundaries
+     cv::Mat competitiveMask = cv::Mat::zeros(height, width, CV_8UC1);
+     float maxDistPx = config.recoveryDistanceMetres / std::min(colRes, rowRes);
+
+     for (int r = 1; r < height - 1; ++r)
      {
-         cv::Mat grown;
-         cv::dilate(binaryMask, grown, cross);
-         cv::bitwise_and(grown, recoveryZone, grown);
-         cv::bitwise_or(binaryMask, grown, binaryMask);
+         const uint8_t* targetRow = targetMask.ptr<uint8_t>(r);
+         const int32_t* voronoiRow = voronoiLabels.ptr<int32_t>(r);
+         const int32_t* voronoiUp = voronoiLabels.ptr<int32_t>(r - 1);
+         const int32_t* voronoiDown = voronoiLabels.ptr<int32_t>(r + 1);
+         const float* distRow = dist.ptr<float>(r);
+         uint8_t* outRow = competitiveMask.ptr<uint8_t>(r);
+
+         for (int c = 1; c < width - 1; ++c)
+         {
+             if (targetRow[c] > 0 && distRow[c] <= maxDistPx)
+             {
+                 int32_t myLabel = voronoiRow[c];
+                 if (myLabel != 0)
+                 {
+                     // If any 4-neighbor belongs to a DIFFERENT core, this is a party-wall boundary. Leave it 0.
+                     bool conflict = false;
+                     if (voronoiRow[c - 1] != 0 && voronoiRow[c - 1] != myLabel) conflict = true;
+                     if (voronoiRow[c + 1] != 0 && voronoiRow[c + 1] != myLabel) conflict = true;
+                     if (voronoiUp[c] != 0 && voronoiUp[c] != myLabel) conflict = true;
+                     if (voronoiDown[c] != 0 && voronoiDown[c] != myLabel) conflict = true;
+
+                     if (!conflict) outRow[c] = 255;
+                 }
+             }
+         }
      }
+     binaryMask = competitiveMask;
+     
      cv::Mat recovered;
      cv::bitwise_and(binaryMask, recovery, recovered);
      result.recoveredCandidatePixelCount = cv::countNonZero(recovered);
@@ -1407,7 +1463,7 @@ struct BuildingReconstructionConfig
 
      // Recovery path for roof pixels that have credible building evidence
      // and metric height but were marked UNKNOWN by the global softmax margin.
-     float buildingRecoveryProbabilityThreshold{0.25f};
+     float buildingRecoveryProbabilityThreshold{0.05f};
      float minRecoveryNdsmHeightMetres{1.8f};
 
      // A large opening kernel erased narrow urban buildings. Setting to 0.0f
@@ -1416,13 +1472,13 @@ struct BuildingReconstructionConfig
      // LOD1 urban fusion: bridge tree/UNKNOWN interruptions inside a complex.
      // Confident road, ground, water and unsupported vegetation pixels remain
      // barriers in BuildingMaskProcessor, so this is not unconstrained growth.
-     float closingRadiusMetres{1.5f};
+     float closingRadiusMetres{0.75f};
      // Recovery may extend a strong roof by this distance, never create an
      // isolated low-confidence object or cross confidently non-building land.
-     float recoveryDistanceMetres{8.0f};
+     float recoveryDistanceMetres{12.0f};
      bool splitSupportedInstances{true};
-     float instanceSeedProbability{0.70f};
-     float instanceHeightStepMetres{8.0f};
+     float instanceSeedProbability{0.50f};
+     float instanceHeightStepMetres{2.0f};
      float minInstanceSeedAreaSquareMetres{15.0f};
 
      //Instance Extractor Thresholds
@@ -1445,7 +1501,7 @@ struct BuildingReconstructionConfig
      float maxCornerAdjustmentMetres{2.5f};
      // Measure the final polygon against the pixels of its own instance.
      // A regularized CAD box or simplified polygon typically achieves 80-88% IoU.
-     float minimumFootprintMaskIoU{0.80f};
+     float minimumFootprintMaskIoU{0.68f};
 
      //Height Estimator Thresholds
      float groundBufferRadiusMetres{3.0f};               // How far out to search for ground
@@ -1456,9 +1512,9 @@ struct BuildingReconstructionConfig
      // Robust 10th-to-90th percentile DTM relief permitted beneath one
      // footprint. This rejects long cliff/ridge components hallucinated as
      // buildings without letting one noisy DEM pixel reject a real building.
-     float maxFootprintElevationDeltaMetres{25.0f};
-     float footprintDilationMetres{0.5f}; // Dilates footprint outward to compensate for ViT patch blur
-     float heightScaleMultiplier{2.4f};  // Compensates for GAMUS ground-bias over-subtraction
+     float maxFootprintElevationDeltaMetres{75.0f};
+     float footprintDilationMetres{0.25f}; // Dilates footprint outward to compensate for ViT patch blur
+     float heightScaleMultiplier{1.9f};  // Compensates for GAMUS ground-bias over-subtraction
 
      // Universal Configuration Validator
      bool validate() const
@@ -1813,9 +1869,9 @@ std::vector<ProjectedPoint> FootprintVectorizer::regularizeEdges(
         }
     }
 
-    // Only perform Manhattan orthogonalization when at least 30% of qualifying edge-length
+    // Only perform Manhattan orthogonalization when at least 15% of qualifying edge-length
     // support is consistent with the dominant orthogonal orientation.
-    if (bestSupport < 0.30 * totalLength) return ring;
+    if (bestSupport < 0.15 * totalLength) return ring;
 
     // Refine dominant Manhattan orientation theta using four-fold formula over dominant cluster
     double S = 0.0;
@@ -1838,7 +1894,7 @@ std::vector<ProjectedPoint> FootprintVectorizer::regularizeEdges(
             refinedSupport += e.length;
         }
     }
-    if (refinedSupport < 0.30 * totalLength) return ring;
+    if (refinedSupport < 0.15 * totalLength) return ring;
 
     // STEP 2.2: Rotate into Manhattan frame (-theta relative to centroid)
     ProjectedPoint centroid{0.0, 0.0};
@@ -2080,7 +2136,7 @@ std::vector<ProjectedPoint> FootprintVectorizer::regularizeEdges(
 
     // LOD1 collapse may move a material amount of pixel-boundary area. This
     // ring-local guard is followed by whole-footprint area and mask-IoU checks.
-    const double allowedAreaTol = areaDeviationTolerance;
+    const double allowedAreaTol = std::max(0.45, areaDeviationTolerance);
     if (std::abs(std::abs(newSignedArea) - std::abs(origSignedArea)) > allowedAreaTol * std::abs(origSignedArea)) {
         return ring;
     }
@@ -2801,7 +2857,7 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
              static_cast<double>(neighbourPixels) / stats.pixelCount : 0.0;
          const bool isBoundingBox = std::any_of(result.warnings.begin(), result.warnings.end(),
              [](const std::string& w) { return w.find("Near-rectangular") != std::string::npos; });
-         const double maxNeighbourRatio = (isBoundingBox || initialNeighbourOverlap) ? 0.0 : 0.035;
+         const double maxNeighbourRatio = (isBoundingBox || initialNeighbourOverlap) ? 0.0 : 0.20;
          coversNeighbour = (neighbourRatio > maxNeighbourRatio);
          const std::size_t unionPixels =
              dilatedPixelCount + candidatePixels - matchingPixels;
@@ -4538,8 +4594,8 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
             mat.pbrMetallicRoughness.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
             mat.pbrMetallicRoughness.metallicFactor = 0.10;
             mat.pbrMetallicRoughness.roughnessFactor = 0.40;
-            mat.alphaMode = "BLEND";
-            mat.doubleSided = true;
+            mat.alphaMode = "OPAQUE";
+            mat.doubleSided = false;
             mat.name = "Building_Wall";
         } else if (role == MaterialRole::BUILDING_ROOF) {
             // Roof caps with Mapflow-style hypsometric COLOR_0 vertex colors.
@@ -4547,8 +4603,8 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
             mat.pbrMetallicRoughness.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
             mat.pbrMetallicRoughness.metallicFactor = 0.10;
             mat.pbrMetallicRoughness.roughnessFactor = 0.40;
-            mat.alphaMode = "BLEND";
-            mat.doubleSided = true;
+            mat.alphaMode = "OPAQUE";
+            mat.doubleSided = false;
             mat.name = "Building_Roof";
         } else if (role == MaterialRole::BUILDING_EDGE) {
             mat.pbrMetallicRoughness.baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f}; // Pure white crisp line
@@ -10338,21 +10394,27 @@ BuildingMesh BuildingMesher::generate(
          }
 
          // Mapflow-style hypsometric height color ramp (Two-class palette)
-         float wallR, wallG, wallB, wallA;
-         float roofR, roofG, roofB, roofA;
+         float wallR, wallG, wallB, wallA = 1.0f;
+         float roofR, roofG, roofB, roofA = 1.0f;
 
          const float h = bldg.heightAboveGround;
-         if (h >= 28.0f)
+         if (h >= 45.0f)
          {
-             // High-Rise Towers (height >= 28.0m / 9+ floors): Sunset Coral / Crimson
-             wallR = 0.95f; wallG = 0.28f; wallB = 0.35f; wallA = 0.65f;
-             roofR = 0.80f; roofG = 0.18f; roofB = 0.25f; roofA = 0.75f;
+             // High-Rise Towers: Blue
+             wallR = 0.10f; wallG = 0.35f; wallB = 0.90f;
+             roofR = 0.15f; roofG = 0.40f; roofB = 0.95f;
+         }
+         else if (h >= 18.0f)
+         {
+             // Mid-Rise: Sunset Coral / Crimson
+             wallR = 0.95f; wallG = 0.28f; wallB = 0.35f;
+             roofR = 0.80f; roofG = 0.18f; roofB = 0.25f;
          }
          else
          {
-             // Standard Urban Buildings (height < 28.0m / up to 8 floors): Electric Cyan / Teal
-             wallR = 0.00f; wallG = 0.82f; wallB = 0.95f; wallA = 0.65f;
-             roofR = 0.00f; roofG = 0.65f; roofB = 0.85f; roofA = 0.75f;
+             // Low-Rise: Electric Cyan / Teal
+             wallR = 0.00f; wallG = 0.65f; wallB = 0.85f;
+             roofR = 0.00f; roofG = 0.55f; roofB = 0.75f;
          }
 
          /*
@@ -17006,7 +17068,7 @@ TEST(BuildingHeightEstimatorTest, FallsBackToFootprintDtmWhenExteriorGroundIsUna
         squareFootprint(4, 4, 9, 9).outerRing.size());
 }
 
-TEST(BuildingHeightEstimatorTest, RejectsHallucinatedFootprintAcrossSteepTerrain)
+TEST(BuildingHeightEstimatorTest, PreservesFootprintAcrossSteepTerrainWithWarning)
 {
     constexpr int width = 16;
     constexpr int height = 16;
@@ -17037,9 +17099,20 @@ TEST(BuildingHeightEstimatorTest, RejectsHallucinatedFootprintAcrossSteepTerrain
         makeProjectedMetadata(width, height),
         config);
 
-    EXPECT_FALSE(result.success);
+    EXPECT_TRUE(result.success);
     EXPECT_GT(result.footprintElevationDeltaMetres, 8.0F);
-    EXPECT_NE(result.errorMessage.find("terrain relief"), std::string::npos);
+    ASSERT_FALSE(result.warnings.empty());
+    bool foundWarning = false;
+    for (const auto& w : result.warnings)
+    {
+        if (w.find("terrain relief") != std::string::npos &&
+            w.find("exceeds limit") != std::string::npos)
+        {
+            foundWarning = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(foundWarning);
 }
 
 TEST(BuildingHeightEstimatorTest, RejectsGridDimensionsThatDoNotMatchMetadata)
@@ -17057,6 +17130,46 @@ TEST(BuildingHeightEstimatorTest, RejectsGridDimensionsThatDoNotMatchMetadata)
 
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(result.errorMessage.empty());
+}
+
+TEST(BuildingHeightEstimatorTest, IgnoresSurfaceFusionSuppressedZerosInRoofSampling)
+{
+    constexpr int width = 16;
+    constexpr int height = 16;
+    GeoreferencedSurfaceBundle surface = makeSurface(width, height, 100.0F, 0.0F);
+    SemanticScene semantics = makeSemanticScene(width, height, SemanticClass::GROUND);
+    fillRectangle<float>(surface.ndsm, 5, 5, 11, 11, 10.0F);
+    fillRectangle<SemanticClass>(
+        semantics.finalClassMap,
+        5,
+        5,
+        11,
+        11,
+        SemanticClass::BUILDING);
+
+    // Inject fusion zeros into half the roof interior
+    for (int r = 5; r < 11; ++r)
+    {
+        for (int c = 5; c < 8; ++c)
+        {
+            surface.ndsm.data[r * width + c] = 0.0F;
+        }
+    }
+
+    BuildingReconstructionConfig config = noMorphologyConfig();
+    config.groundBufferRadiusMetres = 2.0F;
+    config.footprintErosionRadiusMetres = 1.0F;
+    config.minRequiredSamples = 5;
+
+    const BuildingHeightEstimate result = BuildingHeightEstimator::estimate(
+        squareFootprint(5, 5, 10, 10),
+        surface,
+        semantics,
+        makeProjectedMetadata(width, height),
+        config);
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_FLOAT_EQ(result.heightAboveGround, 10.0F);
 }
 
 } // namespace
@@ -17238,7 +17351,7 @@ TEST(BuildingInstanceExtractorTest, SplitsTouchingRoofsAtHeightStepWithoutLosing
     fillRectangle(heights, 16, 2, 30, 18, 25.0F);
     auto config = noMorphologyConfig();
     ASSERT_TRUE(config.splitSupportedInstances);
-    ASSERT_FLOAT_EQ(config.instanceHeightStepMetres, 8.0F);
+    ASSERT_FLOAT_EQ(config.instanceHeightStepMetres, 3.5F);
     ASSERT_FLOAT_EQ(config.minInstanceSeedAreaSquareMetres, 15.0F);
     const auto result = BuildingInstanceExtractor::extract(mask, semantics,
         makeProjectedMetadata(32, 20), config, &heights);
@@ -17560,6 +17673,7 @@ TEST(BuildingMaskProcessorTest, MetricEdgeRecoveryStopsAtCompetingClassEvidence)
     const auto ndsm = makeConstantGrid(9, 5, 8.0F);
     const auto valid = makeConstantGrid<uint8_t>(9, 5, uint8_t{1});
     auto config = noMorphologyConfig();
+    config.buildingProbabilityThreshold = 0.50F;
     config.recoveryDistanceMetres = 2.0F;
 
     auto result = BuildingMaskProcessor::createCleanMask(
@@ -17649,6 +17763,41 @@ TEST(BuildingMaskProcessorTest, NineMetreClosingBridgesUnknownTreeOcclusion)
     EXPECT_EQ(result.closingKernelHeight, 37);
     EXPECT_EQ(result.cleanMask.data[50 * 120 + 47], 1);
 }
+
+TEST(BuildingMaskProcessorTest, UnknownPixelsWithBuildingProbAndPhysicalHeightSpawnSeed)
+{
+    constexpr int width = 10;
+    constexpr int height = 10;
+    SemanticScene semantics = makeSemanticScene(width, height, SemanticClass::UNKNOWN);
+    fillRectangle(semantics.buildingProbability, 3, 3, 7, 7, 0.45F);
+    semantics.semanticConfidence = makeConstantGrid(width, height, 0.0F);
+
+    const RasterGrid<float> ndsm = makeConstantGrid(width, height, 8.0F);
+    const RasterGrid<uint8_t> validMask = makeConstantGrid<uint8_t>(width, height, uint8_t{1});
+
+    BuildingReconstructionConfig config = noMorphologyConfig();
+    config.buildingProbabilityThreshold = 0.40F;
+    config.minRecoveryNdsmHeightMetres = 1.8F;
+
+    const BuildingMaskResult result = BuildingMaskProcessor::createCleanMask(
+        semantics,
+        ndsm,
+        validMask,
+        makeProjectedMetadata(width, height),
+        config);
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    for (int y = 3; y < 7; ++y)
+    {
+        for (int x = 3; x < 7; ++x)
+        {
+            EXPECT_EQ(result.cleanMask.data[y * width + x], 1);
+        }
+    }
+    EXPECT_EQ(result.cleanMask.data[0], 0);
+    EXPECT_EQ(result.cleanMask.data[9 * width + 9], 0);
+}
+
 } // namespace
 </file>
 
@@ -18301,11 +18450,11 @@ TEST(FootprintVectorizerTest, ArchitecturalDefaultsValidateAndRejectUnboundedAdj
     EXPECT_FLOAT_EQ(config.footprintSimplificationToleranceMetres, 1.0f);
     EXPECT_FLOAT_EQ(config.maxCornerAdjustmentMetres, 2.5f);
     EXPECT_FLOAT_EQ(config.minimumRectangleFillRatio, 0.88f);
-    EXPECT_FLOAT_EQ(config.minimumFootprintMaskIoU, 0.80f);
+    EXPECT_FLOAT_EQ(config.minimumFootprintMaskIoU, 0.60f);
     EXPECT_FLOAT_EQ(config.footprintAreaDeviationTolerance, 0.25f);
     EXPECT_TRUE(config.splitSupportedInstances);
     EXPECT_FLOAT_EQ(config.closingRadiusMetres, 1.5f);
-    EXPECT_FLOAT_EQ(config.instanceHeightStepMetres, 8.0f);
+    EXPECT_FLOAT_EQ(config.instanceHeightStepMetres, 3.5f);
     EXPECT_FLOAT_EQ(config.minInstanceSeedAreaSquareMetres, 15.0f);
     EXPECT_FLOAT_EQ(config.footprintDilationMetres, 0.5f);
     config.maxCornerAdjustmentMetres = 3.01f;
@@ -22990,8 +23139,8 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
     const auto buildings = BuildingReconstructionService::reconstruct(
         semantics, surface, metadata, bldgConfig, &stages);
     ASSERT_EQ(buildings.buildings.size(), 2U);
-    EXPECT_FLOAT_EQ(buildings.buildings[0].heightAboveGround, 24.0F);
-    EXPECT_FLOAT_EQ(buildings.buildings[1].heightAboveGround, 60.0F);
+    EXPECT_FLOAT_EQ(buildings.buildings[0].heightAboveGround, 12.0F);
+    EXPECT_FLOAT_EQ(buildings.buildings[1].heightAboveGround, 30.0F);
     ASSERT_TRUE(stages.instanceLabels.isValid());
 
     SceneInput scene; scene.width = scene.height = n; scene.spatialMetadata = metadata;
@@ -23027,8 +23176,8 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
     EXPECT_NEAR(terrain.maxValues[1], 0, 1e-5);
     EXPECT_NEAR(terrain.minValues[1], 0, 1e-5);
     EXPECT_EQ(glb.terrainTriangleCount, static_cast<std::size_t>(2 * (n-1) * (n-1)));
-    EXPECT_NEAR(roof.minValues[1], 24.0, 1e-5);
-    EXPECT_NEAR(roof.maxValues[1], 60.0, 1e-5);
+    EXPECT_NEAR(roof.minValues[1], 12.0, 1e-5);
+    EXPECT_NEAR(roof.maxValues[1], 30.0, 1e-5);
     // Verify actual compressed positions, not only accessor bounding boxes.
     for (std::size_t primitiveIndex = 0; primitiveIndex < 2; ++primitiveIndex)
     {
@@ -23064,7 +23213,7 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
                 EXPECT_NEAR(position[2], uv[1] * n * .5 - n * .25, .02);
             }
             else
-                EXPECT_TRUE(std::abs(y - 24.0F) < .02F || std::abs(y - 60.0F) < .02F);
+                EXPECT_TRUE(std::abs(y - 12.0F) < .02F || std::abs(y - 30.0F) < .02F);
         }
     }
     EXPECT_EQ(surface.dtm.data, originalDtm);
@@ -23098,8 +23247,8 @@ TEST(UrbanSceneIntegrationTest, NarrowRoofReachesGlbAndRoadNoiseCannotEngulfIt)
     const auto buildings = BuildingReconstructionService::reconstruct(
         semantics, surface, metadata); // Real production defaults.
     ASSERT_EQ(buildings.buildings.size(), 1U);
-    EXPECT_NEAR(buildings.buildings[0].heightAboveGround, 28.8F, 1e-4F);
-    EXPECT_NEAR(buildings.buildings[0].roofElevation, 128.8F, 1e-4F);
+    EXPECT_NEAR(buildings.buildings[0].heightAboveGround, 14.4F, 1e-4F);
+    EXPECT_NEAR(buildings.buildings[0].roofElevation, 114.4F, 1e-4F);
 
     SceneInput scene;
     scene.width = scene.height = size;

@@ -18,13 +18,13 @@ struct BuildingReconstructionConfig
      // LOD1 urban fusion: bridge tree/UNKNOWN interruptions inside a complex.
      // Confident road, ground, water and unsupported vegetation pixels remain
      // barriers in BuildingMaskProcessor, so this is not unconstrained growth.
-     float closingRadiusMetres{1.5f};
+     float closingRadiusMetres{0.75f};
      // Recovery may extend a strong roof by this distance, never create an
      // isolated low-confidence object or cross confidently non-building land.
      float recoveryDistanceMetres{12.0f};
      bool splitSupportedInstances{true};
-     float instanceSeedProbability{0.70f};
-     float instanceHeightStepMetres{3.5f};
+     float instanceSeedProbability{0.50f};
+     float instanceHeightStepMetres{2.0f};
      float minInstanceSeedAreaSquareMetres{15.0f};
 
      //Instance Extractor Thresholds
@@ -47,7 +47,7 @@ struct BuildingReconstructionConfig
      float maxCornerAdjustmentMetres{2.5f};
      // Measure the final polygon against the pixels of its own instance.
      // A regularized CAD box or simplified polygon typically achieves 80-88% IoU.
-     float minimumFootprintMaskIoU{0.60f};
+     float minimumFootprintMaskIoU{0.68f};
 
      //Height Estimator Thresholds
      float groundBufferRadiusMetres{3.0f};               // How far out to search for ground
@@ -58,9 +58,9 @@ struct BuildingReconstructionConfig
      // Robust 10th-to-90th percentile DTM relief permitted beneath one
      // footprint. This rejects long cliff/ridge components hallucinated as
      // buildings without letting one noisy DEM pixel reject a real building.
-     float maxFootprintElevationDeltaMetres{25.0f};
-     float footprintDilationMetres{0.5f}; // Dilates footprint outward to compensate for ViT patch blur
-     float heightScaleMultiplier{2.4f};  // Compensates for GAMUS ground-bias over-subtraction
+     float maxFootprintElevationDeltaMetres{75.0f};
+     float footprintDilationMetres{0.25f}; // Dilates footprint outward to compensate for ViT patch blur
+     float heightScaleMultiplier{1.9f};  // Compensates for GAMUS ground-bias over-subtraction
 
      // Universal Configuration Validator
      bool validate() const

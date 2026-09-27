@@ -272,6 +272,7 @@ TEST(BuildingMaskProcessorTest, MetricEdgeRecoveryStopsAtCompetingClassEvidence)
     const auto ndsm = makeConstantGrid(9, 5, 8.0F);
     const auto valid = makeConstantGrid<uint8_t>(9, 5, uint8_t{1});
     auto config = noMorphologyConfig();
+    config.buildingProbabilityThreshold = 0.50F;
     config.recoveryDistanceMetres = 2.0F;
 
     auto result = BuildingMaskProcessor::createCleanMask(
@@ -361,4 +362,39 @@ TEST(BuildingMaskProcessorTest, NineMetreClosingBridgesUnknownTreeOcclusion)
     EXPECT_EQ(result.closingKernelHeight, 37);
     EXPECT_EQ(result.cleanMask.data[50 * 120 + 47], 1);
 }
+
+TEST(BuildingMaskProcessorTest, UnknownPixelsWithBuildingProbAndPhysicalHeightSpawnSeed)
+{
+    constexpr int width = 10;
+    constexpr int height = 10;
+    SemanticScene semantics = makeSemanticScene(width, height, SemanticClass::UNKNOWN);
+    fillRectangle(semantics.buildingProbability, 3, 3, 7, 7, 0.45F);
+    semantics.semanticConfidence = makeConstantGrid(width, height, 0.0F);
+
+    const RasterGrid<float> ndsm = makeConstantGrid(width, height, 8.0F);
+    const RasterGrid<uint8_t> validMask = makeConstantGrid<uint8_t>(width, height, uint8_t{1});
+
+    BuildingReconstructionConfig config = noMorphologyConfig();
+    config.buildingProbabilityThreshold = 0.40F;
+    config.minRecoveryNdsmHeightMetres = 1.8F;
+
+    const BuildingMaskResult result = BuildingMaskProcessor::createCleanMask(
+        semantics,
+        ndsm,
+        validMask,
+        makeProjectedMetadata(width, height),
+        config);
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    for (int y = 3; y < 7; ++y)
+    {
+        for (int x = 3; x < 7; ++x)
+        {
+            EXPECT_EQ(result.cleanMask.data[y * width + x], 1);
+        }
+    }
+    EXPECT_EQ(result.cleanMask.data[0], 0);
+    EXPECT_EQ(result.cleanMask.data[9 * width + 9], 0);
+}
+
 } // namespace

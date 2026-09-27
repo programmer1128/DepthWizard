@@ -34,9 +34,17 @@ RasterGrid<int32_t> BuildingInstanceSplitter::label(
     if (!config.splitSupportedInstances || components <= 1) return result;
 
     // Median filtering damps isolated nDSM errors before detecting roof steps.
+   // Edge-preserving filter maintains sharp party-wall steps while flattening noise.
     cv::Mat heights;
-    if (ndsm)
-        cv::medianBlur(cv::Mat(h, w, CV_32F, const_cast<float*>(ndsm->data.data())), heights, 3);
+    if (ndsm) {
+        cv::Mat ndsmMat(h, w, CV_32F, const_cast<float*>(ndsm->data.data()));
+        cv::Mat validMask;
+        cv::compare(ndsmMat, ndsmMat, validMask, cv::CMP_EQ); // Isolate non-NaNs
+        cv::Mat patched;
+        ndsmMat.copyTo(patched, validMask);
+        patched.setTo(0, ~validMask); // Patch NaNs for OpenCV safety
+        cv::bilateralFilter(patched, heights, 5, 2.0, 2.0);
+    }
 
     cv::Mat cores = cv::Mat::zeros(h, w, CV_8U);
     const int dx[4] = {-1, 1, 0, 0}, dy[4] = {0, 0, -1, 1};

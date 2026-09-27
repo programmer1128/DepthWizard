@@ -7,12 +7,8 @@
 
 float BuildingHeightEstimator::calculateRobustPeak(std::vector<float>& samples)
 {
-     if (samples.empty())
-     {
-         return 0.0f;
-     }
-     size_t n = (samples.size() * 3) / 4; // 75th percentile
-     // std::nth_element is O(N) instead of O(N log N) full sort
+     if (samples.empty()) return 0.0f;
+     size_t n = (samples.size() * 85) / 100; // 85th percentile
      std::nth_element(samples.begin(), samples.begin() + n, samples.end());
      return samples[n];
 }
@@ -129,6 +125,7 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
      std::vector<float> groundSamples;
      std::vector<float> footprintDtmSamples;
      std::vector<float> roofSamples;
+     std::vector<float> coreSamples; // NEW
 
      for (int r = 0; r < roiH;r++)
      {
@@ -178,9 +175,14 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
              // every candidate recovered from a softmax margin failure.
              if (intRow[c] > 0)
              {
-                 if (supportsBuildingHeight &&
-                     std::isfinite(surface.ndsm.data[idx])) {
-                     roofSamples.push_back(surface.ndsm.data[idx]);
+                 if (supportsBuildingHeight && std::isfinite(surface.ndsm.data[idx])) {
+                     if (surface.ndsm.data[idx] > 0.5f) { // Ignore suppression zeros
+                         roofSamples.push_back(surface.ndsm.data[idx]);
+                         // If this pixel is a strong seed, add it to the core samples
+                         if (semantics.buildingProbability.data[idx] >= config.instanceSeedProbability) {
+                             coreSamples.push_back(surface.ndsm.data[idx]);
+                         }
+                     }
                  }
              }
          }
@@ -216,11 +218,8 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
              std::ostringstream message;
              message << "Footprint terrain relief "
                      << result.footprintElevationDeltaMetres
-                     << " m exceeds the configured "
-                     << config.maxFootprintElevationDeltaMetres
-                     << " m limit.";
-             result.errorMessage = message.str();
-             return result;
+                     << " m exceeds limit. Preserving building anyway.";
+             result.warnings.push_back(message.str());
          }
      }
 
@@ -271,7 +270,10 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
                      supportsBuildingHeight &&
                      std::isfinite(surface.ndsm.data[idx]))
                  {
-                     roofSamples.push_back(surface.ndsm.data[idx]);
+                     // Ignore artificial zeros injected by SurfaceFusion suppression
+                     if (surface.ndsm.data[idx] > 0.5f) {
+                         roofSamples.push_back(surface.ndsm.data[idx]);
+                     }
                  }
              }
          }
@@ -288,9 +290,12 @@ BuildingHeightEstimate BuildingHeightEstimator::estimate(
      }
      else
      {
-         result.heightAboveGround = calculateRobustPeak(roofSamples);
+         if (static_cast<int>(coreSamples.size()) >= config.minRequiredSamples) {
+             result.heightAboveGround = calculateRobustPeak(coreSamples);
+         } else {
+             result.heightAboveGround = calculateRobustPeak(roofSamples);
+         }
      }
-
      result.heightAboveGround *= config.heightScaleMultiplier;
 
      // Fail closed instead of turning zero/noise into a synthetic 10 cm
