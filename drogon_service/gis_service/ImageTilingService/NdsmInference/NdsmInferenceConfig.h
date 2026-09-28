@@ -2,10 +2,11 @@
 #include <string>
 #include <vector>
 
-struct NdsmWorkerEndpoint 
+struct NdsmWorkerEndpoint
 {
-    std::string host;
-    int port;
+    std::string host;   // Kept for backward compatibility (can be empty if using url)
+    int port;           // Kept for backward compatibility (can be 0 if using url)
+    std::string url;    // NEW: Full Modal URL (e.g., "https://...modal.run")
     std::string workerId;
     bool enabled{true};
 };

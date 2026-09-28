@@ -6,14 +6,21 @@ bool NdsmInferenceConfig::validate(std::vector<std::string>& outErrors) const
     bool isValid = true;
 
     bool hasActiveEndpoint = false;
-    for (const auto& ep : endpoints) 
+
+     for (const auto& ep : endpoints)
     {
-        if (ep.enabled) 
+        if (ep.enabled)
         {
             hasActiveEndpoint = true;
-            if (ep.host.empty() || ep.port <= 0 || ep.port > 65535) 
+            
+            // NEW: Validate EITHER a valid HTTPS URL OR the legacy host/port
+            bool hasValidUrl = !ep.url.empty() && 
+                               (ep.url.rfind("http://", 0) == 0 || ep.url.rfind("https://", 0) == 0);
+            bool hasValidHostPort = !ep.host.empty() && ep.port > 0 && ep.port <= 65535;
+
+            if (!hasValidUrl && !hasValidHostPort)
             {
-                outErrors.push_back("Invalid endpoint configuration: " + ep.host + ":" + std::to_string(ep.port));
+                outErrors.push_back("Invalid endpoint configuration: Must provide either a valid 'url' or 'host'+'port'.");
                 isValid = false;
             }
         }
@@ -72,11 +79,30 @@ bool NdsmInferenceConfig::validate(std::vector<std::string>& outErrors) const
 NdsmInferenceConfig NdsmInferenceConfig::loadDefaults()
 {
     NdsmInferenceConfig config;
+    
+    // NEW: Configure your deployed Modal URL
     config.endpoints.push_back({
-        .host = "127.0.0.1",
-        .port = 9092,
-        .workerId = "local-ndsm-worker",
+        .host = "", // Empty because we are using URL
+        .port = 443,
+        .url = "https://satadru-ghosh-cse28--depth-wizard-inference-depthinferen-f5d179.modal.run",
+        .workerId = "modal-ndsm-worker",
         .enabled = true
     });
+
+    config.network.maxConcurrentRequests = 4;
+    config.network.maxRetries = 3;
+    config.network.connectTimeoutMs = 20000;
+    config.network.sendTimeoutMs = 120000;
+    config.network.receiveTimeoutMs = 300000;
+
+    config.model.expectedModelName = "model_a_metric_ndsm";
+    config.model.expectedTileSize = 518;
+    config.model.minAcceptableHeight = -50.0f;
+    config.model.maxAcceptableHeight = 9000.0f;
+
+    config.stitching.hannWindowEnabled = true;
+    config.stitching.minimumEffectiveWeight = 1e-6f;
+    config.stitching.confidenceWeightingEnabled = true;
+
     return config;
 }

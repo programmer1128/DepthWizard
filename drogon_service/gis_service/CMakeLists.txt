@@ -37,6 +37,8 @@ find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs photo)
 # Closed footprint contour regularization.
 find_package(CGAL REQUIRED)
 
+find_package(CURL REQUIRED)
+
 #SOURCE FILE DISCOVERY (Package-by-Feature Architecture)
 # Explicitly grab sources from each dedicated service folder
 
@@ -143,6 +145,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Eigen3::Eigen
     ${OpenCV_LIBS}
     CGAL::CGAL
+    CURL::libcurl
 )
 
 if (CMAKE_CXX_STANDARD LESS 20)
