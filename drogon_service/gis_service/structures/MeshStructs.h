@@ -26,15 +26,6 @@ struct TextureAsset
     std::string mimeType; // Preserves image/jpeg or image/png
 };
 
-struct LocalSceneFrame 
-{
-    double projectedOriginX{0.0};
-    double projectedOriginY{0.0};
-    double elevationOrigin{0.0};
-    std::string horizontalCrs;
-    std::string axisConvention{"Y-UP_RIGHT-HANDED"};
-};
-
 struct MeshPrimitive 
 {
     PrimitiveTopology topology{PrimitiveTopology::TRIANGLES}; // Strongly typed

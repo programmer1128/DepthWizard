@@ -7,6 +7,7 @@
 #include "../ImagePreprocessing/RasterIngestService.h"
 #include "../ImageTilingService/TilingService.h"
 #include "../MeshMapping/SceneMeshService.h"
+#include "../MeshMapping/LocalFrameTransformer.h"
 #include "../MeshMapping/ScenePresentationSelector.h"
 #include "../ReferenceTerrainService/MetricReferenceOrchestrator.h"
 #include "../SemanticContext/GroundSurfaceService.h"
@@ -25,6 +26,12 @@
 #include <string>
 #include <utility>
 #include <cstdlib>
+#include <fstream>
+#include <cstdio>
+
+#include "../FileGenerators/TiffExporter.h"
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
 
 // RasterIngestService mounts the upload in GDAL's in-memory filesystem.
 // Keep it mounted while preprocessing and reference extraction read it, then
@@ -308,27 +315,188 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          requireGridShape(surface.validMask, scene.width, scene.height,
                          "surface valid mask");
 
-         // 7. Turn building pixels into individual footprints and heights,
-         //    then assemble terrain, roofs, and walls into one Draco GLB.
+         scene.localFrame = LocalFrameTransformer::create(metadata, surface);
+
+         // 7. Extract Physical Files for Python SAT2LoD2 Microservice
+         const std::string tmpDsmPath = "/tmp/dsm_" + jobId + ".tif";
+         const std::string tmpOrthoPath = "/tmp/ortho_" + jobId + ".jpg";
+         const std::string tmpLabelPath = "/tmp/label_" + jobId + ".tif";
+         const std::string pyOutputDir = "/tmp/lod2_" + jobId;
+
+         // Write the corrected nDSM from RAM to physical disk
+         TiffExporter::writeFloatTiff(tmpDsmPath, correction.correctedMetricNdsm.data, 
+                                      metadata.width, metadata.height, 
+                                      const_cast<double*>(metadata.geoTransform.data()), 
+                                      metadata.projectionRef.c_str());
+
+         // Export the 2D Semantic Mask for SAT2LoD2
+         std::vector<float> buildingMask(metadata.width * metadata.height, 0.0f);
+         for (size_t i = 0; i < semantics.finalClassMap.data.size(); ++i) {
+             if (semantics.finalClassMap.data[i] == SemanticClass::BUILDING) {
+                 buildingMask[i] = 255.0f; // SAT2LoD2 expects 255 for foreground pixels
+             }
+         }
+         TiffExporter::writeFloatTiff(tmpLabelPath, buildingMask, 
+                                      metadata.width, metadata.height, 
+                                      const_cast<double*>(metadata.geoTransform.data()), 
+                                      metadata.projectionRef.c_str());
+
+         // Write the optical texture to physical disk
+         if (!scene.rgbTextureBytes.empty()) {
+             std::ofstream orthoFile(tmpOrthoPath, std::ios::binary);
+             orthoFile.write(reinterpret_cast<const char*>(scene.rgbTextureBytes.data()), 
+                             scene.rgbTextureBytes.size());
+             orthoFile.close();
+         }
+
+         // Prepare the HTTP Request to the Python Microservice
+         Json::Value pyRequest;
+         pyRequest["dsm_path"] = tmpDsmPath;
+         pyRequest["ortho_path"] = tmpOrthoPath;
+         pyRequest["label_path"] = tmpLabelPath;
+         pyRequest["output_dir"] = pyOutputDir;
+
+         auto httpClient = drogon::HttpClient::newHttpClient("http://127.0.0.1:8000");
+         auto req = drogon::HttpRequest::newHttpJsonRequest(pyRequest);
+         req->setPath("/api/v1/reconstruct");
+         req->setMethod(drogon::Post);
+
+         LOG_INFO << "PipelineService: Awaiting Python SAT2LoD2 Reconstruction...";
+         auto pyResponse = co_await httpClient->sendRequestCoro(req);
+
+         if (!pyResponse || pyResponse->statusCode() != 200) {
+             std::string errMsg = pyResponse ? std::string(pyResponse->body().data(), pyResponse->body().length()) : "Connection failed";
+             throw std::runtime_error("Python SAT2LoD2 API Failed: " + errMsg);
+         }
+
+         auto respJson = pyResponse->getJsonObject();
+         std::string objFilePath = (*respJson)["obj_path"].asString();
+         LOG_INFO << "PipelineService: SAT2LoD2 OBJ generated at " << objFilePath;
+
+         // 7b. Parse the SAT2LoD2 OBJ into a C++ MeshPrimitive
+         tinyobj::attrib_t attrib;
+         std::vector<tinyobj::shape_t> shapes;
+         std::vector<tinyobj::material_t> materials;
+         std::string warn, err;
+
+         if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, objFilePath.c_str())) {
+             throw std::runtime_error("Failed to load SAT2LoD2 OBJ: " + err);
+         }
+
+         MeshPrimitive externalBuildingMesh;
+         externalBuildingMesh.materialRole = MaterialRole::BUILDING_WALL;
+         externalBuildingMesh.colors.emplace();  // Activate vertex color support
+         externalBuildingMesh.normals.emplace(); // Activate normals for PBR rendering
+
+         float minZ = std::numeric_limits<float>::max();
+         float maxZ = std::numeric_limits<float>::lowest();
+
+         // Extract spatial scalers to map pixels to local meters
+         double gsdX = std::abs(metadata.geoTransform[1]);
+         double gsdY = std::abs(metadata.geoTransform[5]);
+         double originElev = scene.localFrame.elevationOrigin;
+
+         // 1st Pass: Align to Terrain Local Frame, extract vertices, and compute flat normals
+         for (const auto& shape : shapes) {
+             // Iterate over faces (triangles)
+             for (size_t f = 0; f < shape.mesh.indices.size(); f += 3) {
+                 
+                 // Get the 3 vertices of the triangle
+                 float v[3][3];
+                 for (int v_idx = 0; v_idx < 3; ++v_idx) {
+                     auto index = shape.mesh.indices[f + v_idx];
+                     double pixelCol = attrib.vertices[3 * index.vertex_index + 0]; 
+                     double pixelRow = attrib.vertices[3 * index.vertex_index + 1]; 
+                     double rawElev  = attrib.vertices[3 * index.vertex_index + 2]; 
+
+                     // SAT2LoD2 outputs Pixel X, Pixel Y, and Elevation Z.
+                     // Scale by GSD to perfectly align with the local terrain bounding box
+                     v[v_idx][0] = static_cast<float>(pixelCol * gsdX);
+                     v[v_idx][1] = static_cast<float>(rawElev - originElev);
+                     v[v_idx][2] = static_cast<float>(pixelRow * gsdY);
+
+                     // Track bounds for color gradient
+                     if (v[v_idx][1] < minZ) minZ = v[v_idx][1];
+                     if (v[v_idx][1] > maxZ) maxZ = v[v_idx][1];
+                 }
+
+                 // Compute flat normal for this triangle so PBR lighting works
+                 float Ux = v[1][0] - v[0][0];
+                 float Uy = v[1][1] - v[0][1];
+                 float Uz = v[1][2] - v[0][2];
+                 float Vx = v[2][0] - v[0][0];
+                 float Vy = v[2][1] - v[0][1];
+                 float Vz = v[2][2] - v[0][2];
+
+                 float Nx = Uy * Vz - Uz * Vy;
+                 float Ny = Uz * Vx - Ux * Vz;
+                 float Nz = Ux * Vy - Uy * Vx;
+                 
+                 // Normalize the vector
+                 float len = std::sqrt(Nx*Nx + Ny*Ny + Nz*Nz);
+                 if (len > 0.0f) { Nx /= len; Ny /= len; Nz /= len; }
+
+                 // Push positions and normals for all 3 vertices
+                 for (int v_idx = 0; v_idx < 3; ++v_idx) {
+                     externalBuildingMesh.positions.push_back(v[v_idx][0]);
+                     externalBuildingMesh.positions.push_back(v[v_idx][1]);
+                     externalBuildingMesh.positions.push_back(v[v_idx][2]);
+                     
+                     externalBuildingMesh.normals->push_back(Nx);
+                     externalBuildingMesh.normals->push_back(Ny);
+                     externalBuildingMesh.normals->push_back(Nz);
+
+                     externalBuildingMesh.indices.push_back(externalBuildingMesh.indices.size());
+                 }
+             }
+         }
+
+         // 2nd Pass: Inject MapFlow AI Hologram Colors (Cyan -> Blue -> Red) and calc bounds
+         auto& colors = *externalBuildingMesh.colors;
+         float heightRange = std::max(0.1f, maxZ - minZ);
+
+         for (size_t i = 0; i < externalBuildingMesh.positions.size(); i += 3) {
+             float height = externalBuildingMesh.positions[i + 1]; // localY is the height
+             float t = std::max(0.0f, std::min(1.0f, (height - minZ) / heightRange));
+
+             float r = 0.0f, g = 0.0f, b = 0.0f;
+
+             if (t < 0.5f) {
+                 // Bottom 50%: Cyan (0.0, 0.8, 1.0) to Deep Blue (0.1, 0.2, 0.9)
+                 float localT = t / 0.5f;
+                 r = 0.0f + localT * (0.1f - 0.0f);
+                 g = 0.8f + localT * (0.2f - 0.8f);
+                 b = 1.0f + localT * (0.9f - 1.0f);
+             } else {
+                 // Top 50%: Deep Blue (0.1, 0.2, 0.9) to Red Hologram (1.0, 0.15, 0.3)
+                 float localT = (t - 0.5f) / 0.5f;
+                 r = 0.1f + localT * (1.0f - 0.1f);
+                 g = 0.2f + localT * (0.15f - 0.2f);
+                 b = 0.9f + localT * (0.3f - 0.9f);
+             }
+
+             colors.push_back(r);
+             colors.push_back(g);
+             colors.push_back(b);
+             colors.push_back(1.0f); // Alpha channel
+
+             externalBuildingMesh.localBounds.expand(
+                 externalBuildingMesh.positions[i], 
+                 externalBuildingMesh.positions[i+1], 
+                 externalBuildingMesh.positions[i+2]
+             );
+         }
+
+         // Clean up physical disk artifacts
+         std::remove(tmpDsmPath.c_str());
+         std::remove(tmpOrthoPath.c_str());
+         std::remove(tmpLabelPath.c_str());
+
          const char* diagnosticsSetting = std::getenv("DEPTHWIZARD_DIAGNOSTICS");
          const bool captureDiagnostics = !diagnosticsSetting || std::string(diagnosticsSetting) != "0";
          BuildingReconstructionDiagnostics stages;
-         BuildingCollection buildings = BuildingReconstructionService::reconstruct(
-             semantics, surface, metadata, BuildingReconstructionConfig{},
-             captureDiagnostics ? &stages : nullptr,
-             &correction.correctedMetricNdsm,
-             &scene.rgbTextureBytes);
+         BuildingCollection buildings;
 
-         LOG_INFO << "PipelineService: reconstruction summary for " << jobId
-                  << "; semantic_candidates=" << buildings.semanticCandidateCount
-                  << "; recovered_candidate_pixels="
-                  << buildings.recoveredCandidatePixelCount
-                  << "; component_rejected=" << buildings.componentRejectedCount
-                  << "; vectorization_rejected="
-                  << buildings.vectorizationRejectedCount
-                  << "; physics_rejected=" << buildings.physicsRejectedCount
-                  << "; accepted_buildings=" << buildings.buildings.size();
-         
          MeshBuildConfig meshConfig;
          const ScenePresentationDecision sceneDecision = ScenePresentationSelector::select(
              semantics, surface, buildings);
@@ -350,7 +518,7 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
              }
          }
          else if (presentation == ScenePresentation::METRIC &&
-                  !buildings.buildings.empty() &&
+                  !externalBuildingMesh.indices.empty() &&
                   sceneDecision.vegetationFraction < 0.55 &&
                   sceneDecision.groundReliefMetres <= 80.0)
          {
@@ -364,7 +532,7 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
                   << "; vegetation_fraction=" << sceneDecision.vegetationFraction
                   << "; supported_ground_relief_m=" << sceneDecision.groundReliefMetres;
          GlbBuildResult glb = SceneMeshService::generateGlb(
-            scene, surface, buildings, metadata, meshConfig);
+            scene, surface, externalBuildingMesh, metadata, meshConfig);
 
          LOG_INFO << "PipelineService: mesh summary for " << jobId
                   << "; presentation=" << (presentation == ScenePresentation::FLAT_URBAN ? "flat_urban" : "metric")

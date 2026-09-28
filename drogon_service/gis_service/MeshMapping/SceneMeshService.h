@@ -4,10 +4,18 @@
 #include "../structures/SurfaceStructs.h"
 #include "../structures/GeographicStructs.h"
 #include "../structures/ExportStructs.h"
+#include "../structures/MeshStructs.h"
 
 class SceneMeshService 
 {
      public:
+     static GlbBuildResult generateGlb(
+         const SceneInput& scene,
+         const GeoreferencedSurfaceBundle& surface,
+         const MeshPrimitive& externalBuildingMesh,
+         const SpatialMetadata& metadata,
+         const MeshBuildConfig& config = MeshBuildConfig());
+
      static GlbBuildResult generateGlb(
          const SceneInput& scene,
          const GeoreferencedSurfaceBundle& surface,

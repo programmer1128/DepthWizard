@@ -30,9 +30,8 @@ struct BuildingReconstructionConfig
      // Supported interior pixels become instance markers; the height-step
      // exclusion still separates adjacent roof levels.
      float instanceSeedProbability{0.48f};
-     // Ignore ordinary HVAC/parapet variation while retaining real adjacent
-     // building height steps.
-     float instanceHeightStepMetres{3.0f};
+     // Make the instance splitter highly sensitive to small height variations between attached buildings
+     float instanceHeightStepMetres{1.5f};
      float minInstanceSeedAreaSquareMetres{25.0f};
      // Sparse cores around height noise are not enough evidence to split a
      // large, otherwise continuous building into many separate boxes.
@@ -44,28 +43,29 @@ struct BuildingReconstructionConfig
      int connectivity{4};
 
      //Footprint Vectorizer Thresholds
-     float minBuildingAreaSquareMetres{12.0f};
-     float minHoleAreaSquareMetres{5.0f};                // Preserve narrow but genuine urban courtyards
-     // Initial RDP epsilon. The vectorizer retries smaller values when the
-     // proposed simplification changes ring area or topology excessively.
-     float footprintSimplificationToleranceMetres{4.0f};
+     // Relax the minimum area so smaller standalone blocks still render
+     float minBuildingAreaSquareMetres{20.0f};
+     // Stop tiny 2x2 pixel noise from rendering as courtyard holes
+     float minHoleAreaSquareMetres{30.0f};
+     // STOP DESTROYING CORNERS: Lower RDP tolerance from 4.0m to 0.75m
+     float footprintSimplificationToleranceMetres{0.75f};
      float footprintAreaDeviationTolerance{0.25f};       // Max 25% area deviation allowed
      // Fill ratio only nominates a rectangle: concavity, displacement and
      // area guards must also pass. Courtyards never become bounding boxes.
      bool regularizeRectangularFootprints{true};
      float minimumRectangleFillRatio{0.84f};
      bool regularizeSupportedEdges{true};
-     float maxCornerAdjustmentMetres{3.0f};
+     // PREVENT CGAL WARPING: Restrict how far CGAL can drag a corner
+     float maxCornerAdjustmentMetres{1.2f};
      // Measure the final polygon against the pixels of its own instance.
      // A regularized CAD box or simplified polygon typically achieves 80-88% IoU.
      float minimumFootprintMaskIoU{0.68f};
 
-     // Clean-room LoD2 block decomposition. Complex orthogonal footprints are
-     // represented by non-overlapping rectangles only when the rectangles
-     // retain strong agreement with the validated instance mask.
-     bool enableLod2BlockDecomposition{true};
-     float minDecompositionCoverage{0.92f};
-     float minDecompositionMaskIoU{0.90f};
+     // Turn OFF complex roof and block logic to guarantee clean LoD1 Prisms
+     bool enableLod2BlockDecomposition{false};
+     // Allow the Decomposer to accept cleaner, slightly smaller CAD boxes
+     float minDecompositionCoverage{0.82f};
+     float minDecompositionMaskIoU{0.75f};
      float decompositionResidualRatio{0.05f};
      float minDecomposedBlockAreaSquareMetres{16.0f};
      // L/T setbacks need two or three primitives. More pieces tend to turn
@@ -74,7 +74,7 @@ struct BuildingReconstructionConfig
 
      // DSM-driven parametric roof fitting. Weak or inconsistent evidence
      // always falls back to a flat block instead of inventing roof geometry.
-     bool enableLod2RoofFitting{true};
+     bool enableLod2RoofFitting{false};
      float roofBoundaryBandMetres{2.0f};
      float minRoofRiseMetres{1.5f};
      float maxRoofRiseMetres{15.0f};
@@ -97,9 +97,8 @@ struct BuildingReconstructionConfig
      // Expanding every footprint by one raster cell creates the visible halo
      // around optical roofs and makes neighbouring buildings touch.
      float footprintDilationMetres{0.0f};
-     // Calibration for the locally reconstructed nDSM. Applied consistently
-     // to building heights, roof facets, and setback thresholds.
-     float heightScaleMultiplier{1.85f};
+     // Boost height scaling to dramatically separate skyscrapers from mid-rises
+     float heightScaleMultiplier{2.25f}; // Increased from 1.85f for distinct visual relief
 
      // Universal Configuration Validator
      bool validate() const

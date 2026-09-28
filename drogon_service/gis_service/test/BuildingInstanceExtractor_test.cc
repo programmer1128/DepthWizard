@@ -173,7 +173,7 @@ TEST(BuildingInstanceExtractorTest, SplitsTouchingRoofsAtHeightStepWithoutLosing
     fillRectangle(heights, 16, 2, 30, 18, 25.0F);
     auto config = noMorphologyConfig();
     ASSERT_TRUE(config.splitSupportedInstances);
-    ASSERT_FLOAT_EQ(config.instanceHeightStepMetres, 3.0F);
+    ASSERT_FLOAT_EQ(config.instanceHeightStepMetres, 1.5F);
     ASSERT_FLOAT_EQ(config.minInstanceSeedAreaSquareMetres, 25.0F);
     const auto result = BuildingInstanceExtractor::extract(mask, semantics,
         makeProjectedMetadata(32, 20), config, &heights);
@@ -185,6 +185,30 @@ TEST(BuildingInstanceExtractorTest, SplitsTouchingRoofsAtHeightStepWithoutLosing
     const auto repeated = BuildingInstanceExtractor::extract(mask, semantics,
         makeProjectedMetadata(32, 20), config, &heights);
     EXPECT_EQ(result.labelRaster.data, repeated.labelRaster.data);
+}
+
+TEST(BuildingInstanceExtractorTest, SharpHeightCliffWinsOverBroadSemanticValley)
+{
+    auto mask = makeSuccessfulMask(50, 20);
+    fillRectangle<uint8_t>(mask.cleanMask, 2, 2, 48, 18, 1);
+    auto semantics = makeSemanticScene(50, 20, SemanticClass::BUILDING);
+    semantics.buildingProbability = makeConstantGrid(50, 20, 0.95F);
+    fillRectangle(semantics.buildingProbability, 18, 2, 32, 18, 0.40F);
+    auto heights = makeConstantGrid(50, 20, 10.0F);
+    fillRectangle(heights, 29, 2, 48, 18, 14.0F);
+    const auto result = BuildingInstanceExtractor::extract(
+        mask, semantics, makeProjectedMetadata(50, 20),
+        noMorphologyConfig(), &heights);
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    ASSERT_EQ(result.components.size(), 2U);
+    const int32_t left = result.labelRaster.data[10 * 50 + 10];
+    const int32_t right = result.labelRaster.data[10 * 50 + 40];
+    EXPECT_NE(left, right);
+    EXPECT_EQ(result.labelRaster.data[10 * 50 + 28], left);
+    EXPECT_EQ(result.labelRaster.data[10 * 50 + 29], right);
+    for (std::size_t i = 0; i < mask.cleanMask.data.size(); ++i)
+        EXPECT_EQ(result.labelRaster.data[i] != 0,
+                  mask.cleanMask.data[i] != 0);
 }
 
 TEST(BuildingInstanceExtractorTest, ProbabilityValleySeparatesRoofsButUniformBlockStaysWhole)

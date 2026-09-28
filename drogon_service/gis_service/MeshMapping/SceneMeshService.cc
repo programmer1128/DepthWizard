@@ -8,6 +8,132 @@
 #include "../FileGenerators/GltfPackager.h"
 #include <iostream>
 #include <unordered_set>
+#include <algorithm>
+
+GlbBuildResult SceneMeshService::generateGlb(
+     const SceneInput& scene,
+     const GeoreferencedSurfaceBundle& surface,
+     const MeshPrimitive& externalBuildingMesh,
+     const SpatialMetadata& metadata,
+     const MeshBuildConfig& config)
+{
+     GlbBuildResult result;
+     auto terrainConfig = config.terrain;
+     const bool flat = config.presentation == ScenePresentation::FLAT_URBAN;
+     if (flat) terrainConfig.elevationSource = TerrainElevationSource::FLAT_PRESENTATION;
+     terrainConfig.generateSkirt = !flat;
+
+     // Establish Mathematical Anchor
+     LocalSceneFrame frame = LocalFrameTransformer::create(metadata, surface);
+
+     // Generate Terrain Mesh
+     TerrainMesh terrain = TerrainMesher::generate(
+         surface,
+         metadata,
+         frame,
+         terrainConfig);
+
+     SceneMesh sceneMesh;
+     sceneMesh.localFrame = frame;
+     sceneMesh.presentationMode = flat ? "flat_urban" : "metric";
+     sceneMesh.terrainPrimitive = std::move(terrain.terrainPrimitive);
+     sceneMesh.wallPrimitive = externalBuildingMesh;
+
+     sceneMesh.sceneBounds = sceneMesh.terrainPrimitive.localBounds;
+     if (externalBuildingMesh.localBounds.isInitialized)
+     {
+         if (!sceneMesh.sceneBounds.isInitialized)
+         {
+             sceneMesh.sceneBounds = externalBuildingMesh.localBounds;
+         }
+         else
+         {
+             sceneMesh.sceneBounds.minX = std::min(sceneMesh.sceneBounds.minX, externalBuildingMesh.localBounds.minX);
+             sceneMesh.sceneBounds.minY = std::min(sceneMesh.sceneBounds.minY, externalBuildingMesh.localBounds.minY);
+             sceneMesh.sceneBounds.minZ = std::min(sceneMesh.sceneBounds.minZ, externalBuildingMesh.localBounds.minZ);
+             sceneMesh.sceneBounds.maxX = std::max(sceneMesh.sceneBounds.maxX, externalBuildingMesh.localBounds.maxX);
+             sceneMesh.sceneBounds.maxY = std::max(sceneMesh.sceneBounds.maxY, externalBuildingMesh.localBounds.maxY);
+             sceneMesh.sceneBounds.maxZ = std::max(sceneMesh.sceneBounds.maxZ, externalBuildingMesh.localBounds.maxZ);
+         }
+     }
+
+     sceneMesh.materials = {
+         MaterialRole::TERRAIN_TEXTURE,
+         MaterialRole::BUILDING_WALL
+     };
+
+     if (!scene.rgbTextureBytes.empty())
+     {
+         TextureAsset texAsset;
+         texAsset.bytes = scene.rgbTextureBytes;
+         texAsset.mimeType = scene.textureMimeType;
+         sceneMesh.texture = std::move(texAsset);
+     }
+
+     // Compress Primitives Independently via Draco
+     std::vector<CompressedPrimitive> compressedPrimitives;
+
+     // Compress Terrain
+     CompressedPrimitive compTerrain = DracoCompressor::compress(sceneMesh.terrainPrimitive, config.draco);
+     if (!compTerrain.success)
+     {
+         result.geometryWarnings.push_back("Failed to compress Terrain: " + compTerrain.errorMessage);
+         return result;
+     }
+     else
+     {
+         compressedPrimitives.push_back(std::move(compTerrain));
+         result.vertexCount += sceneMesh.terrainPrimitive.positions.size() / 3;
+         result.triangleCount += sceneMesh.terrainPrimitive.indices.size() / 3;
+         result.terrainTriangleCount = sceneMesh.terrainPrimitive.indices.size() / 3;
+     }
+
+     // Compress Buildings directly from externalBuildingMesh
+     if (!externalBuildingMesh.indices.empty())
+     {
+         CompressedPrimitive compBuildings = DracoCompressor::compress(externalBuildingMesh, config.draco);
+         if (!compBuildings.success)
+         {
+             result.geometryWarnings.push_back("Failed to compress Buildings: " + compBuildings.errorMessage);
+             return result;
+         }
+         else
+         {
+             compressedPrimitives.push_back(std::move(compBuildings));
+             result.vertexCount += externalBuildingMesh.positions.size() / 3;
+             result.triangleCount += externalBuildingMesh.indices.size() / 3;
+             result.wallTriangleCount = externalBuildingMesh.indices.size() / 3;
+         }
+     }
+
+     // Abort if no geometry survived compression
+     if (compressedPrimitives.empty())
+     {
+         result.geometryWarnings.push_back("Errror: All primitives failed compression. Cannot generate GLB.");
+         return result;
+     }
+
+     // Binary Packaging
+     size_t buildingCount = externalBuildingMesh.indices.empty() ? 0 : 1;
+
+     GlbBuildResult packagedResult = GltfPackager::buildSceneToMemory(
+         sceneMesh, compressedPrimitives, buildingCount);
+
+     packagedResult.vertexCount = result.vertexCount;
+     packagedResult.triangleCount = result.triangleCount;
+     packagedResult.terrainTriangleCount = result.terrainTriangleCount;
+     packagedResult.roofTriangleCount = result.roofTriangleCount;
+     packagedResult.wallTriangleCount = result.wallTriangleCount;
+     packagedResult.buildingCount = buildingCount;
+
+     packagedResult.geometryWarnings.insert(
+         packagedResult.geometryWarnings.end(),
+         result.geometryWarnings.begin(),
+         result.geometryWarnings.end()
+     );
+
+     return packagedResult;
+}
 
 GlbBuildResult SceneMeshService::generateGlb(
      const SceneInput& scene,

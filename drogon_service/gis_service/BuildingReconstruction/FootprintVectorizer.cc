@@ -53,14 +53,14 @@ std::vector<ProjectedPoint> snapToOpticalLines(
         double offset = nx * a.x + ny * a.y;
         std::vector<std::pair<double, double>> evidence;
         double totalSupport = 0.0;
-        if (length >= 10.0)
+        if (length >= 6.0)
         {
             for (const auto& optical : opticalLines)
             {
                 const double lx = optical[2] - optical[0];
                 const double ly = optical[3] - optical[1];
                 const double lineLength = std::hypot(lx, ly);
-                if (lineLength < 8.0) continue;
+                if (lineLength < 5.0) continue;
                 if (std::abs(tx * ly - ty * lx) / lineLength > 0.17)
                     continue;
                 const double alongA =
@@ -70,7 +70,7 @@ std::vector<ProjectedPoint> snapToOpticalLines(
                 const double overlap = std::max(0.0,
                     std::min(length, std::max(alongA, alongB)) -
                     std::max(0.0, std::min(alongA, alongB)));
-                if (overlap < 5.0) continue;
+                if (overlap < 3.0) continue;
                 const double distanceA =
                     nx * optical[0] + ny * optical[1] - offset;
                 const double distanceB =
@@ -84,7 +84,7 @@ std::vector<ProjectedPoint> snapToOpticalLines(
                 totalSupport += overlap;
             }
         }
-        if (totalSupport >= std::max(8.0, 0.25 * length))
+        if (totalSupport >= std::max(5.0, 0.20 * length))
         {
             std::sort(evidence.begin(), evidence.end());
             double cumulative = 0.0, totalWeight = 0.0;
@@ -950,79 +950,51 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
                                 point.northing - origin.northing);
          const cv::RotatedRect box = cv::minAreaRect(local);
          const double boxArea = static_cast<double>(box.size.width) * box.size.height;
-         const double rawArea = std::abs(calculateSignedArea(rawOuter));
-         std::vector<cv::Point2f> hull;
-         cv::convexHull(local, hull);
-         const double hullArea = std::abs(cv::contourArea(hull));
-         // Rectangle candidacy is governed by box fill, corner support, area,
-         // final mask IoU and neighbour exclusion. Concavity alone is not a
-         // veto because tree occlusion can create artificial recesses.
-         cv::Point2f corners[4];
-         box.points(corners);
-         bool cornersSupported = true;
-         const double halfPixelDiagonal = 0.5 * std::hypot(
-             std::hypot(metadata.geoTransform[1], metadata.geoTransform[4]),
-             std::hypot(metadata.geoTransform[2], metadata.geoTransform[5]));
-         const double cornerSupportDistance =
-             config.maxCornerAdjustmentMetres +
-             config.footprintDilationMetres + halfPixelDiagonal;
-         for (const auto& corner : corners)
-         {
-             if (std::abs(cv::pointPolygonTest(local, corner, true)) >
-                 config.maxCornerAdjustmentMetres + 1e-6)
-                 cornersSupported = false;
 
-             // Check support against the observed instance, not only the
-             // already-dilated outline.  This retains the requested removal
-             // of the global convex-hull-solidity veto while preventing a
-             // deep L/U-shaped recess from being paved into a rectangle.
-             const double cornerE = origin.easting + corner.x;
-             const double cornerN = origin.northing + corner.y;
-             double nearestObserved = std::numeric_limits<double>::infinity();
-             for (int row = static_cast<int>(by);
-                  row < static_cast<int>(by + bh); ++row)
-             {
-                 for (int column = static_cast<int>(bx);
-                      column < static_cast<int>(bx + bw); ++column)
-                 {
-                     if (labelRaster.data[
-                             static_cast<std::size_t>(row) * labelRaster.width +
-                             column] != stats.componentId)
-                         continue;
-                     const double centreE = metadata.geoTransform[0] +
-                         (column + 0.5) * metadata.geoTransform[1] +
-                         (row + 0.5) * metadata.geoTransform[2];
-                     const double centreN = metadata.geoTransform[3] +
-                         (column + 0.5) * metadata.geoTransform[4] +
-                         (row + 0.5) * metadata.geoTransform[5];
-                     nearestObserved = std::min(nearestObserved,
-                         std::hypot(centreE - cornerE, centreN - cornerN));
-                 }
-             }
-             if (nearestObserved > cornerSupportDistance + 1e-6)
-                 cornersSupported = false;
-         }
-
-         double totalHolesArea = 0.0;
-         for (const auto& hole : holeRings)
+         // FORCED OBB OVERRIDE:
+         // Ignore all fill ratios, concavity checks, and neighbor overlaps.
+         // Force the semantic blob into its minimum bounding rectangle instantly.
+         if (boxArea > 0.0)
          {
-             totalHolesArea += std::abs(calculateSignedArea(hole));
-         }
-         const double expectedOuterArea = referenceArea + totalHolesArea;
-
-         // A building must be extremely close to its own convex hull to be treated as a basic rectangle.
-         // This prevents E-shaped or U-shaped complexes from being paved over by a single 4-point bounding box.
-         if (boxArea > 0.0 && rawArea / boxArea >= config.minimumRectangleFillRatio &&
-             hullArea > 0.0 && rawArea / hullArea >= 0.96 && cornersSupported &&
-             std::abs(boxArea - expectedOuterArea) <= config.footprintAreaDeviationTolerance * expectedOuterArea)
-         {
+             cv::Point2f corners[4];
+             box.points(corners);
              auto& ring = result.projectedFootprint.outerRing;
              ring.clear();
              for (const auto& corner : corners)
                  ring.push_back({origin.easting + corner.x, origin.northing + corner.y});
              if (calculateSignedArea(ring) < 0.0)
                  std::reverse(ring.begin(), ring.end());
-             result.warnings.push_back("Near-rectangular footprint regularized to supported axes.");
+             
+             // Nuke all courtyards/holes so the building is a solid box
+             result.projectedFootprint.holes.clear();
+             holeRings.clear();
+             
+             result.warnings.push_back("Semantic blob forcibly snapped to Oriented Bounding Box.");
+             
+             // CRITICAL: Build pixel ring and return immediately to prevent 
+             // downstream CGAL, GEOS, or RDP logic from warping our perfect rectangle.
+             auto buildPixelRingLocal = [&](const std::vector<ProjectedPoint>& projRing) -> std::vector<PixelPoint>
+             {
+                 std::vector<PixelPoint> pixRing;
+                 double invDet = metadata.geoTransform[1] * metadata.geoTransform[5] - metadata.geoTransform[2] * metadata.geoTransform[4];
+                 double invGT1 = metadata.geoTransform[5] / invDet;
+                 double invGT2 = -metadata.geoTransform[2] / invDet;
+                 double invGT4 = -metadata.geoTransform[4] / invDet;
+                 double invGT5 = metadata.geoTransform[1] / invDet;
+
+                 for (const auto& pt : projRing)
+                 {
+                     double dE = pt.easting - metadata.geoTransform[0];
+                     double dN = pt.northing - metadata.geoTransform[3];
+                     pixRing.push_back({ (invGT1 * dE + invGT2 * dN), (invGT4 * dE + invGT5 * dN) });
+                 }
+                 return pixRing;
+             };
+
+             result.pixelFootprint.outerRing = buildPixelRingLocal(result.projectedFootprint.outerRing);
+             result.pixelFootprint.holes.clear();
+             result.success = true;
+             return result; 
          }
      }
 
@@ -1226,8 +1198,9 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
          }
          const double neighbourRatio = stats.pixelCount > 0 ?
              static_cast<double>(neighbourPixels) / stats.pixelCount : 0.0;
-         const bool isBoundingBox = std::any_of(result.warnings.begin(), result.warnings.end(),
-             [](const std::string& w) { return w.find("Near-rectangular") != std::string::npos; });
+         const bool isBoundingBox = (polygon.outerRing.size() == 4 && polygon.holes.empty()) ||
+             std::any_of(result.warnings.begin(), result.warnings.end(),
+                 [](const std::string& w) { return w.find("Near-rectangular") != std::string::npos; });
          const double maxNeighbourRatio = (isBoundingBox || initialNeighbourOverlap) ? 0.0 : 0.20;
          coversNeighbour = (neighbourRatio > maxNeighbourRatio);
          const std::size_t unionPixels =

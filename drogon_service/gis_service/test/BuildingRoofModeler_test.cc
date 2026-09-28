@@ -31,6 +31,7 @@ DecomposedBuildingBlock makeBlock()
 BuildingReconstructionConfig roofConfig()
 {
     auto config = noMorphologyConfig();
+    config.enableLod2RoofFitting = true;
     config.minRoofFitConfidence = 0.20F;
     config.minRoofRiseMetres = 1.0F;
     config.maxRoofRiseMetres = 10.0F;

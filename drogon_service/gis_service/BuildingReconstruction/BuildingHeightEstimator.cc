@@ -17,7 +17,7 @@ float BuildingHeightEstimator::calculateRobustRoofHeight(
      std::vector<float>& samples)
 {
      if (samples.empty()) return 0.0f;
-     // Preserve a supported upper roof instead of clamping it to a broad podium.
+     // Return 85th percentile peak to ensure towers determine the footprint height
      return calculateRobustPeak(samples);
 }
 

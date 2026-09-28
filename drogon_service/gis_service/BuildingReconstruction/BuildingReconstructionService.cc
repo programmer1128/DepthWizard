@@ -8,6 +8,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 
 BuildingCollection BuildingReconstructionService::reconstruct(
@@ -54,6 +55,62 @@ BuildingCollection BuildingReconstructionService::reconstruct(
                                    line[3] - line[1]) < 8.0;
              });
          }
+     }
+
+     // Recover long wall evidence from the reconstructed height field even
+     // where the optical roof edge is obscured. LSD operates on a byte image;
+     // confirm every proposed line against the original metric nDSM so that
+     // quantization, no-data seams, and roof texture do not become facades.
+     if (evidenceNdsm.isValid() &&
+         evidenceNdsm.width == metadata.width &&
+         evidenceNdsm.height == metadata.height)
+     {
+         cv::Mat depth8U(metadata.height, metadata.width, CV_8UC1,
+                         cv::Scalar(0));
+         for (std::size_t i = 0; i < evidenceNdsm.data.size(); ++i)
+         {
+             const float height = evidenceNdsm.data[i];
+             if (std::isfinite(height) && height > 0.5f)
+                 depth8U.ptr<uint8_t>()[i] =
+                     cv::saturate_cast<uint8_t>(height * 8.0f);
+         }
+         std::vector<cv::Vec4f> ndsmLines;
+         cv::createLineSegmentDetector(cv::LSD_REFINE_ADV)->detect(
+             depth8U, ndsmLines);
+         const auto supportsHeightCliff = [&](const cv::Vec4f& line)
+         {
+             const double dx = line[2] - line[0];
+             const double dy = line[3] - line[1];
+             const double length = std::hypot(dx, dy);
+             if (length < 5.0) return false;
+             const double nx = -dy / length;
+             const double ny = dx / length;
+             int supported = 0;
+             for (double t : {0.25, 0.5, 0.75})
+             {
+                 const double px = line[0] + t * dx;
+                 const double py = line[1] + t * dy;
+                 const int ax = cvRound(px + 1.5 * nx);
+                 const int ay = cvRound(py + 1.5 * ny);
+                 const int bx = cvRound(px - 1.5 * nx);
+                 const int by = cvRound(py - 1.5 * ny);
+                 if (ax < 0 || bx < 0 || ay < 0 || by < 0 ||
+                     ax >= metadata.width || bx >= metadata.width ||
+                     ay >= metadata.height || by >= metadata.height)
+                     continue;
+                 const float a = evidenceNdsm.data[
+                     static_cast<std::size_t>(ay) * metadata.width + ax];
+                 const float b = evidenceNdsm.data[
+                     static_cast<std::size_t>(by) * metadata.width + bx];
+                 if (std::isfinite(a) && std::isfinite(b) &&
+                     std::abs(a - b) * config.heightScaleMultiplier >
+                         0.65f * config.instanceHeightStepMetres)
+                     ++supported;
+             }
+             return supported >= 2;
+         };
+         for (const auto& line : ndsmLines)
+             if (supportsHeightCliff(line)) opticalLines.push_back(line);
      }
 
      //Mask Cleanup

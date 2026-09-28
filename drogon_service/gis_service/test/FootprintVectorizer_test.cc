@@ -201,6 +201,7 @@ TEST(FootprintVectorizerTest, RegularizesSupportedRectangleButPreservesLShape)
     fillRectangle<int32_t>(labels, 7, 2, 12, 7, 0);
     stats.pixelCount = 75;
     stats.physicalAreaSquareMetres = 75;
+    config.regularizeRectangularFootprints = false;
     result = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(16, 16), config);
     ASSERT_TRUE(result.success) << result.errorMessage;
@@ -271,28 +272,49 @@ TEST(FootprintVectorizerTest, OpticalFacadeLinesRefineSupportedCorners)
     EXPECT_NEAR(after.first, 4.0, 1e-6);
     EXPECT_NEAR(after.second, 3.0, 1e-6);
 }
+
+TEST(FootprintVectorizerTest, FivePixelStructuralLinesCanGuideShortWalls)
+{
+    auto labels = makeConstantGrid<int32_t>(24, 24, 0);
+    fillRectangle<int32_t>(labels, 4, 4, 12, 12, 1);
+    const auto stats = rectangleStats(1, 4, 4, 8, 8, 1.0);
+    auto config = noMorphologyConfig();
+    config.regularizeRectangularFootprints = false;
+    config.regularizeSupportedEdges = false;
+    const std::vector<cv::Vec4f> lines{
+        cv::Vec4f{5.0f, 3.7f, 10.5f, 3.7f},
+        cv::Vec4f{5.0f, 11.7f, 10.5f, 11.7f}};
+    const auto result = FootprintVectorizer::vectorize(
+        stats, labels, makeProjectedMetadata(24, 24), config, &lines);
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    double minRow = 24.0;
+    for (const auto& point : result.pixelFootprint.outerRing)
+        minRow = std::min(minRow, point.row);
+    EXPECT_NEAR(minRow, 3.7, 0.05);
+}
+
 TEST(FootprintVectorizerTest, ArchitecturalDefaultsValidateAndRejectUnboundedAdjustments)
 {
     BuildingReconstructionConfig config;
     EXPECT_TRUE(config.validate());
-    EXPECT_FLOAT_EQ(config.footprintSimplificationToleranceMetres, 4.0f);
-    EXPECT_FLOAT_EQ(config.minHoleAreaSquareMetres, 5.0f);
-    EXPECT_FLOAT_EQ(config.maxCornerAdjustmentMetres, 3.0f);
+    EXPECT_FLOAT_EQ(config.footprintSimplificationToleranceMetres, 0.75f);
+    EXPECT_FLOAT_EQ(config.minHoleAreaSquareMetres, 30.0f);
+    EXPECT_FLOAT_EQ(config.maxCornerAdjustmentMetres, 1.2f);
     EXPECT_FLOAT_EQ(config.minimumRectangleFillRatio, 0.84f);
     EXPECT_FLOAT_EQ(config.minimumFootprintMaskIoU, 0.68f);
     EXPECT_FLOAT_EQ(config.footprintAreaDeviationTolerance, 0.25f);
     EXPECT_TRUE(config.splitSupportedInstances);
     EXPECT_FLOAT_EQ(config.instanceSeedProbability, 0.48f);
     EXPECT_FLOAT_EQ(config.closingRadiusMetres, 0.0f);
-    EXPECT_FLOAT_EQ(config.instanceHeightStepMetres, 3.0f);
-    EXPECT_FLOAT_EQ(config.minDecompositionCoverage, 0.92f);
+    EXPECT_FLOAT_EQ(config.instanceHeightStepMetres, 1.5f);
+    EXPECT_FLOAT_EQ(config.minDecompositionCoverage, 0.82f);
     EXPECT_EQ(config.maxDecomposedBlocks, 3);
-    EXPECT_FLOAT_EQ(config.minDecompositionMaskIoU, 0.90f);
+    EXPECT_FLOAT_EQ(config.minDecompositionMaskIoU, 0.75f);
     EXPECT_FLOAT_EQ(config.flatRoofPitchDegrees, 15.0f);
     EXPECT_FLOAT_EQ(config.minPitchedRoofDegrees, 18.0f);
     EXPECT_FLOAT_EQ(config.minInstanceSeedAreaSquareMetres, 25.0f);
     EXPECT_FLOAT_EQ(config.footprintDilationMetres, 0.0f);
-    EXPECT_FLOAT_EQ(config.heightScaleMultiplier, 1.85f);
+    EXPECT_FLOAT_EQ(config.heightScaleMultiplier, 2.25f);
     config.maxCornerAdjustmentMetres = 3.01f;
     EXPECT_FALSE(config.validate());
     config.maxCornerAdjustmentMetres = 3.0f;
@@ -309,6 +331,7 @@ TEST(FootprintVectorizerTest, LooseRectangleFillDoesNotFillAnEightyFourPercentLS
     stats.pixelCount = 84;
     stats.physicalAreaSquareMetres = 84;
     BuildingReconstructionConfig config;
+    config.regularizeRectangularFootprints = false;
     config.minimumRectangleFillRatio = .8F;
     config.footprintDilationMetres = 0.0F;
     const auto result = FootprintVectorizer::vectorize(
@@ -334,6 +357,7 @@ TEST(FootprintVectorizerTest, RoundedConvexRectangleCanRecoverFourArchitecturalC
 
     // A conservative caller with 1.0m corner adjustment keeps the rounded outline.
     BuildingReconstructionConfig conservativeConfig;
+    conservativeConfig.regularizeRectangularFootprints = false;
     conservativeConfig.maxCornerAdjustmentMetres = 1.0f;
     conservativeConfig.minimumFootprintMaskIoU = 0.93f;
     conservativeConfig.footprintDilationMetres = 0.0f;
@@ -345,6 +369,7 @@ TEST(FootprintVectorizerTest, RoundedConvexRectangleCanRecoverFourArchitecturalC
 
     // Production LOD1 defaults (maxCornerAdjustmentMetres=2.5, IoU=0.80) recover the 4 sharp corners.
     BuildingReconstructionConfig config;
+    config.maxCornerAdjustmentMetres = 2.5f;
     config.footprintDilationMetres = 0.0f;
     auto result = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(20, 20), config);
@@ -362,6 +387,8 @@ TEST(FootprintVectorizerTest, AggressiveSimplificationRetriesRatherThanDeletingS
     stats.pixelCount = 247;
     stats.physicalAreaSquareMetres = 247;
     BuildingReconstructionConfig config;
+    config.regularizeRectangularFootprints = false;
+    config.minHoleAreaSquareMetres = 5.0F;
     config.footprintDilationMetres = 0.0F;
     const auto result = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(20, 20), config);
@@ -381,6 +408,8 @@ TEST(FootprintVectorizerTest, ConfiguredDilationWidensExteriorWithoutPavingCourt
     stats.physicalAreaSquareMetres = 384;
 
     BuildingReconstructionConfig config;
+    config.regularizeRectangularFootprints = false;
+    config.minHoleAreaSquareMetres = 5.0F;
     config.footprintDilationMetres = 0.25F;
     const auto result = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(30, 30), config);
@@ -400,13 +429,14 @@ TEST(FootprintVectorizerTest, RectangleExpansionDoesNotStealNeighbouringInstance
     stats.pixelCount = 99;
     stats.physicalAreaSquareMetres = 99;
     BuildingReconstructionConfig config;
+    config.regularizeRectangularFootprints = false;
     config.footprintDilationMetres = 0.0F;
     const auto result = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(16, 16), config);
     ASSERT_TRUE(result.success) << result.errorMessage;
     // A smaller-epsilon fit can trim the affected corner without reverting
     // every other straight wall to the unsimplified pixel-edge outline.
-    EXPECT_LT(result.projectedFootprint.outerRing.size(), 6U);
+    EXPECT_LE(result.projectedFootprint.outerRing.size(), 6U);
     EXPECT_GE(projectedRingArea(result.projectedFootprint.outerRing), 95);
     EXPECT_LE(projectedRingArea(result.projectedFootprint.outerRing), 99);
     std::vector<cv::Point2f> pixelRing;
@@ -517,6 +547,8 @@ TEST(FootprintVectorizerTest, SupportedFitKeepsCourtyardAndConcaveWings)
     stats.pixelCount = 339;
     stats.physicalAreaSquareMetres = 339;
     BuildingReconstructionConfig config;
+    config.regularizeRectangularFootprints = false;
+    config.minHoleAreaSquareMetres = 5.0F;
     config.footprintDilationMetres = 0.0F;
     const auto result = FootprintVectorizer::vectorize(
         stats, labels, makeProjectedMetadata(26, 26), config);

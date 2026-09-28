@@ -16,6 +16,7 @@ struct SceneInput
       std::string textureMimeType; //"image/jpeg" or "image/png"
       std::optional<SpatialMetadata> spatialMetadata; //optional for non-geo inputs
       std::string sourceFormat;
+      LocalSceneFrame localFrame;
 };
 
 struct ImageQualityResult 

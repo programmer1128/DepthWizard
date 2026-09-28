@@ -131,4 +131,37 @@ TEST(BuildingReconstructionServiceTest, UsesUnsuppressedReconstructionNdsmForRoo
     EXPECT_FLOAT_EQ(collection.buildings.front().roofElevation, 114.0F);
 }
 
+TEST(BuildingReconstructionServiceTest, HeightCliffLinesGuideFootprintWithoutOpticalImage)
+{
+    constexpr int width = 48, height = 48;
+    auto semantics = makeSemanticScene(width, height,
+                                        SemanticClass::GROUND);
+    auto surface = makeSurface(width, height, 100.0F, 0.0F);
+    fillRectangle(semantics.finalClassMap, 10, 10, 40, 40,
+                  SemanticClass::BUILDING);
+    fillRectangle(semantics.buildingProbability, 10, 10, 40, 40,
+                  0.95F);
+    fillRectangle(semantics.semanticConfidence, 10, 10, 40, 40,
+                  0.95F);
+    auto evidenceNdsm = makeConstantGrid(width, height, 0.0F);
+    fillRectangle(evidenceNdsm, 10, 10, 40, 40, 12.0F);
+
+    auto config = noMorphologyConfig();
+    config.regularizeRectangularFootprints = false;
+    config.regularizeSupportedEdges = false;
+    config.minBuildingAreaSquareMetres = 20.0F;
+    const auto collection = BuildingReconstructionService::reconstruct(
+        semantics, surface, makeProjectedMetadata(width, height), config,
+        nullptr, &evidenceNdsm);
+    ASSERT_EQ(collection.buildings.size(), 1U);
+    double minColumn = width, minRow = height;
+    for (const auto& point : collection.buildings.front().pixelFootprint.outerRing)
+    {
+        minColumn = std::min(minColumn, point.column);
+        minRow = std::min(minRow, point.row);
+    }
+    EXPECT_LT(minColumn, 10.0);
+    EXPECT_LT(minRow, 10.0);
+}
+
 } // namespace

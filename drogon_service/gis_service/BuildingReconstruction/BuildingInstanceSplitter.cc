@@ -320,10 +320,24 @@ RasterGrid<int32_t> BuildingInstanceSplitter::label(
             const auto j = static_cast<std::size_t>(ny) * w + nx;
             if (original.ptr<int>()[j] != original.ptr<int>()[i]) continue;
             double penalty = 1.0 + 4.0 * (1.0 - semantics.buildingProbability.data[j]);
-            if (ndsm && std::isfinite(heights.ptr<float>()[i]) && std::isfinite(heights.ptr<float>()[j]))
-                penalty += std::min(20.0, static_cast<double>(
-                    std::abs(heights.ptr<float>()[j] - heights.ptr<float>()[i]) *
-                    config.heightScaleMultiplier / config.instanceHeightStepMetres));
+            if (ndsm && std::isfinite(ndsm->data[i]) &&
+                std::isfinite(ndsm->data[j]) &&
+                std::isfinite(heights.ptr<float>()[i]) &&
+                std::isfinite(heights.ptr<float>()[j]))
+            {
+                const double heightDiff =
+                    std::abs(heights.ptr<float>()[j] -
+                             heights.ptr<float>()[i]) *
+                    config.heightScaleMultiplier;
+                if (heightDiff > 0.50 * config.instanceHeightStepMetres)
+                {
+                    penalty += 10000.0; // Absolute concrete barrier
+                }
+                else
+                {
+                    penalty += (heightDiff / config.instanceHeightStepMetres) * 25.0; // Steeper soft penalty
+                }
+            }
             // Crossing an optical facade edge is more expensive than
             // expanding across a homogeneous roof. The cap prevents rooftop
             // texture from overpowering semantic and height evidence.

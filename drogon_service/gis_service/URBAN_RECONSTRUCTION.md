@@ -65,25 +65,29 @@ Metric exports are unchanged, not independently verified ground truth.
    mask. It is enabled by default. The defaults use a 3 m calibrated nDSM step
    and 25 m² of supported seed area. An optional, slightly blurred grayscale
    copy of the uploaded image increases the cost of crossing strong optical
-   edges while assigning ambiguous pixels. It does not normalize distance
+   edges while assigning ambiguous pixels. A calibrated nDSM jump above 65%
+   of the 3 m roof-step setting receives a 1000-cost crossing penalty during
+   multi-source flooding. This moves the ownership boundary toward supported
+   roof cliffs when both sides have markers; the flood remains within the
+   original building mask and preserves all of its pixels. It does not normalize distance
    against the largest building in the scene.
    Every original mask pixel keeps a label. Poorly supported cuts, excessive
    markers and single-core components retain the original component.
 
-4. Each instance is vectorized and gets its own robust height estimate. The
-   optional exterior dilation is disabled by default. Metric RDP simplification
-   starts at 4 m and backs off when it violates area or ring topology. Supported
-   rectangles require at least 84% box fill, supported corners, and 96% convex
-   hull solidity. The existing Manhattan fitter and CGAL closed-contour
-   regularizer each work within a 3 m corner adjustment budget. GEOS-backed
-   topology-preserving simplification can remove remaining small steps from the
-   complete polygon while retaining its courtyards. Every candidate must still
-   pass area, courtyard, mask IoU, and neighbouring-instance checks. The exact
-   observed boundary remains the fallback.
-5. LoD2 decomposition uses up to three rectangular blocks by default. A 92%
-   coverage setting admits supported L/T forms, while a connected-residual
-   check rejects missing wings. Complex courtyards and shapes that need more
-   blocks retain a continuous outer footprint.
+4. Each instance is vectorized and gets its own robust height estimate. Under
+   Tactical LoD1 configuration, `regularizeRectangularFootprints` forces candidate
+   building footprints directly into crisp Oriented Bounding Boxes (OBB via
+   `cv::minAreaRect`), immediately clearing internal courtyards and returning a
+   clean 4-vertex prism footprint. When rectangular regularization is disabled,
+   the full Manhattan and CGAL edge-regularization pipeline operates with
+   GEOS polygon simplification, area bounds, and neighbour exclusion safeguards.
+   Robust roof height estimation exclusively uses the 85th percentile peak of
+   the nDSM samples, scaled by `heightScaleMultiplier = 2.25f` to ensure towering
+   skylines and prominent vertical relief.
+5. LoD2 block decomposition and parametric pitched/hip roof fitting are disabled
+   by default (`enableLod2BlockDecomposition = false`, `enableLod2RoofFitting = false`)
+   to produce clean, flat-topped LoD1 CAD prisms. Complex roof pitches and multi-tier
+   decompositions can be re-enabled on demand for scenes requiring fine-grained LoD2 roofs.
 6. Terrain, colored walls and roofs become separate Draco primitives.
    Buildings have no photographic UV texture; PBR materials and hard normals
    provide face shading. The GLB's terrain texture conceals the photographic

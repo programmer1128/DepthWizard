@@ -5,6 +5,7 @@
 #include <array>
 #include <stdexcept>
 #include <cstdint>
+#include <algorithm>
 
 enum class PipelineMode 
 { 
@@ -55,11 +56,40 @@ enum class ColorOrder
       GRAYSCALE 
 };
 
+struct LocalSceneFrame 
+{
+    double projectedOriginX{0.0};
+    double projectedOriginY{0.0};
+    double elevationOrigin{0.0};
+    std::string horizontalCrs;
+    std::string axisConvention{"Y-UP_RIGHT-HANDED"};
+};
+
 struct AxisAlignedBounds 
 {
     double minX{0.0}, minY{0.0}, minZ{0.0};
     double maxX{0.0}, maxY{0.0}, maxZ{0.0};
     bool isInitialized{false};
+
+    void expand(double x, double y, double z)
+    {
+        if (!isInitialized)
+        {
+            minX = maxX = x;
+            minY = maxY = y;
+            minZ = maxZ = z;
+            isInitialized = true;
+        }
+        else
+        {
+            minX = std::min(minX, x);
+            minY = std::min(minY, y);
+            minZ = std::min(minZ, z);
+            maxX = std::max(maxX, x);
+            maxY = std::max(maxY, y);
+            maxZ = std::max(maxZ, z);
+        }
+    }
 };
 
 template <typename T>

@@ -125,6 +125,7 @@ inline BuildingReconstructionConfig noMorphologyConfig()
     config.minHoleAreaSquareMetres = 1.0F;
     config.footprintDilationMetres = 0.0F;
     config.heightScaleMultiplier = 1.0F;
+    config.regularizeRectangularFootprints = false;
     return config;
 }
 
