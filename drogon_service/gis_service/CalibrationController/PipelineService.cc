@@ -385,58 +385,77 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
 
          MeshPrimitive externalBuildingMesh;
          externalBuildingMesh.materialRole = MaterialRole::BUILDING_WALL;
-         externalBuildingMesh.colors.emplace();  // Activate vertex color support
-         externalBuildingMesh.normals.emplace(); // Activate normals for PBR rendering
+         externalBuildingMesh.colors.emplace();  
+         externalBuildingMesh.normals.emplace(); 
 
-         float minZ = std::numeric_limits<float>::max();
-         float maxZ = std::numeric_limits<float>::lowest();
+         // Pass 1: Determine the absolute global height bounds for the color scale
+         float minElev = std::numeric_limits<float>::max();
+         float maxElev = std::numeric_limits<float>::lowest();
+         for (size_t i = 0; i < attrib.vertices.size(); i += 3) {
+             float elev = static_cast<float>(attrib.vertices[i + 2]);
+             if (elev < minElev) minElev = elev;
+             if (elev > maxElev) maxElev = elev;
+         }
+         float heightRange = std::max(0.1f, maxElev - minElev);
 
-         // Extract spatial scalers to map pixels to local meters
          double gsdX = std::abs(metadata.geoTransform[1]);
          double gsdY = std::abs(metadata.geoTransform[5]);
          double originElev = scene.localFrame.elevationOrigin;
 
-         // 1st Pass: Align to Terrain Local Frame, extract vertices, and compute flat normals
+         // Pass 2: Fix X-axis mirror, maintain Y-axis flip, compute normals, and inject solid colors
          for (const auto& shape : shapes) {
-             // Iterate over faces (triangles)
              for (size_t f = 0; f < shape.mesh.indices.size(); f += 3) {
-                 
-                 // Get the 3 vertices of the triangle
                  float v[3][3];
+                 float maxTriElev = std::numeric_limits<float>::lowest();
+
+                 // Extract the 3 vertices of the triangle in REVERSE order (2 - v_idx) 
+                 // Flipping only one axis (Y) inverses the geometry. Reversing the 
+                 // vertex read order restores the correct CCW triangle winding.
                  for (int v_idx = 0; v_idx < 3; ++v_idx) {
-                     auto index = shape.mesh.indices[f + v_idx];
-                     double pixelCol = attrib.vertices[3 * index.vertex_index + 0]; 
-                     double pixelRow = attrib.vertices[3 * index.vertex_index + 1]; 
-                     double rawElev  = attrib.vertices[3 * index.vertex_index + 2]; 
+                     auto index = shape.mesh.indices[f + (2 - v_idx)];
+                     double objX = attrib.vertices[3 * index.vertex_index + 0]; 
+                     double objY = attrib.vertices[3 * index.vertex_index + 1]; 
+                     double objZ = attrib.vertices[3 * index.vertex_index + 2]; 
 
-                     // SAT2LoD2 outputs Pixel X, Pixel Y, and Elevation Z.
-                     // Scale by GSD to perfectly align with the local terrain bounding box
-                     v[v_idx][0] = static_cast<float>(pixelCol * gsdX);
-                     v[v_idx][1] = static_cast<float>(rawElev - originElev);
-                     v[v_idx][2] = static_cast<float>(pixelRow * gsdY);
+                     // X is standard (left-to-right). Y remains flipped (bottom-to-top).
+                     double trueX = objX * gsdX;
+                     double trueZ = (metadata.height - objY) * gsdY;
+                     
+                     v[v_idx][0] = static_cast<float>(trueX);
+                     v[v_idx][1] = static_cast<float>(objZ - originElev);
+                     v[v_idx][2] = static_cast<float>(trueZ);
 
-                     // Track bounds for color gradient
-                     if (v[v_idx][1] < minZ) minZ = v[v_idx][1];
-                     if (v[v_idx][1] > maxZ) maxZ = v[v_idx][1];
+                     if (objZ > maxTriElev) maxTriElev = static_cast<float>(objZ);
                  }
 
-                 // Compute flat normal for this triangle so PBR lighting works
-                 float Ux = v[1][0] - v[0][0];
-                 float Uy = v[1][1] - v[0][1];
-                 float Uz = v[1][2] - v[0][2];
-                 float Vx = v[2][0] - v[0][0];
-                 float Vy = v[2][1] - v[0][1];
-                 float Vz = v[2][2] - v[0][2];
-
+                 // Compute flat normal for this triangle (Winding order is preserved)
+                 float Ux = v[1][0] - v[0][0], Uy = v[1][1] - v[0][1], Uz = v[1][2] - v[0][2];
+                 float Vx = v[2][0] - v[0][0], Vy = v[2][1] - v[0][1], Vz = v[2][2] - v[0][2];
                  float Nx = Uy * Vz - Uz * Vy;
                  float Ny = Uz * Vx - Ux * Vz;
                  float Nz = Ux * Vy - Uy * Vx;
                  
-                 // Normalize the vector
                  float len = std::sqrt(Nx*Nx + Ny*Ny + Nz*Nz);
                  if (len > 0.0f) { Nx /= len; Ny /= len; Nz /= len; }
 
-                 // Push positions and normals for all 3 vertices
+                 // SOLID TIERED COLORS: Evaluate color based on the max height of the triangle.
+                 float t = std::max(0.0f, std::min(1.0f, (maxTriElev - minElev) / heightRange));
+                 float r, g, b;
+
+                 if (t > 0.70f) {
+                     r = 1.0f; g = 0.15f; b = 0.30f;  // Tier 1: Hologram Red
+                 } else if (t > 0.35f) {
+                     r = 0.10f; g = 0.25f; b = 0.90f; // Tier 2: Deep Blue
+                 } else {
+                     r = 0.0f; g = 0.80f; b = 0.95f;  // Tier 3: Cyan
+                 }
+
+                 // Darken vertical walls slightly for sharp 3D visual contrast
+                 if (std::abs(Ny) < 0.5f) {
+                     r *= 0.65f; g *= 0.65f; b *= 0.65f;
+                 }
+
+                 // Apply the exact same solid color to all 3 vertices to prevent gradients
                  for (int v_idx = 0; v_idx < 3; ++v_idx) {
                      externalBuildingMesh.positions.push_back(v[v_idx][0]);
                      externalBuildingMesh.positions.push_back(v[v_idx][1]);
@@ -446,45 +465,15 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
                      externalBuildingMesh.normals->push_back(Ny);
                      externalBuildingMesh.normals->push_back(Nz);
 
+                     externalBuildingMesh.colors->push_back(r);
+                     externalBuildingMesh.colors->push_back(g);
+                     externalBuildingMesh.colors->push_back(b);
+                     externalBuildingMesh.colors->push_back(1.0f);
+
                      externalBuildingMesh.indices.push_back(externalBuildingMesh.indices.size());
+                     externalBuildingMesh.localBounds.expand(v[v_idx][0], v[v_idx][1], v[v_idx][2]);
                  }
              }
-         }
-
-         // 2nd Pass: Inject MapFlow AI Hologram Colors (Cyan -> Blue -> Red) and calc bounds
-         auto& colors = *externalBuildingMesh.colors;
-         float heightRange = std::max(0.1f, maxZ - minZ);
-
-         for (size_t i = 0; i < externalBuildingMesh.positions.size(); i += 3) {
-             float height = externalBuildingMesh.positions[i + 1]; // localY is the height
-             float t = std::max(0.0f, std::min(1.0f, (height - minZ) / heightRange));
-
-             float r = 0.0f, g = 0.0f, b = 0.0f;
-
-             if (t < 0.5f) {
-                 // Bottom 50%: Cyan (0.0, 0.8, 1.0) to Deep Blue (0.1, 0.2, 0.9)
-                 float localT = t / 0.5f;
-                 r = 0.0f + localT * (0.1f - 0.0f);
-                 g = 0.8f + localT * (0.2f - 0.8f);
-                 b = 1.0f + localT * (0.9f - 1.0f);
-             } else {
-                 // Top 50%: Deep Blue (0.1, 0.2, 0.9) to Red Hologram (1.0, 0.15, 0.3)
-                 float localT = (t - 0.5f) / 0.5f;
-                 r = 0.1f + localT * (1.0f - 0.1f);
-                 g = 0.2f + localT * (0.15f - 0.2f);
-                 b = 0.9f + localT * (0.3f - 0.9f);
-             }
-
-             colors.push_back(r);
-             colors.push_back(g);
-             colors.push_back(b);
-             colors.push_back(1.0f); // Alpha channel
-
-             externalBuildingMesh.localBounds.expand(
-                 externalBuildingMesh.positions[i], 
-                 externalBuildingMesh.positions[i+1], 
-                 externalBuildingMesh.positions[i+2]
-             );
          }
 
          // Clean up physical disk artifacts
