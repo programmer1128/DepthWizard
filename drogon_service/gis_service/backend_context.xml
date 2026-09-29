@@ -5124,6 +5124,8 @@ public:
 #include "PipelineService.h"
 
 #include "../BuildingReconstruction/BuildingReconstructionService.h"
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
 #include "../DataHandlers/MiniIOClient.h"
 #include "../FileGenerators/BackgroundTiffExportService.h"
 #include "../ImagePreprocessing/ImagePreprocessingService.h"
@@ -5153,8 +5155,6 @@ public:
 #include <cstdio>
 
 #include "../FileGenerators/TiffExporter.h"
-#define TINYOBJLOADER_IMPLEMENTATION
-#include "tiny_obj_loader.h"
 
 // RasterIngestService mounts the upload in GDAL's in-memory filesystem.
 // Keep it mounted while preprocessing and reference extraction read it, then
@@ -5381,8 +5381,8 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
 
      try
      {
-         // 1. Ingest the GeoTIFF. The scene holds the optical GLB texture,
-         //    a temporary GDAL path, and the authoritative georeferencing.
+         // 1. Ingest the GeoTIFF. The optical bytes guide reconstruction;
+         //    the scene also holds a temporary GDAL path and georeferencing.
          SceneInput scene = RasterIngestService::ingestGeoTiff(jobId, imageFile);
          VsiInputFileGuard inputFile(scene.inputPath);
          validateScene(scene);
@@ -5472,153 +5472,51 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
              orthoFile.close();
          }
 
-         // Prepare the HTTP Request to the Python Microservice
-         Json::Value pyRequest;
-         pyRequest["dsm_path"] = tmpDsmPath;
-         pyRequest["ortho_path"] = tmpOrthoPath;
-         pyRequest["label_path"] = tmpLabelPath;
-         pyRequest["output_dir"] = pyOutputDir;
-
-         auto httpClient = drogon::HttpClient::newHttpClient("http://127.0.0.1:8000");
-         auto req = drogon::HttpRequest::newHttpJsonRequest(pyRequest);
-         req->setPath("/api/v1/reconstruct");
-         req->setMethod(drogon::Post);
-
-         LOG_INFO << "PipelineService: Awaiting Python SAT2LoD2 Reconstruction...";
-         auto pyResponse = co_await httpClient->sendRequestCoro(req);
-
-         if (!pyResponse || pyResponse->statusCode() != 200) {
-             std::string errMsg = pyResponse ? std::string(pyResponse->body().data(), pyResponse->body().length()) : "Connection failed";
-             throw std::runtime_error("Python SAT2LoD2 API Failed: " + errMsg);
-         }
-
-         auto respJson = pyResponse->getJsonObject();
-         std::string objFilePath = (*respJson)["obj_path"].asString();
-         LOG_INFO << "PipelineService: SAT2LoD2 OBJ generated at " << objFilePath;
-
-         // 7b. Parse the SAT2LoD2 OBJ into a C++ MeshPrimitive
-         tinyobj::attrib_t attrib;
-         std::vector<tinyobj::shape_t> shapes;
-         std::vector<tinyobj::material_t> materials;
-         std::string warn, err;
-
-         if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, objFilePath.c_str())) {
-             throw std::runtime_error("Failed to load SAT2LoD2 OBJ: " + err);
-         }
-
-         MeshPrimitive externalBuildingMesh;
-         externalBuildingMesh.materialRole = MaterialRole::BUILDING_WALL;
-         externalBuildingMesh.colors.emplace();  // Activate vertex color support
-         externalBuildingMesh.normals.emplace(); // Activate normals for PBR rendering
-
-         float minZ = std::numeric_limits<float>::max();
-         float maxZ = std::numeric_limits<float>::lowest();
-
-         // Extract spatial scalers to map pixels to local meters
-         double gsdX = std::abs(metadata.geoTransform[1]);
-         double gsdY = std::abs(metadata.geoTransform[5]);
-         double originElev = scene.localFrame.elevationOrigin;
-
-         // 1st Pass: Align to Terrain Local Frame, extract vertices, and compute flat normals
-         for (const auto& shape : shapes) {
-             // Iterate over faces (triangles)
-             for (size_t f = 0; f < shape.mesh.indices.size(); f += 3) {
-                 
-                 // Get the 3 vertices of the triangle
-                 float v[3][3];
-                 for (int v_idx = 0; v_idx < 3; ++v_idx) {
-                     auto index = shape.mesh.indices[f + v_idx];
-                     double pixelCol = attrib.vertices[3 * index.vertex_index + 0]; 
-                     double pixelRow = attrib.vertices[3 * index.vertex_index + 1]; 
-                     double rawElev  = attrib.vertices[3 * index.vertex_index + 2]; 
-
-                     // SAT2LoD2 outputs Pixel X, Pixel Y, and Elevation Z.
-                     // Scale by GSD to perfectly align with the local terrain bounding box
-                     v[v_idx][0] = static_cast<float>(pixelCol * gsdX);
-                     v[v_idx][1] = static_cast<float>(rawElev - originElev);
-                     v[v_idx][2] = static_cast<float>(pixelRow * gsdY);
-
-                     // Track bounds for color gradient
-                     if (v[v_idx][1] < minZ) minZ = v[v_idx][1];
-                     if (v[v_idx][1] > maxZ) maxZ = v[v_idx][1];
-                 }
-
-                 // Compute flat normal for this triangle so PBR lighting works
-                 float Ux = v[1][0] - v[0][0];
-                 float Uy = v[1][1] - v[0][1];
-                 float Uz = v[1][2] - v[0][2];
-                 float Vx = v[2][0] - v[0][0];
-                 float Vy = v[2][1] - v[0][1];
-                 float Vz = v[2][2] - v[0][2];
-
-                 float Nx = Uy * Vz - Uz * Vy;
-                 float Ny = Uz * Vx - Ux * Vz;
-                 float Nz = Ux * Vy - Uy * Vx;
-                 
-                 // Normalize the vector
-                 float len = std::sqrt(Nx*Nx + Ny*Ny + Nz*Nz);
-                 if (len > 0.0f) { Nx /= len; Ny /= len; Nz /= len; }
-
-                 // Push positions and normals for all 3 vertices
-                 for (int v_idx = 0; v_idx < 3; ++v_idx) {
-                     externalBuildingMesh.positions.push_back(v[v_idx][0]);
-                     externalBuildingMesh.positions.push_back(v[v_idx][1]);
-                     externalBuildingMesh.positions.push_back(v[v_idx][2]);
-                     
-                     externalBuildingMesh.normals->push_back(Nx);
-                     externalBuildingMesh.normals->push_back(Ny);
-                     externalBuildingMesh.normals->push_back(Nz);
-
-                     externalBuildingMesh.indices.push_back(externalBuildingMesh.indices.size());
-                 }
+         std::string satObjPath;
+         try
+         {
+             Json::Value pyRequest;
+             pyRequest["dsm_path"] = tmpDsmPath;
+             pyRequest["ortho_path"] = tmpOrthoPath;
+             pyRequest["label_path"] = tmpLabelPath;
+             pyRequest["output_dir"] = pyOutputDir;
+             auto httpClient = drogon::HttpClient::newHttpClient("http://127.0.0.1:8000");
+             auto req = drogon::HttpRequest::newHttpJsonRequest(pyRequest);
+             req->setPath("/api/v1/reconstruct");
+             req->setMethod(drogon::Post);
+             LOG_INFO << "PipelineService: awaiting SAT2LoD2 reconstruction";
+             auto pyResponse = co_await httpClient->sendRequestCoro(req);
+             if (!pyResponse || pyResponse->statusCode() != 200 ||
+                 !pyResponse->getJsonObject() ||
+                 !(*pyResponse->getJsonObject())["obj_path"].isString())
+             {
+                 throw std::runtime_error("SAT2LoD2 did not return an OBJ path");
              }
+             satObjPath = (*pyResponse->getJsonObject())["obj_path"].asString();
+             const auto slash = satObjPath.find_last_of('/');
+             satObjPath = satObjPath.substr(0, slash == std::string::npos ? 0 : slash + 1) +
+                          "building_model.obj";
+             LOG_INFO << "PipelineService: received SAT2LoD2 OBJ at " << satObjPath;
          }
-
-         // 2nd Pass: Inject MapFlow AI Hologram Colors (Cyan -> Blue -> Red) and calc bounds
-         auto& colors = *externalBuildingMesh.colors;
-         float heightRange = std::max(0.1f, maxZ - minZ);
-
-         for (size_t i = 0; i < externalBuildingMesh.positions.size(); i += 3) {
-             float height = externalBuildingMesh.positions[i + 1]; // localY is the height
-             float t = std::max(0.0f, std::min(1.0f, (height - minZ) / heightRange));
-
-             float r = 0.0f, g = 0.0f, b = 0.0f;
-
-             if (t < 0.5f) {
-                 // Bottom 50%: Cyan (0.0, 0.8, 1.0) to Deep Blue (0.1, 0.2, 0.9)
-                 float localT = t / 0.5f;
-                 r = 0.0f + localT * (0.1f - 0.0f);
-                 g = 0.8f + localT * (0.2f - 0.8f);
-                 b = 1.0f + localT * (0.9f - 1.0f);
-             } else {
-                 // Top 50%: Deep Blue (0.1, 0.2, 0.9) to Red Hologram (1.0, 0.15, 0.3)
-                 float localT = (t - 0.5f) / 0.5f;
-                 r = 0.1f + localT * (1.0f - 0.1f);
-                 g = 0.2f + localT * (0.15f - 0.2f);
-                 b = 0.9f + localT * (0.3f - 0.9f);
-             }
-
-             colors.push_back(r);
-             colors.push_back(g);
-             colors.push_back(b);
-             colors.push_back(1.0f); // Alpha channel
-
-             externalBuildingMesh.localBounds.expand(
-                 externalBuildingMesh.positions[i], 
-                 externalBuildingMesh.positions[i+1], 
-                 externalBuildingMesh.positions[i+2]
-             );
+         catch (const std::exception& error)
+         {
+             LOG_WARN << "PipelineService: SAT2LoD2 microservice unavailable: "
+                      << error.what() << "; falling back to native reconstruction";
          }
-
-         // Clean up physical disk artifacts
          std::remove(tmpDsmPath.c_str());
          std::remove(tmpOrthoPath.c_str());
          std::remove(tmpLabelPath.c_str());
+         std::remove(("/tmp/ortho_" + jobId + ".tif").c_str());
+         std::remove(("/tmp/ortho_" + jobId + ".tfw").c_str());
 
          const char* diagnosticsSetting = std::getenv("DEPTHWIZARD_DIAGNOSTICS");
          const bool captureDiagnostics = !diagnosticsSetting || std::string(diagnosticsSetting) != "0";
          BuildingReconstructionDiagnostics stages;
-         BuildingCollection buildings;
+         BuildingReconstructionConfig config;
+         BuildingCollection buildings = BuildingReconstructionService::reconstruct(
+             semantics, surface, metadata, config,
+             captureDiagnostics ? &stages : nullptr,
+             &correction.correctedMetricNdsm, &scene.rgbTextureBytes);
 
          MeshBuildConfig meshConfig;
          const ScenePresentationDecision sceneDecision = ScenePresentationSelector::select(
@@ -5641,7 +5539,7 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
              }
          }
          else if (presentation == ScenePresentation::METRIC &&
-                  !externalBuildingMesh.indices.empty() &&
+                  (!buildings.buildings.empty() || !satObjPath.empty()) &&
                   sceneDecision.vegetationFraction < 0.55 &&
                   sceneDecision.groundReliefMetres <= 80.0)
          {
@@ -5649,13 +5547,147 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
              presentation = ScenePresentation::FLAT_URBAN;
          }
          meshConfig.presentation = presentation;
+         MeshPrimitive externalBuildingMesh;
+         externalBuildingMesh.topology = PrimitiveTopology::TRIANGLES;
+         externalBuildingMesh.materialRole = MaterialRole::BUILDING_ROOF;
+         externalBuildingMesh.normals.emplace();
+         externalBuildingMesh.colors.emplace();
+
+         struct BoundingBox2D {
+             double minX{std::numeric_limits<double>::max()};
+             double maxX{std::numeric_limits<double>::lowest()};
+             double minZ{std::numeric_limits<double>::max()};
+             double maxZ{std::numeric_limits<double>::lowest()};
+             bool intersects(const BoundingBox2D& other) const {
+                 return !(maxX < other.minX || minX > other.maxX || maxZ < other.minZ || minZ > other.maxZ);
+             }
+         };
+         std::vector<BoundingBox2D> satBoxes;
+
+         if (!satObjPath.empty()) {
+             tinyobj::attrib_t attrib;
+             std::vector<tinyobj::shape_t> shapes;
+             std::vector<tinyobj::material_t> materials;
+             std::string warn, err;
+
+             if (tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, satObjPath.c_str())) {
+                 const double gsdX = std::abs(metadata.geoTransform[1]);
+                 const double gsdY = std::abs(metadata.geoTransform[5]);
+                 const double originElev = scene.localFrame.elevationOrigin;
+
+                 for (const auto& shape : shapes) {
+                     BoundingBox2D satBox;
+                     
+                     // Find the peak height of this specific building to determine its solid color tier
+                     float shapeMaxZ = 0.0f;
+                     for (auto index : shape.mesh.indices) {
+                         if (attrib.vertices[3 * index.vertex_index + 2] > shapeMaxZ) {
+                             shapeMaxZ = static_cast<float>(attrib.vertices[3 * index.vertex_index + 2]);
+                         }
+                     }
+                     
+                     float trueShapeHeight = (shapeMaxZ - originElev) * config.heightScaleMultiplier;
+                     float r = 0.0f, g = 0.80f, b = 0.95f; // Cyan (Low-rise)
+                     if (trueShapeHeight > 45.0f) { r = 1.0f; g = 0.15f; b = 0.30f; }      // Red (High-rise)
+                     else if (trueShapeHeight >= 15.0f) { r = 0.10f; g = 0.25f; b = 0.90f; } // Blue (Mid-rise)
+
+                     for (size_t f = 0; f < shape.mesh.indices.size(); f += 3) {
+                         float v[3][3];
+                         
+                         // Read vertices in reverse order (2 - v_idx) to preserve CCW winding order after Y-mirror
+                         for (int v_idx = 0; v_idx < 3; ++v_idx) {
+                             auto index = shape.mesh.indices[f + (2 - v_idx)];
+                             double objX = attrib.vertices[3 * index.vertex_index + 0];
+                             double objY = attrib.vertices[3 * index.vertex_index + 1];
+                             double objZ = attrib.vertices[3 * index.vertex_index + 2];
+
+                             double localX = objX * gsdX;
+                             double localZ = (static_cast<double>(metadata.height) - objY) * gsdY;
+                             // Enlarge height strictly using the multiplier to preserve pristine flat CAD roofs
+                             double localY = (objZ > 0.05) ? ((objZ - originElev) * config.heightScaleMultiplier) : 0.0;
+
+                             v[v_idx][0] = static_cast<float>(localX);
+                             v[v_idx][1] = static_cast<float>(localY);
+                             v[v_idx][2] = static_cast<float>(localZ);
+
+                             satBox.minX = std::min(satBox.minX, localX);
+                             satBox.maxX = std::max(satBox.maxX, localX);
+                             satBox.minZ = std::min(satBox.minZ, localZ);
+                             satBox.maxZ = std::max(satBox.maxZ, localZ);
+                         }
+
+                         // Compute flat normal for this triangle
+                         float Ux = v[1][0] - v[0][0], Uy = v[1][1] - v[0][1], Uz = v[1][2] - v[0][2];
+                         float Vx = v[2][0] - v[0][0], Vy = v[2][1] - v[0][1], Vz = v[2][2] - v[0][2];
+                         float Nx = Uy * Vz - Uz * Vy, Ny = Uz * Vx - Ux * Vz, Nz = Ux * Vy - Uy * Vx;
+                         float len = std::sqrt(Nx * Nx + Ny * Ny + Nz * Nz);
+                         if (len > 0.0f) { Nx /= len; Ny /= len; Nz /= len; }
+
+                         // Shadow vertical walls
+                         float faceR = r, faceG = g, faceB = b;
+                         if (std::abs(Ny) < 0.5f) { faceR *= 0.65f; faceG *= 0.65f; faceB *= 0.65f; }
+
+                         for (int v_idx = 0; v_idx < 3; ++v_idx) {
+                             externalBuildingMesh.positions.push_back(v[v_idx][0]);
+                             externalBuildingMesh.positions.push_back(v[v_idx][1]);
+                             externalBuildingMesh.positions.push_back(v[v_idx][2]);
+
+                             externalBuildingMesh.normals->push_back(Nx);
+                             externalBuildingMesh.normals->push_back(Ny);
+                             externalBuildingMesh.normals->push_back(Nz);
+
+                             externalBuildingMesh.colors->push_back(faceR);
+                             externalBuildingMesh.colors->push_back(faceG);
+                             externalBuildingMesh.colors->push_back(faceB);
+                             externalBuildingMesh.colors->push_back(1.0f);
+
+                             externalBuildingMesh.indices.push_back(static_cast<uint32_t>(externalBuildingMesh.indices.size()));
+                             externalBuildingMesh.localBounds.expand(v[v_idx][0], v[v_idx][1], v[v_idx][2]);
+                         }
+                     }
+                     if (!shape.mesh.indices.empty()) satBoxes.push_back(satBox);
+                 }
+
+                 // Execute Local Metric Bounding-Box Fallback
+                 if (!satBoxes.empty()) {
+                     const size_t beforeCount = buildings.buildings.size();
+                     buildings.buildings.erase(
+                         std::remove_if(buildings.buildings.begin(), buildings.buildings.end(),
+                             [&](const BuildingInstance& bldg) {
+                                 BoundingBox2D bldgBox;
+                                 for (const auto& pt : bldg.projectedFootprint.outerRing) {
+                                     double localX = pt.easting - scene.localFrame.projectedOriginX;
+                                     double localZ = -(pt.northing - scene.localFrame.projectedOriginY);
+                                     bldgBox.minX = std::min(bldgBox.minX, localX);
+                                     bldgBox.maxX = std::max(bldgBox.maxX, localX);
+                                     bldgBox.minZ = std::min(bldgBox.minZ, localZ);
+                                     bldgBox.maxZ = std::max(bldgBox.maxZ, localZ);
+                                 }
+                                 for (const auto& sBox : satBoxes) {
+                                     if (bldgBox.intersects(sBox)) return true;
+                                 }
+                                 return false;
+                             }),
+                         buildings.buildings.end()
+                     );
+                     LOG_INFO << "PipelineService: SAT2LoD2 filtered " << (beforeCount - buildings.buildings.size())
+                              << " overlapping native buildings.";
+                 }
+             }
+             else
+             {
+                 LOG_WARN << "PipelineService: Failed to parse SAT2LoD2 OBJ at " << satObjPath
+                          << ": " << warn << " " << err;
+             }
+         }
+
          LOG_INFO << "PipelineService: automatic scene policy for " << jobId
                   << "; " << sceneDecision.reason
                   << "; strong_building_fraction=" << sceneDecision.strongBuildingFraction
                   << "; vegetation_fraction=" << sceneDecision.vegetationFraction
                   << "; supported_ground_relief_m=" << sceneDecision.groundReliefMetres;
          GlbBuildResult glb = SceneMeshService::generateGlb(
-            scene, surface, externalBuildingMesh, metadata, meshConfig);
+            scene, surface, buildings, metadata, meshConfig, &externalBuildingMesh);
 
          LOG_INFO << "PipelineService: mesh summary for " << jobId
                   << "; presentation=" << (presentation == ScenePresentation::FLAT_URBAN ? "flat_urban" : "metric")
@@ -20254,6 +20286,7 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     // 1. Register Global Extensions
     model.extensionsUsed.push_back("KHR_draco_mesh_compression");
     model.extensionsRequired.push_back("KHR_draco_mesh_compression");
+    model.extensionsUsed.push_back("KHR_materials_unlit");
 
     // 2. Metadata Injection (Asset Extras)
     tinygltf::Value::Object extras;
@@ -20322,7 +20355,6 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     }
 
     // 5. Embed Image Texture
-    int textureImageIndex = -1;
     if (scene.texture.has_value()) {
         size_t imgLen = scene.texture->bytes.size();
         size_t pad = (4 - (imgLen % 4)) % 4;
@@ -20355,7 +20387,6 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
         model.samplers.push_back(sampler);
         tex.sampler = static_cast<int>(model.samplers.size() - 1);
         model.textures.push_back(tex);
-        textureImageIndex = 0;
     }
 
     // 5b. Embed Uncompressed Line Edge Primitive (Mode: LINES)
@@ -20454,9 +20485,11 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
         mat.pbrMetallicRoughness.roughnessFactor = 0.9;
         mat.doubleSided = false;
 
-        if (role == MaterialRole::TERRAIN_TEXTURE && textureImageIndex >= 0) {
-            mat.pbrMetallicRoughness.baseColorTexture.index = textureImageIndex;
-            mat.name = "Terrain_Optical";
+        if (role == MaterialRole::TERRAIN_TEXTURE) {
+            mat.pbrMetallicRoughness.baseColorFactor = {0.26, 0.26, 0.26, 1.0};
+            mat.extensions["KHR_materials_unlit"] = tinygltf::Value(
+                tinygltf::Value::Object{});
+            mat.name = "Terrain_Grey";
         } else if (role == MaterialRole::BUILDING_WALL) {
             // Untextured walls with Mapflow-style hypsometric COLOR_0 vertex colors.
             // White neutral baseColorFactor passes vertex colors at 100% saturation.
@@ -26372,27 +26405,36 @@ BuildingMesh BuildingMesher::generate(
              std::fill(localOuterBaseY.begin(), localOuterBaseY.end(), localBaseY);
          }
 
-         // Three metric height bands: cyan low-rise, coral mid-rise, blue tower.
-         float wallR, wallG, wallB, wallA;
-         float roofR, roofG, roofB, roofA;
+         // Tiered MapFlow color gradient based strictly on absolute heightAboveGround.
+         // Do not calculate a scene maximum; use absolute meters to keep city tiles consistent.
+         // - Low-rise (< 15 meters): Cyan (0.0f, 0.80f, 0.95f)
+         // - Mid-rise (15m to 45m): Deep Blue (0.10f, 0.25f, 0.90f)
+         // - High-rise (> 45 meters): Hologram Red (1.0f, 0.15f, 0.30f)
+         float tierR{0.0f}, tierG{0.80f}, tierB{0.95f}, tierA{1.0f};
+         float wallR{0.0f}, wallG{0.52f}, wallB{0.6175f}, wallA{1.0f};
+         float roofR{0.0f}, roofG{0.80f}, roofB{0.95f}, roofA{1.0f};
 
          const auto selectHeightColors = [&](float h)
          {
-             if (h >= 45.0f)
+             if (h > 45.0f)
              {
-                 wallR = 0.20f; wallG = 0.37f; wallB = 0.95f; wallA = 1.0f;
-                 roofR = 0.13f; roofG = 0.27f; roofB = 0.78f; roofA = 1.0f;
+                 tierR = 1.0f; tierG = 0.15f; tierB = 0.30f;
              }
-             else if (h >= 30.0f)
+             else if (h >= 15.0f)
              {
-                 wallR = 0.95f; wallG = 0.28f; wallB = 0.35f; wallA = 1.0f;
-                 roofR = 0.80f; roofG = 0.18f; roofB = 0.25f; roofA = 1.0f;
+                 tierR = 0.10f; tierG = 0.25f; tierB = 0.90f;
              }
              else
              {
-                 wallR = 0.00f; wallG = 0.82f; wallB = 0.95f; wallA = 1.0f;
-                 roofR = 0.00f; roofG = 0.65f; roofB = 0.85f; roofA = 1.0f;
+                 tierR = 0.00f; tierG = 0.80f; tierB = 0.95f;
              }
+             tierA = 1.0f;
+             roofR = tierR; roofG = tierG; roofB = tierB; roofA = tierA;
+             // Contrast Shadowing: wall faces (|Ny| < 0.5f) are 35% darker than roofs
+             wallR = 0.65f * tierR;
+             wallG = 0.65f * tierG;
+             wallB = 0.65f * tierB;
+             wallA = tierA;
          };
          selectHeightColors(bldg.heightAboveGround);
 
@@ -26467,6 +26509,18 @@ BuildingMesh BuildingMesher::generate(
                      static_cast<float>(n[2] / length)};
                  const uint32_t base = static_cast<uint32_t>(
                      primitive.positions.size() / 3);
+
+                 float finalR = colorR;
+                 float finalG = colorG;
+                 float finalB = colorB;
+                 // Contrast Shadowing: multiply chosen RGB tier by 0.65f if face normal is vertical (|Ny| < 0.5f)
+                 if (&primitive == &result.wallPrimitive && std::abs(unit[1]) < 0.5f)
+                 {
+                     finalR = tierR * 0.65f;
+                     finalG = tierG * 0.65f;
+                     finalB = tierB * 0.65f;
+                 }
+
                  for (const Vertex3& vertex : {a, b, c})
                  {
                      primitive.positions.push_back(
@@ -26480,7 +26534,7 @@ BuildingMesh BuildingMesher::generate(
                          static_cast<float>(bldg.buildingId));
                      primitive.colors->insert(
                          primitive.colors->end(),
-                         {colorR, colorG, colorB, colorA});
+                         {finalR, finalG, finalB, colorA});
                      expandBounds(bounds, vertex);
                  }
                  primitive.indices.insert(
@@ -27953,14 +28007,9 @@ SceneMesh SceneAssembler::assemble(
          MaterialRole::BUILDING_EDGE
      };
 
-     //Attach the Original Optical Texture
-     if (!sceneInput.rgbTextureBytes.empty()) 
-     {
-         TextureAsset texAsset;
-         texAsset.bytes = sceneInput.rgbTextureBytes;
-         texAsset.mimeType = sceneInput.textureMimeType; // Passes "image/jpeg" or "image/png" directly
-         sceneMesh.texture = std::move(texAsset);
-     }
+     // Terrain presentation uses a solid material. The optical image remains
+     // available to reconstruction, but is never embedded in the GLB.
+     (void)sceneInput;
 
      return sceneMesh;
 }
@@ -27987,145 +28036,17 @@ class SceneAssembler
 #include "LocalFrameTransformer.h"
 #include "TerrainMesher.h"
 #include "TerrainSurfaceComposer.h"
-#include "TerrainTextureComposer.h"
 #include "BuildingMesher.h"
 #include "SceneAssembler.h"
 #include "../FileGenerators/GltfPackager.h"
-#include <iostream>
-#include <unordered_set>
-#include <algorithm>
-
-GlbBuildResult SceneMeshService::generateGlb(
-     const SceneInput& scene,
-     const GeoreferencedSurfaceBundle& surface,
-     const MeshPrimitive& externalBuildingMesh,
-     const SpatialMetadata& metadata,
-     const MeshBuildConfig& config)
-{
-     GlbBuildResult result;
-     auto terrainConfig = config.terrain;
-     const bool flat = config.presentation == ScenePresentation::FLAT_URBAN;
-     if (flat) terrainConfig.elevationSource = TerrainElevationSource::FLAT_PRESENTATION;
-     terrainConfig.generateSkirt = !flat;
-
-     // Establish Mathematical Anchor
-     LocalSceneFrame frame = LocalFrameTransformer::create(metadata, surface);
-
-     // Generate Terrain Mesh
-     TerrainMesh terrain = TerrainMesher::generate(
-         surface,
-         metadata,
-         frame,
-         terrainConfig);
-
-     SceneMesh sceneMesh;
-     sceneMesh.localFrame = frame;
-     sceneMesh.presentationMode = flat ? "flat_urban" : "metric";
-     sceneMesh.terrainPrimitive = std::move(terrain.terrainPrimitive);
-     sceneMesh.wallPrimitive = externalBuildingMesh;
-
-     sceneMesh.sceneBounds = sceneMesh.terrainPrimitive.localBounds;
-     if (externalBuildingMesh.localBounds.isInitialized)
-     {
-         if (!sceneMesh.sceneBounds.isInitialized)
-         {
-             sceneMesh.sceneBounds = externalBuildingMesh.localBounds;
-         }
-         else
-         {
-             sceneMesh.sceneBounds.minX = std::min(sceneMesh.sceneBounds.minX, externalBuildingMesh.localBounds.minX);
-             sceneMesh.sceneBounds.minY = std::min(sceneMesh.sceneBounds.minY, externalBuildingMesh.localBounds.minY);
-             sceneMesh.sceneBounds.minZ = std::min(sceneMesh.sceneBounds.minZ, externalBuildingMesh.localBounds.minZ);
-             sceneMesh.sceneBounds.maxX = std::max(sceneMesh.sceneBounds.maxX, externalBuildingMesh.localBounds.maxX);
-             sceneMesh.sceneBounds.maxY = std::max(sceneMesh.sceneBounds.maxY, externalBuildingMesh.localBounds.maxY);
-             sceneMesh.sceneBounds.maxZ = std::max(sceneMesh.sceneBounds.maxZ, externalBuildingMesh.localBounds.maxZ);
-         }
-     }
-
-     sceneMesh.materials = {
-         MaterialRole::TERRAIN_TEXTURE,
-         MaterialRole::BUILDING_WALL
-     };
-
-     if (!scene.rgbTextureBytes.empty())
-     {
-         TextureAsset texAsset;
-         texAsset.bytes = scene.rgbTextureBytes;
-         texAsset.mimeType = scene.textureMimeType;
-         sceneMesh.texture = std::move(texAsset);
-     }
-
-     // Compress Primitives Independently via Draco
-     std::vector<CompressedPrimitive> compressedPrimitives;
-
-     // Compress Terrain
-     CompressedPrimitive compTerrain = DracoCompressor::compress(sceneMesh.terrainPrimitive, config.draco);
-     if (!compTerrain.success)
-     {
-         result.geometryWarnings.push_back("Failed to compress Terrain: " + compTerrain.errorMessage);
-         return result;
-     }
-     else
-     {
-         compressedPrimitives.push_back(std::move(compTerrain));
-         result.vertexCount += sceneMesh.terrainPrimitive.positions.size() / 3;
-         result.triangleCount += sceneMesh.terrainPrimitive.indices.size() / 3;
-         result.terrainTriangleCount = sceneMesh.terrainPrimitive.indices.size() / 3;
-     }
-
-     // Compress Buildings directly from externalBuildingMesh
-     if (!externalBuildingMesh.indices.empty())
-     {
-         CompressedPrimitive compBuildings = DracoCompressor::compress(externalBuildingMesh, config.draco);
-         if (!compBuildings.success)
-         {
-             result.geometryWarnings.push_back("Failed to compress Buildings: " + compBuildings.errorMessage);
-             return result;
-         }
-         else
-         {
-             compressedPrimitives.push_back(std::move(compBuildings));
-             result.vertexCount += externalBuildingMesh.positions.size() / 3;
-             result.triangleCount += externalBuildingMesh.indices.size() / 3;
-             result.wallTriangleCount = externalBuildingMesh.indices.size() / 3;
-         }
-     }
-
-     // Abort if no geometry survived compression
-     if (compressedPrimitives.empty())
-     {
-         result.geometryWarnings.push_back("Errror: All primitives failed compression. Cannot generate GLB.");
-         return result;
-     }
-
-     // Binary Packaging
-     size_t buildingCount = externalBuildingMesh.indices.empty() ? 0 : 1;
-
-     GlbBuildResult packagedResult = GltfPackager::buildSceneToMemory(
-         sceneMesh, compressedPrimitives, buildingCount);
-
-     packagedResult.vertexCount = result.vertexCount;
-     packagedResult.triangleCount = result.triangleCount;
-     packagedResult.terrainTriangleCount = result.terrainTriangleCount;
-     packagedResult.roofTriangleCount = result.roofTriangleCount;
-     packagedResult.wallTriangleCount = result.wallTriangleCount;
-     packagedResult.buildingCount = buildingCount;
-
-     packagedResult.geometryWarnings.insert(
-         packagedResult.geometryWarnings.end(),
-         result.geometryWarnings.begin(),
-         result.geometryWarnings.end()
-     );
-
-     return packagedResult;
-}
 
 GlbBuildResult SceneMeshService::generateGlb(
      const SceneInput& scene,
      const GeoreferencedSurfaceBundle& surface,
      const BuildingCollection& buildings,
      const SpatialMetadata& metadata,
-     const MeshBuildConfig& config)
+     const MeshBuildConfig& config,
+     const MeshPrimitive* externalBuildingMesh) // <-- Add this parameter
 {
      GlbBuildResult result;
      auto terrainConfig = config.terrain;
@@ -28147,7 +28068,7 @@ GlbBuildResult SceneMeshService::generateGlb(
              config.terrain.buildingTerrainClearanceMetres);
 
      // Default scene mode uses DTM throughout the continuous terrain.
-     // Missing/rejected objects cannot become textured DSM mounds. The
+     // Missing/rejected objects cannot become DSM mounds. The
      // scientific DSM stays in surface for exports and measurement.
      TerrainMesh terrain = TerrainMesher::generate(
          surface,
@@ -28156,6 +28077,72 @@ GlbBuildResult SceneMeshService::generateGlb(
          frame,
          terrainConfig);
      BuildingMesh bldgMesh = BuildingMesher::generate(buildings, frame, buildingConfig);
+     // Fuse the external SAT2LoD2 buildings with the native semantic walls
+     // Fuse the external SAT2LoD2 buildings with the native semantic walls
+     if (externalBuildingMesh != nullptr && !externalBuildingMesh->indices.empty()) {
+         // Count native vertices before appending
+         size_t nativeVertCount = bldgMesh.wallPrimitive.positions.size() / 3;
+         size_t externalVertCount = externalBuildingMesh->positions.size() / 3;
+         uint32_t indexOffset = static_cast<uint32_t>(nativeVertCount);
+
+         // 1. Pad Native Normals to match Positions
+         if (externalBuildingMesh->normals.has_value()) {
+             if (!bldgMesh.wallPrimitive.normals.has_value()) {
+                 bldgMesh.wallPrimitive.normals.emplace();
+             }
+             // Fill missing native normals with a default outward vector
+             while (bldgMesh.wallPrimitive.normals->size() < nativeVertCount * 3) {
+                 bldgMesh.wallPrimitive.normals->push_back(0.0f);
+                 bldgMesh.wallPrimitive.normals->push_back(1.0f);
+                 bldgMesh.wallPrimitive.normals->push_back(0.0f);
+             }
+             bldgMesh.wallPrimitive.normals->insert(bldgMesh.wallPrimitive.normals->end(),
+                                                    externalBuildingMesh->normals->begin(),
+                                                    externalBuildingMesh->normals->end());
+         }
+
+         // 2. Pad Native Colors to match Positions
+         if (externalBuildingMesh->colors.has_value()) {
+             if (!bldgMesh.wallPrimitive.colors.has_value()) {
+                 bldgMesh.wallPrimitive.colors.emplace();
+             }
+             // Fill missing native fallback buildings with a default Cyan MapFlow color
+             while (bldgMesh.wallPrimitive.colors->size() < nativeVertCount * 4) {
+                 bldgMesh.wallPrimitive.colors->push_back(0.0f);   // R
+                 bldgMesh.wallPrimitive.colors->push_back(0.80f);  // G
+                 bldgMesh.wallPrimitive.colors->push_back(0.95f);  // B
+                 bldgMesh.wallPrimitive.colors->push_back(1.0f);   // A
+             }
+             bldgMesh.wallPrimitive.colors->insert(bldgMesh.wallPrimitive.colors->end(),
+                                                   externalBuildingMesh->colors->begin(),
+                                                   externalBuildingMesh->colors->end());
+         }
+
+         // 3. Append Positions (Must be done AFTER padding so nativeVertCount is accurate)
+         bldgMesh.wallPrimitive.positions.insert(bldgMesh.wallPrimitive.positions.end(),
+                                                 externalBuildingMesh->positions.begin(),
+                                                 externalBuildingMesh->positions.end());
+
+         // The native wall primitive carries one feature ID per vertex. Keep
+         // that attribute aligned when SAT vertices have no feature IDs.
+         if (bldgMesh.wallPrimitive.featureIds.has_value()) {
+             if (externalBuildingMesh->featureIds.has_value()) {
+                 bldgMesh.wallPrimitive.featureIds->insert(
+                     bldgMesh.wallPrimitive.featureIds->end(),
+                     externalBuildingMesh->featureIds->begin(),
+                     externalBuildingMesh->featureIds->end());
+             } else {
+                 bldgMesh.wallPrimitive.featureIds->insert(
+                     bldgMesh.wallPrimitive.featureIds->end(),
+                     externalVertCount, 0.0f);
+             }
+         }
+
+         // 4. Safely offset and append indices to prevent vertex collisions
+         for (auto idx : externalBuildingMesh->indices) {
+             bldgMesh.wallPrimitive.indices.push_back(idx + indexOffset);
+         }
+     }
      for (uint32_t id : bldgMesh.rejectedBuildingIds)
      {
          result.geometryWarnings.push_back(
@@ -28177,25 +28164,6 @@ GlbBuildResult SceneMeshService::generateGlb(
      //Assemble into Unified Scene
      SceneMesh sceneMesh = SceneAssembler::assemble(terrain, bldgMesh, scene, frame);
      sceneMesh.presentationMode = flat ? "flat_urban" : "metric";
-     if (sceneMesh.texture.has_value() && !bldgMesh.emittedBuildingIds.empty())
-     {
-         // The DTM ground must not display a second photographic copy of the
-         // accepted roofs around their untextured walls. Repair only the GLB
-         // texture; the uploaded image and scientific rasters stay unchanged.
-         const std::unordered_set<uint32_t> emittedIds(
-             bldgMesh.emittedBuildingIds.begin(),
-             bldgMesh.emittedBuildingIds.end());
-         BuildingCollection emittedBuildings;
-         for (const auto& building : buildings.buildings)
-             if (emittedIds.contains(building.buildingId))
-                 emittedBuildings.buildings.push_back(building);
-         const RasterGrid<uint8_t> exactFootprints =
-             TerrainSurfaceComposer::buildAcceptedBuildingMask(
-                 emittedBuildings, metadata, 0.0f);
-         sceneMesh.texture = TerrainTextureComposer::concealAcceptedRoofs(
-             *sceneMesh.texture, exactFootprints, metadata,
-             terrainConfig.buildingTextureHaloMetres);
-     }
 
      //Compress Primitives Independently via Draco
      std::vector<CompressedPrimitive> compressedPrimitives;
@@ -28296,18 +28264,12 @@ class SceneMeshService
 {
      public:
      static GlbBuildResult generateGlb(
-         const SceneInput& scene,
-         const GeoreferencedSurfaceBundle& surface,
-         const MeshPrimitive& externalBuildingMesh,
-         const SpatialMetadata& metadata,
-         const MeshBuildConfig& config = MeshBuildConfig());
-
-     static GlbBuildResult generateGlb(
-         const SceneInput& scene,
-         const GeoreferencedSurfaceBundle& surface,
-         const BuildingCollection& buildings,
-         const SpatialMetadata& metadata,
-         const MeshBuildConfig& config = MeshBuildConfig());
+     const SceneInput& scene,
+     const GeoreferencedSurfaceBundle& surface,
+     const BuildingCollection& buildings,
+     const SpatialMetadata& metadata,
+     const MeshBuildConfig& config,
+     const MeshPrimitive* externalBuildingMesh = nullptr); // <-- Add this parameter
 };
 </file>
 
@@ -28491,6 +28453,7 @@ struct TerrainMeshConfig
 
 <file path="MeshMapping/TerrainMesher.cc">
 #include "TerrainMesher.h"
+#include "TerrainTextureComposer.h"
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -28759,6 +28722,7 @@ TerrainMesh TerrainMesher::generate(
      result.terrainPrimitive.normals = std::move(normals);
      result.terrainPrimitive.uvs = std::move(uvs);
      result.terrainPrimitive.localBounds = bounds;
+     TerrainTextureComposer::applySolidGreyTerrainColors(result.terrainPrimitive);
 
      return result;
 }
@@ -29009,6 +28973,52 @@ TextureAsset TerrainTextureComposer::concealAcceptedRoofs(
         throw std::runtime_error("TerrainTextureComposer: texture encoding failed");
     return output;
 }
+
+std::vector<float> TerrainTextureComposer::composeSolidTerrainColors(
+    std::size_t vertexCount,
+    float r,
+    float g,
+    float b,
+    float a)
+{
+    // Bypass the standard RGB orthophoto sampling. Force the terrain vertex colors
+    // to emit a solid, unlit dark grey (RGB values 0.26f, 0.26f, 0.26f).
+    std::vector<float> colors;
+    colors.reserve(vertexCount * 4);
+    for (std::size_t i = 0; i < vertexCount; ++i)
+    {
+        colors.push_back(r);
+        colors.push_back(g);
+        colors.push_back(b);
+        colors.push_back(a);
+    }
+    return colors;
+}
+
+void TerrainTextureComposer::applySolidGreyTerrainColors(
+    MeshPrimitive& terrainPrimitive,
+    float r,
+    float g,
+    float b,
+    float a)
+{
+    const std::size_t vertexCount = terrainPrimitive.positions.size() / 3;
+    terrainPrimitive.colors = composeSolidTerrainColors(vertexCount, r, g, b, a);
+}
+
+std::vector<float> TerrainTextureComposer::sampleTerrainVertexColors(
+    const TextureAsset& /*original*/,
+    const std::vector<float>& uvs,
+    float r,
+    float g,
+    float b,
+    float a)
+{
+    // Bypass the standard RGB orthophoto sampling. Force the terrain vertex colors
+    // to emit a solid, unlit dark grey (RGB values 0.26f, 0.26f, 0.26f).
+    const std::size_t vertexCount = uvs.size() / 2;
+    return composeSolidTerrainColors(vertexCount, r, g, b, a);
+}
 </file>
 
 <file path="MeshMapping/TerrainTextureComposer.h">
@@ -29017,7 +29027,7 @@ TextureAsset TerrainTextureComposer::concealAcceptedRoofs(
 #include "../structures/MeshStructs.h"
 #include "../structures/CommonTypes.h"
 
-// Produces a render-only optical texture. The uploaded image and all
+// Produces a render-only optical texture and solid terrain vertex colors. The uploaded image and all
 // scientific elevation/semantic rasters remain unchanged.
 class TerrainTextureComposer
 {
@@ -29027,6 +29037,31 @@ public:
         const RasterGrid<uint8_t>& acceptedFootprints,
         const SpatialMetadata& metadata,
         float haloMetres);
+
+    // MapFlow AI presentation aesthetic:
+    // Bypasses standard RGB orthophoto sampling and forces terrain vertex colors
+    // to emit a solid, unlit dark grey (RGB 0.26f, 0.26f, 0.26f, 1.0f).
+    static std::vector<float> composeSolidTerrainColors(
+        std::size_t vertexCount,
+        float r = 0.26f,
+        float g = 0.26f,
+        float b = 0.26f,
+        float a = 1.0f);
+
+    static void applySolidGreyTerrainColors(
+        MeshPrimitive& terrainPrimitive,
+        float r = 0.26f,
+        float g = 0.26f,
+        float b = 0.26f,
+        float a = 1.0f);
+
+    static std::vector<float> sampleTerrainVertexColors(
+        const TextureAsset& original,
+        const std::vector<float>& uvs,
+        float r = 0.26f,
+        float g = 0.26f,
+        float b = 0.26f,
+        float a = 1.0f);
 };
 </file>
 
@@ -37020,7 +37055,7 @@ TEST(MeshPipelineTest, BuildingPrimitivesAreUntexturedShadedAndSeparateFromTerra
     EXPECT_TRUE(model.materials[wall.material].name == "Building_Wall" ||
                 model.materials[wall.material].name == "Hologram_Wall");
     EXPECT_EQ(std::count(model.extensionsUsed.begin(), model.extensionsUsed.end(),
-        "KHR_materials_unlit"), 0);
+        "KHR_materials_unlit"), 1);
     const auto& wallPbr = model.materials[wall.material].pbrMetallicRoughness;
     const auto& roofPbr = model.materials[roof.material].pbrMetallicRoughness;
     EXPECT_DOUBLE_EQ(wallPbr.baseColorFactor[0], 1.0);
@@ -37436,9 +37471,9 @@ TEST(MeshPipelineTest, BuildingMesherAssignsHeightBinnedMapflowColors)
 
     BuildingInstance midRise;
     midRise.buildingId = 2;
-    midRise.heightAboveGround = 35.0F;
+    midRise.heightAboveGround = 25.0F;
     midRise.representativeBaseElevation = 100.0F;
-    midRise.roofElevation = 135.0F;
+    midRise.roofElevation = 125.0F;
     midRise.projectedFootprint.outerRing = {{20,0}, {30,0}, {30,10}, {20,10}};
 
     BuildingInstance highRise;
@@ -37476,31 +37511,123 @@ TEST(MeshPipelineTest, BuildingMesherAssignsHeightBinnedMapflowColors)
     EXPECT_NEAR((*mesh.edgePrimitive.colors)[2], 1.00F, 1e-4F);
     EXPECT_NEAR((*mesh.edgePrimitive.colors)[3], 0.90F, 1e-4F);
 
-    // Low-rise cyan.
-    // Opaque cyan roof and walls.
+    // Low-rise cyan with walls darkened by 35%.
     EXPECT_NEAR((*mesh.wallPrimitive.colors)[0], 0.00F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[1], 0.82F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[2], 0.95F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[1], 0.52F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[2], 0.6175F, 1e-4F);
     EXPECT_NEAR((*mesh.wallPrimitive.colors)[3], 1.0F, 1e-4F);
 
     EXPECT_NEAR((*mesh.roofPrimitive.colors)[0], 0.00F, 1e-4F);
-    EXPECT_NEAR((*mesh.roofPrimitive.colors)[1], 0.65F, 1e-4F);
-    EXPECT_NEAR((*mesh.roofPrimitive.colors)[2], 0.85F, 1e-4F);
+    EXPECT_NEAR((*mesh.roofPrimitive.colors)[1], 0.80F, 1e-4F);
+    EXPECT_NEAR((*mesh.roofPrimitive.colors)[2], 0.95F, 1e-4F);
     EXPECT_NEAR((*mesh.roofPrimitive.colors)[3], 1.0F, 1e-4F);
 
-    // Mid-rise coral. Four edges give 16 wall vertices per building.
+    // Mid-rise blue. Four edges give 16 wall vertices per building.
     std::size_t midRiseWallColorOffset = 16 * 4;
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 0], 0.95F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 1], 0.28F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 2], 0.35F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 0], 0.065F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 1], 0.1625F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 2], 0.585F, 1e-4F);
     EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 3], 1.0F, 1e-4F);
 
-    // Tower blue.
+    // High-rise red.
     std::size_t highRiseWallColorOffset = 32 * 4;
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 0], 0.20F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 1], 0.37F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 2], 0.95F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 0], 0.65F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 1], 0.0975F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 2], 0.195F, 1e-4F);
     EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 3], 1.0F, 1e-4F);
+}
+
+TEST(MeshPipelineTest, MapflowPresentationAestheticTerrainAndBuildingColors)
+{
+    // 1. TerrainTextureComposer emits solid unlit dark grey (0.26f, 0.26f, 0.26f, 1.0f)
+    const auto colors = TerrainTextureComposer::composeSolidTerrainColors(4);
+    ASSERT_EQ(colors.size(), 16U);
+    for (std::size_t i = 0; i < 4; ++i)
+    {
+        EXPECT_NEAR(colors[i * 4 + 0], 0.26F, 1e-5F);
+        EXPECT_NEAR(colors[i * 4 + 1], 0.26F, 1e-5F);
+        EXPECT_NEAR(colors[i * 4 + 2], 0.26F, 1e-5F);
+        EXPECT_NEAR(colors[i * 4 + 3], 1.00F, 1e-5F);
+    }
+
+    // 2. TerrainMesher assigns solid unlit dark grey to terrainPrimitive.colors
+    const auto metadata = makeProjectedMetadata(4, 4);
+    const auto surface = makeSurface(4, 4, 100.0F, 0.0F);
+    const auto frame = LocalFrameTransformer::create(metadata, surface);
+    TerrainMeshConfig terrainConfig;
+    terrainConfig.generateSkirt = false;
+    const auto terrainMesh = TerrainMesher::generate(surface, metadata, frame, terrainConfig);
+    ASSERT_TRUE(terrainMesh.terrainPrimitive.colors.has_value());
+    const auto& tColors = *terrainMesh.terrainPrimitive.colors;
+    ASSERT_EQ(tColors.size(), (terrainMesh.terrainPrimitive.positions.size() / 3) * 4);
+    for (std::size_t i = 0; i < tColors.size(); i += 4)
+    {
+        EXPECT_NEAR(tColors[i + 0], 0.26F, 1e-5F);
+        EXPECT_NEAR(tColors[i + 1], 0.26F, 1e-5F);
+        EXPECT_NEAR(tColors[i + 2], 0.26F, 1e-5F);
+        EXPECT_NEAR(tColors[i + 3], 1.00F, 1e-5F);
+    }
+
+    // 3. BuildingMesher absolute tier boundary checks (no scene maximum)
+    BuildingInstance b14_5;
+    b14_5.buildingId = 1;
+    b14_5.heightAboveGround = 14.5F; // Low-rise (< 15m)
+    b14_5.representativeBaseElevation = 100.0F;
+    b14_5.roofElevation = 114.5F;
+    b14_5.projectedFootprint.outerRing = {{0,0}, {10,0}, {10,10}, {0,10}};
+
+    BuildingInstance b15_0;
+    b15_0.buildingId = 2;
+    b15_0.heightAboveGround = 15.0F; // Mid-rise (15m to 45m)
+    b15_0.representativeBaseElevation = 100.0F;
+    b15_0.roofElevation = 115.0F;
+    b15_0.projectedFootprint.outerRing = {{20,0}, {30,0}, {30,10}, {20,10}};
+
+    BuildingInstance b45_0;
+    b45_0.buildingId = 3;
+    b45_0.heightAboveGround = 45.0F; // Mid-rise (15m to 45m)
+    b45_0.representativeBaseElevation = 100.0F;
+    b45_0.roofElevation = 145.0F;
+    b45_0.projectedFootprint.outerRing = {{40,0}, {50,0}, {50,10}, {40,10}};
+
+    BuildingInstance b45_5;
+    b45_5.buildingId = 4;
+    b45_5.heightAboveGround = 45.5F; // High-rise (> 45m)
+    b45_5.representativeBaseElevation = 100.0F;
+    b45_5.roofElevation = 145.5F;
+    b45_5.projectedFootprint.outerRing = {{60,0}, {70,0}, {70,10}, {60,10}};
+
+    BuildingCollection buildings;
+    buildings.buildings = {b14_5, b15_0, b45_0, b45_5};
+    const auto bldgMesh = BuildingMesher::generate(buildings, frame);
+
+    ASSERT_TRUE(bldgMesh.roofPrimitive.colors.has_value());
+    ASSERT_TRUE(bldgMesh.wallPrimitive.colors.has_value());
+
+    // Check roof and wall colors for each building
+    // Building 1 (< 15m): Cyan (0.0, 0.8, 0.95), walls darkened by 0.65x
+    std::size_t wallOff0 = 0 * 16 * 4;
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff0 + 0], 0.00F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff0 + 1], 0.80F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff0 + 2], 0.95F * 0.65F, 1e-4F);
+
+    // Building 2 (15.0m): Deep Blue (0.1, 0.25, 0.9), walls darkened by 0.65x
+    std::size_t wallOff1 = 1 * 16 * 4;
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff1 + 0], 0.10F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff1 + 1], 0.25F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff1 + 2], 0.90F * 0.65F, 1e-4F);
+
+    // Building 3 (45.0m): Deep Blue (0.1, 0.25, 0.9), walls darkened by 0.65x
+    std::size_t wallOff2 = 2 * 16 * 4;
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff2 + 0], 0.10F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff2 + 1], 0.25F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff2 + 2], 0.90F * 0.65F, 1e-4F);
+
+    // Building 4 (> 45m): Hologram Red (1.0, 0.15, 0.3), walls darkened by 0.65x
+    std::size_t wallOff3 = 3 * 16 * 4;
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff3 + 0], 1.00F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff3 + 1], 0.15F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff3 + 2], 0.30F * 0.65F, 1e-4F);
 }
 
 TEST(MeshPipelineTest, GltfPackagerPacksEdgeHighlightLinesAsUncompressedLinesMode)
@@ -40730,17 +40857,12 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
     EXPECT_EQ(model.asset.extras.Get("presentationMode").Get<std::string>(), "flat_urban");
     EXPECT_FALSE(model.asset.extras.Get("renderYIsAbsoluteElevationOffset").Get<bool>());
     ASSERT_EQ(model.meshes[0].primitives.size(), 4U);
-    ASSERT_EQ(model.images.size(), 1U);
-    const auto& imageView = model.bufferViews.at(model.images[0].bufferView);
-    const auto& imageBuffer = model.buffers.at(imageView.buffer).data;
-    const auto* encodedStart = imageBuffer.data() + imageView.byteOffset;
-    const cv::Mat encoded(1, static_cast<int>(imageView.byteLength), CV_8UC1,
-                          const_cast<uint8_t*>(encodedStart));
-    const cv::Mat renderTexture = cv::imdecode(encoded, cv::IMREAD_COLOR);
-    ASSERT_FALSE(renderTexture.empty());
-    EXPECT_EQ(model.images[0].mimeType, "image/png");
-    EXPECT_LT(renderTexture.at<cv::Vec3b>(16, 16)[2], 150);
-    EXPECT_EQ(renderTexture.at<cv::Vec3b>(0, 0), cv::Vec3b(80, 80, 80));
+    EXPECT_TRUE(model.images.empty());
+    const auto& terrainMaterial = model.materials.at(
+        model.meshes[0].primitives[0].material);
+    EXPECT_TRUE(terrainMaterial.extensions.contains("KHR_materials_unlit"));
+    EXPECT_EQ(terrainMaterial.pbrMetallicRoughness.baseColorFactor,
+              (std::vector<double>{0.26, 0.26, 0.26, 1.0}));
     EXPECT_EQ(scene.rgbTextureBytes, originalOpticalBytes);
     const auto& terrain = model.accessors[model.meshes[0].primitives[0].attributes.at("POSITION")];
     const auto& roof = model.accessors[model.meshes[0].primitives[1].attributes.at("POSITION")];

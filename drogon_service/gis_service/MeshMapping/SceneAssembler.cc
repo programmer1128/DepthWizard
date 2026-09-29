@@ -53,14 +53,9 @@ SceneMesh SceneAssembler::assemble(
          MaterialRole::BUILDING_EDGE
      };
 
-     //Attach the Original Optical Texture
-     if (!sceneInput.rgbTextureBytes.empty()) 
-     {
-         TextureAsset texAsset;
-         texAsset.bytes = sceneInput.rgbTextureBytes;
-         texAsset.mimeType = sceneInput.textureMimeType; // Passes "image/jpeg" or "image/png" directly
-         sceneMesh.texture = std::move(texAsset);
-     }
+     // Terrain presentation uses a solid material. The optical image remains
+     // available to reconstruction, but is never embedded in the GLB.
+     (void)sceneInput;
 
      return sceneMesh;
 }

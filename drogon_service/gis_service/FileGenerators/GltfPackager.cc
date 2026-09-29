@@ -21,6 +21,7 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     // 1. Register Global Extensions
     model.extensionsUsed.push_back("KHR_draco_mesh_compression");
     model.extensionsRequired.push_back("KHR_draco_mesh_compression");
+    model.extensionsUsed.push_back("KHR_materials_unlit");
 
     // 2. Metadata Injection (Asset Extras)
     tinygltf::Value::Object extras;
@@ -89,7 +90,6 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     }
 
     // 5. Embed Image Texture
-    int textureImageIndex = -1;
     if (scene.texture.has_value()) {
         size_t imgLen = scene.texture->bytes.size();
         size_t pad = (4 - (imgLen % 4)) % 4;
@@ -122,7 +122,6 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
         model.samplers.push_back(sampler);
         tex.sampler = static_cast<int>(model.samplers.size() - 1);
         model.textures.push_back(tex);
-        textureImageIndex = 0;
     }
 
     // 5b. Embed Uncompressed Line Edge Primitive (Mode: LINES)
@@ -221,9 +220,11 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
         mat.pbrMetallicRoughness.roughnessFactor = 0.9;
         mat.doubleSided = false;
 
-        if (role == MaterialRole::TERRAIN_TEXTURE && textureImageIndex >= 0) {
-            mat.pbrMetallicRoughness.baseColorTexture.index = textureImageIndex;
-            mat.name = "Terrain_Optical";
+        if (role == MaterialRole::TERRAIN_TEXTURE) {
+            mat.pbrMetallicRoughness.baseColorFactor = {0.26, 0.26, 0.26, 1.0};
+            mat.extensions["KHR_materials_unlit"] = tinygltf::Value(
+                tinygltf::Value::Object{});
+            mat.name = "Terrain_Grey";
         } else if (role == MaterialRole::BUILDING_WALL) {
             // Untextured walls with Mapflow-style hypsometric COLOR_0 vertex colors.
             // White neutral baseColorFactor passes vertex colors at 100% saturation.

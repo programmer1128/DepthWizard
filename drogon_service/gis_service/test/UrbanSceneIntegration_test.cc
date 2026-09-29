@@ -55,17 +55,12 @@ TEST(UrbanSceneIntegrationTest, FlatPresentationKeepsTrueBuildingHeightsAndScien
     EXPECT_EQ(model.asset.extras.Get("presentationMode").Get<std::string>(), "flat_urban");
     EXPECT_FALSE(model.asset.extras.Get("renderYIsAbsoluteElevationOffset").Get<bool>());
     ASSERT_EQ(model.meshes[0].primitives.size(), 4U);
-    ASSERT_EQ(model.images.size(), 1U);
-    const auto& imageView = model.bufferViews.at(model.images[0].bufferView);
-    const auto& imageBuffer = model.buffers.at(imageView.buffer).data;
-    const auto* encodedStart = imageBuffer.data() + imageView.byteOffset;
-    const cv::Mat encoded(1, static_cast<int>(imageView.byteLength), CV_8UC1,
-                          const_cast<uint8_t*>(encodedStart));
-    const cv::Mat renderTexture = cv::imdecode(encoded, cv::IMREAD_COLOR);
-    ASSERT_FALSE(renderTexture.empty());
-    EXPECT_EQ(model.images[0].mimeType, "image/png");
-    EXPECT_LT(renderTexture.at<cv::Vec3b>(16, 16)[2], 150);
-    EXPECT_EQ(renderTexture.at<cv::Vec3b>(0, 0), cv::Vec3b(80, 80, 80));
+    EXPECT_TRUE(model.images.empty());
+    const auto& terrainMaterial = model.materials.at(
+        model.meshes[0].primitives[0].material);
+    EXPECT_TRUE(terrainMaterial.extensions.contains("KHR_materials_unlit"));
+    EXPECT_EQ(terrainMaterial.pbrMetallicRoughness.baseColorFactor,
+              (std::vector<double>{0.26, 0.26, 0.26, 1.0}));
     EXPECT_EQ(scene.rgbTextureBytes, originalOpticalBytes);
     const auto& terrain = model.accessors[model.meshes[0].primitives[0].attributes.at("POSITION")];
     const auto& roof = model.accessors[model.meshes[0].primitives[1].attributes.at("POSITION")];

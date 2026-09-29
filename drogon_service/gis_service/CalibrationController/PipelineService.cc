@@ -1,6 +1,8 @@
 #include "PipelineService.h"
 
 #include "../BuildingReconstruction/BuildingReconstructionService.h"
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
 #include "../DataHandlers/MiniIOClient.h"
 #include "../FileGenerators/BackgroundTiffExportService.h"
 #include "../ImagePreprocessing/ImagePreprocessingService.h"
@@ -30,8 +32,6 @@
 #include <cstdio>
 
 #include "../FileGenerators/TiffExporter.h"
-#define TINYOBJLOADER_IMPLEMENTATION
-#include "tiny_obj_loader.h"
 
 // RasterIngestService mounts the upload in GDAL's in-memory filesystem.
 // Keep it mounted while preprocessing and reference extraction read it, then
@@ -258,8 +258,8 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
 
      try
      {
-         // 1. Ingest the GeoTIFF. The scene holds the optical GLB texture,
-         //    a temporary GDAL path, and the authoritative georeferencing.
+         // 1. Ingest the GeoTIFF. The optical bytes guide reconstruction;
+         //    the scene also holds a temporary GDAL path and georeferencing.
          SceneInput scene = RasterIngestService::ingestGeoTiff(jobId, imageFile);
          VsiInputFileGuard inputFile(scene.inputPath);
          validateScene(scene);
@@ -349,142 +349,51 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
              orthoFile.close();
          }
 
-         // Prepare the HTTP Request to the Python Microservice
-         Json::Value pyRequest;
-         pyRequest["dsm_path"] = tmpDsmPath;
-         pyRequest["ortho_path"] = tmpOrthoPath;
-         pyRequest["label_path"] = tmpLabelPath;
-         pyRequest["output_dir"] = pyOutputDir;
-
-         auto httpClient = drogon::HttpClient::newHttpClient("http://127.0.0.1:8000");
-         auto req = drogon::HttpRequest::newHttpJsonRequest(pyRequest);
-         req->setPath("/api/v1/reconstruct");
-         req->setMethod(drogon::Post);
-
-         LOG_INFO << "PipelineService: Awaiting Python SAT2LoD2 Reconstruction...";
-         auto pyResponse = co_await httpClient->sendRequestCoro(req);
-
-         if (!pyResponse || pyResponse->statusCode() != 200) {
-             std::string errMsg = pyResponse ? std::string(pyResponse->body().data(), pyResponse->body().length()) : "Connection failed";
-             throw std::runtime_error("Python SAT2LoD2 API Failed: " + errMsg);
-         }
-
-         auto respJson = pyResponse->getJsonObject();
-         std::string objFilePath = (*respJson)["obj_path"].asString();
-         LOG_INFO << "PipelineService: SAT2LoD2 OBJ generated at " << objFilePath;
-
-         // 7b. Parse the SAT2LoD2 OBJ into a C++ MeshPrimitive
-         tinyobj::attrib_t attrib;
-         std::vector<tinyobj::shape_t> shapes;
-         std::vector<tinyobj::material_t> materials;
-         std::string warn, err;
-
-         if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, objFilePath.c_str())) {
-             throw std::runtime_error("Failed to load SAT2LoD2 OBJ: " + err);
-         }
-
-         MeshPrimitive externalBuildingMesh;
-         externalBuildingMesh.materialRole = MaterialRole::BUILDING_WALL;
-         externalBuildingMesh.colors.emplace();  
-         externalBuildingMesh.normals.emplace(); 
-
-         // Pass 1: Determine the absolute global height bounds for the color scale
-         float minElev = std::numeric_limits<float>::max();
-         float maxElev = std::numeric_limits<float>::lowest();
-         for (size_t i = 0; i < attrib.vertices.size(); i += 3) {
-             float elev = static_cast<float>(attrib.vertices[i + 2]);
-             if (elev < minElev) minElev = elev;
-             if (elev > maxElev) maxElev = elev;
-         }
-         float heightRange = std::max(0.1f, maxElev - minElev);
-
-         double gsdX = std::abs(metadata.geoTransform[1]);
-         double gsdY = std::abs(metadata.geoTransform[5]);
-         double originElev = scene.localFrame.elevationOrigin;
-
-         // Pass 2: Fix X-axis mirror, maintain Y-axis flip, compute normals, and inject solid colors
-         for (const auto& shape : shapes) {
-             for (size_t f = 0; f < shape.mesh.indices.size(); f += 3) {
-                 float v[3][3];
-                 float maxTriElev = std::numeric_limits<float>::lowest();
-
-                 // Extract the 3 vertices of the triangle in REVERSE order (2 - v_idx) 
-                 // Flipping only one axis (Y) inverses the geometry. Reversing the 
-                 // vertex read order restores the correct CCW triangle winding.
-                 for (int v_idx = 0; v_idx < 3; ++v_idx) {
-                     auto index = shape.mesh.indices[f + (2 - v_idx)];
-                     double objX = attrib.vertices[3 * index.vertex_index + 0]; 
-                     double objY = attrib.vertices[3 * index.vertex_index + 1]; 
-                     double objZ = attrib.vertices[3 * index.vertex_index + 2]; 
-
-                     // X is standard (left-to-right). Y remains flipped (bottom-to-top).
-                     double trueX = objX * gsdX;
-                     double trueZ = (metadata.height - objY) * gsdY;
-                     
-                     v[v_idx][0] = static_cast<float>(trueX);
-                     v[v_idx][1] = static_cast<float>(objZ - originElev);
-                     v[v_idx][2] = static_cast<float>(trueZ);
-
-                     if (objZ > maxTriElev) maxTriElev = static_cast<float>(objZ);
-                 }
-
-                 // Compute flat normal for this triangle (Winding order is preserved)
-                 float Ux = v[1][0] - v[0][0], Uy = v[1][1] - v[0][1], Uz = v[1][2] - v[0][2];
-                 float Vx = v[2][0] - v[0][0], Vy = v[2][1] - v[0][1], Vz = v[2][2] - v[0][2];
-                 float Nx = Uy * Vz - Uz * Vy;
-                 float Ny = Uz * Vx - Ux * Vz;
-                 float Nz = Ux * Vy - Uy * Vx;
-                 
-                 float len = std::sqrt(Nx*Nx + Ny*Ny + Nz*Nz);
-                 if (len > 0.0f) { Nx /= len; Ny /= len; Nz /= len; }
-
-                 // SOLID TIERED COLORS: Evaluate color based on the max height of the triangle.
-                 float t = std::max(0.0f, std::min(1.0f, (maxTriElev - minElev) / heightRange));
-                 float r, g, b;
-
-                 if (t > 0.70f) {
-                     r = 1.0f; g = 0.15f; b = 0.30f;  // Tier 1: Hologram Red
-                 } else if (t > 0.35f) {
-                     r = 0.10f; g = 0.25f; b = 0.90f; // Tier 2: Deep Blue
-                 } else {
-                     r = 0.0f; g = 0.80f; b = 0.95f;  // Tier 3: Cyan
-                 }
-
-                 // Darken vertical walls slightly for sharp 3D visual contrast
-                 if (std::abs(Ny) < 0.5f) {
-                     r *= 0.65f; g *= 0.65f; b *= 0.65f;
-                 }
-
-                 // Apply the exact same solid color to all 3 vertices to prevent gradients
-                 for (int v_idx = 0; v_idx < 3; ++v_idx) {
-                     externalBuildingMesh.positions.push_back(v[v_idx][0]);
-                     externalBuildingMesh.positions.push_back(v[v_idx][1]);
-                     externalBuildingMesh.positions.push_back(v[v_idx][2]);
-                     
-                     externalBuildingMesh.normals->push_back(Nx);
-                     externalBuildingMesh.normals->push_back(Ny);
-                     externalBuildingMesh.normals->push_back(Nz);
-
-                     externalBuildingMesh.colors->push_back(r);
-                     externalBuildingMesh.colors->push_back(g);
-                     externalBuildingMesh.colors->push_back(b);
-                     externalBuildingMesh.colors->push_back(1.0f);
-
-                     externalBuildingMesh.indices.push_back(externalBuildingMesh.indices.size());
-                     externalBuildingMesh.localBounds.expand(v[v_idx][0], v[v_idx][1], v[v_idx][2]);
-                 }
+         std::string satObjPath;
+         try
+         {
+             Json::Value pyRequest;
+             pyRequest["dsm_path"] = tmpDsmPath;
+             pyRequest["ortho_path"] = tmpOrthoPath;
+             pyRequest["label_path"] = tmpLabelPath;
+             pyRequest["output_dir"] = pyOutputDir;
+             auto httpClient = drogon::HttpClient::newHttpClient("http://127.0.0.1:8000");
+             auto req = drogon::HttpRequest::newHttpJsonRequest(pyRequest);
+             req->setPath("/api/v1/reconstruct");
+             req->setMethod(drogon::Post);
+             LOG_INFO << "PipelineService: awaiting SAT2LoD2 reconstruction";
+             auto pyResponse = co_await httpClient->sendRequestCoro(req);
+             if (!pyResponse || pyResponse->statusCode() != 200 ||
+                 !pyResponse->getJsonObject() ||
+                 !(*pyResponse->getJsonObject())["obj_path"].isString())
+             {
+                 throw std::runtime_error("SAT2LoD2 did not return an OBJ path");
              }
+             satObjPath = (*pyResponse->getJsonObject())["obj_path"].asString();
+             const auto slash = satObjPath.find_last_of('/');
+             satObjPath = satObjPath.substr(0, slash == std::string::npos ? 0 : slash + 1) +
+                          "building_model.obj";
+             LOG_INFO << "PipelineService: received SAT2LoD2 OBJ at " << satObjPath;
          }
-
-         // Clean up physical disk artifacts
+         catch (const std::exception& error)
+         {
+             LOG_WARN << "PipelineService: SAT2LoD2 microservice unavailable: "
+                      << error.what() << "; falling back to native reconstruction";
+         }
          std::remove(tmpDsmPath.c_str());
          std::remove(tmpOrthoPath.c_str());
          std::remove(tmpLabelPath.c_str());
+         std::remove(("/tmp/ortho_" + jobId + ".tif").c_str());
+         std::remove(("/tmp/ortho_" + jobId + ".tfw").c_str());
 
          const char* diagnosticsSetting = std::getenv("DEPTHWIZARD_DIAGNOSTICS");
          const bool captureDiagnostics = !diagnosticsSetting || std::string(diagnosticsSetting) != "0";
          BuildingReconstructionDiagnostics stages;
-         BuildingCollection buildings;
+         BuildingReconstructionConfig config;
+         BuildingCollection buildings = BuildingReconstructionService::reconstruct(
+             semantics, surface, metadata, config,
+             captureDiagnostics ? &stages : nullptr,
+             &correction.correctedMetricNdsm, &scene.rgbTextureBytes);
 
          MeshBuildConfig meshConfig;
          const ScenePresentationDecision sceneDecision = ScenePresentationSelector::select(
@@ -507,7 +416,7 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
              }
          }
          else if (presentation == ScenePresentation::METRIC &&
-                  !externalBuildingMesh.indices.empty() &&
+                  (!buildings.buildings.empty() || !satObjPath.empty()) &&
                   sceneDecision.vegetationFraction < 0.55 &&
                   sceneDecision.groundReliefMetres <= 80.0)
          {
@@ -515,13 +424,147 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
              presentation = ScenePresentation::FLAT_URBAN;
          }
          meshConfig.presentation = presentation;
+         MeshPrimitive externalBuildingMesh;
+         externalBuildingMesh.topology = PrimitiveTopology::TRIANGLES;
+         externalBuildingMesh.materialRole = MaterialRole::BUILDING_ROOF;
+         externalBuildingMesh.normals.emplace();
+         externalBuildingMesh.colors.emplace();
+
+         struct BoundingBox2D {
+             double minX{std::numeric_limits<double>::max()};
+             double maxX{std::numeric_limits<double>::lowest()};
+             double minZ{std::numeric_limits<double>::max()};
+             double maxZ{std::numeric_limits<double>::lowest()};
+             bool intersects(const BoundingBox2D& other) const {
+                 return !(maxX < other.minX || minX > other.maxX || maxZ < other.minZ || minZ > other.maxZ);
+             }
+         };
+         std::vector<BoundingBox2D> satBoxes;
+
+         if (!satObjPath.empty()) {
+             tinyobj::attrib_t attrib;
+             std::vector<tinyobj::shape_t> shapes;
+             std::vector<tinyobj::material_t> materials;
+             std::string warn, err;
+
+             if (tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, satObjPath.c_str())) {
+                 const double gsdX = std::abs(metadata.geoTransform[1]);
+                 const double gsdY = std::abs(metadata.geoTransform[5]);
+                 const double originElev = scene.localFrame.elevationOrigin;
+
+                 for (const auto& shape : shapes) {
+                     BoundingBox2D satBox;
+                     
+                     // Find the peak height of this specific building to determine its solid color tier
+                     float shapeMaxZ = 0.0f;
+                     for (auto index : shape.mesh.indices) {
+                         if (attrib.vertices[3 * index.vertex_index + 2] > shapeMaxZ) {
+                             shapeMaxZ = static_cast<float>(attrib.vertices[3 * index.vertex_index + 2]);
+                         }
+                     }
+                     
+                     float trueShapeHeight = (shapeMaxZ - originElev) * config.heightScaleMultiplier;
+                     float r = 0.0f, g = 0.80f, b = 0.95f; // Cyan (Low-rise)
+                     if (trueShapeHeight > 45.0f) { r = 1.0f; g = 0.15f; b = 0.30f; }      // Red (High-rise)
+                     else if (trueShapeHeight >= 15.0f) { r = 0.10f; g = 0.25f; b = 0.90f; } // Blue (Mid-rise)
+
+                     for (size_t f = 0; f < shape.mesh.indices.size(); f += 3) {
+                         float v[3][3];
+                         
+                         // Read vertices in reverse order (2 - v_idx) to preserve CCW winding order after Y-mirror
+                         for (int v_idx = 0; v_idx < 3; ++v_idx) {
+                             auto index = shape.mesh.indices[f + (2 - v_idx)];
+                             double objX = attrib.vertices[3 * index.vertex_index + 0];
+                             double objY = attrib.vertices[3 * index.vertex_index + 1];
+                             double objZ = attrib.vertices[3 * index.vertex_index + 2];
+
+                             double localX = objX * gsdX;
+                             double localZ = (static_cast<double>(metadata.height) - objY) * gsdY;
+                             // Enlarge height strictly using the multiplier to preserve pristine flat CAD roofs
+                             double localY = (objZ > 0.05) ? ((objZ - originElev) * config.heightScaleMultiplier) : 0.0;
+
+                             v[v_idx][0] = static_cast<float>(localX);
+                             v[v_idx][1] = static_cast<float>(localY);
+                             v[v_idx][2] = static_cast<float>(localZ);
+
+                             satBox.minX = std::min(satBox.minX, localX);
+                             satBox.maxX = std::max(satBox.maxX, localX);
+                             satBox.minZ = std::min(satBox.minZ, localZ);
+                             satBox.maxZ = std::max(satBox.maxZ, localZ);
+                         }
+
+                         // Compute flat normal for this triangle
+                         float Ux = v[1][0] - v[0][0], Uy = v[1][1] - v[0][1], Uz = v[1][2] - v[0][2];
+                         float Vx = v[2][0] - v[0][0], Vy = v[2][1] - v[0][1], Vz = v[2][2] - v[0][2];
+                         float Nx = Uy * Vz - Uz * Vy, Ny = Uz * Vx - Ux * Vz, Nz = Ux * Vy - Uy * Vx;
+                         float len = std::sqrt(Nx * Nx + Ny * Ny + Nz * Nz);
+                         if (len > 0.0f) { Nx /= len; Ny /= len; Nz /= len; }
+
+                         // Shadow vertical walls
+                         float faceR = r, faceG = g, faceB = b;
+                         if (std::abs(Ny) < 0.5f) { faceR *= 0.65f; faceG *= 0.65f; faceB *= 0.65f; }
+
+                         for (int v_idx = 0; v_idx < 3; ++v_idx) {
+                             externalBuildingMesh.positions.push_back(v[v_idx][0]);
+                             externalBuildingMesh.positions.push_back(v[v_idx][1]);
+                             externalBuildingMesh.positions.push_back(v[v_idx][2]);
+
+                             externalBuildingMesh.normals->push_back(Nx);
+                             externalBuildingMesh.normals->push_back(Ny);
+                             externalBuildingMesh.normals->push_back(Nz);
+
+                             externalBuildingMesh.colors->push_back(faceR);
+                             externalBuildingMesh.colors->push_back(faceG);
+                             externalBuildingMesh.colors->push_back(faceB);
+                             externalBuildingMesh.colors->push_back(1.0f);
+
+                             externalBuildingMesh.indices.push_back(static_cast<uint32_t>(externalBuildingMesh.indices.size()));
+                             externalBuildingMesh.localBounds.expand(v[v_idx][0], v[v_idx][1], v[v_idx][2]);
+                         }
+                     }
+                     if (!shape.mesh.indices.empty()) satBoxes.push_back(satBox);
+                 }
+
+                 // Execute Local Metric Bounding-Box Fallback
+                 if (!satBoxes.empty()) {
+                     const size_t beforeCount = buildings.buildings.size();
+                     buildings.buildings.erase(
+                         std::remove_if(buildings.buildings.begin(), buildings.buildings.end(),
+                             [&](const BuildingInstance& bldg) {
+                                 BoundingBox2D bldgBox;
+                                 for (const auto& pt : bldg.projectedFootprint.outerRing) {
+                                     double localX = pt.easting - scene.localFrame.projectedOriginX;
+                                     double localZ = -(pt.northing - scene.localFrame.projectedOriginY);
+                                     bldgBox.minX = std::min(bldgBox.minX, localX);
+                                     bldgBox.maxX = std::max(bldgBox.maxX, localX);
+                                     bldgBox.minZ = std::min(bldgBox.minZ, localZ);
+                                     bldgBox.maxZ = std::max(bldgBox.maxZ, localZ);
+                                 }
+                                 for (const auto& sBox : satBoxes) {
+                                     if (bldgBox.intersects(sBox)) return true;
+                                 }
+                                 return false;
+                             }),
+                         buildings.buildings.end()
+                     );
+                     LOG_INFO << "PipelineService: SAT2LoD2 filtered " << (beforeCount - buildings.buildings.size())
+                              << " overlapping native buildings.";
+                 }
+             }
+             else
+             {
+                 LOG_WARN << "PipelineService: Failed to parse SAT2LoD2 OBJ at " << satObjPath
+                          << ": " << warn << " " << err;
+             }
+         }
+
          LOG_INFO << "PipelineService: automatic scene policy for " << jobId
                   << "; " << sceneDecision.reason
                   << "; strong_building_fraction=" << sceneDecision.strongBuildingFraction
                   << "; vegetation_fraction=" << sceneDecision.vegetationFraction
                   << "; supported_ground_relief_m=" << sceneDecision.groundReliefMetres;
          GlbBuildResult glb = SceneMeshService::generateGlb(
-            scene, surface, externalBuildingMesh, metadata, meshConfig);
+            scene, surface, buildings, metadata, meshConfig, &externalBuildingMesh);
 
          LOG_INFO << "PipelineService: mesh summary for " << jobId
                   << "; presentation=" << (presentation == ScenePresentation::FLAT_URBAN ? "flat_urban" : "metric")

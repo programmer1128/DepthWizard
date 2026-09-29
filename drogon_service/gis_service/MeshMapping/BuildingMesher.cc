@@ -401,27 +401,36 @@ BuildingMesh BuildingMesher::generate(
              std::fill(localOuterBaseY.begin(), localOuterBaseY.end(), localBaseY);
          }
 
-         // Three metric height bands: cyan low-rise, coral mid-rise, blue tower.
-         float wallR, wallG, wallB, wallA;
-         float roofR, roofG, roofB, roofA;
+         // Tiered MapFlow color gradient based strictly on absolute heightAboveGround.
+         // Do not calculate a scene maximum; use absolute meters to keep city tiles consistent.
+         // - Low-rise (< 15 meters): Cyan (0.0f, 0.80f, 0.95f)
+         // - Mid-rise (15m to 45m): Deep Blue (0.10f, 0.25f, 0.90f)
+         // - High-rise (> 45 meters): Hologram Red (1.0f, 0.15f, 0.30f)
+         float tierR{0.0f}, tierG{0.80f}, tierB{0.95f}, tierA{1.0f};
+         float wallR{0.0f}, wallG{0.52f}, wallB{0.6175f}, wallA{1.0f};
+         float roofR{0.0f}, roofG{0.80f}, roofB{0.95f}, roofA{1.0f};
 
          const auto selectHeightColors = [&](float h)
          {
-             if (h >= 45.0f)
+             if (h > 45.0f)
              {
-                 wallR = 0.20f; wallG = 0.37f; wallB = 0.95f; wallA = 1.0f;
-                 roofR = 0.13f; roofG = 0.27f; roofB = 0.78f; roofA = 1.0f;
+                 tierR = 1.0f; tierG = 0.15f; tierB = 0.30f;
              }
-             else if (h >= 30.0f)
+             else if (h >= 15.0f)
              {
-                 wallR = 0.95f; wallG = 0.28f; wallB = 0.35f; wallA = 1.0f;
-                 roofR = 0.80f; roofG = 0.18f; roofB = 0.25f; roofA = 1.0f;
+                 tierR = 0.10f; tierG = 0.25f; tierB = 0.90f;
              }
              else
              {
-                 wallR = 0.00f; wallG = 0.82f; wallB = 0.95f; wallA = 1.0f;
-                 roofR = 0.00f; roofG = 0.65f; roofB = 0.85f; roofA = 1.0f;
+                 tierR = 0.00f; tierG = 0.80f; tierB = 0.95f;
              }
+             tierA = 1.0f;
+             roofR = tierR; roofG = tierG; roofB = tierB; roofA = tierA;
+             // Contrast Shadowing: wall faces (|Ny| < 0.5f) are 35% darker than roofs
+             wallR = 0.65f * tierR;
+             wallG = 0.65f * tierG;
+             wallB = 0.65f * tierB;
+             wallA = tierA;
          };
          selectHeightColors(bldg.heightAboveGround);
 
@@ -496,6 +505,18 @@ BuildingMesh BuildingMesher::generate(
                      static_cast<float>(n[2] / length)};
                  const uint32_t base = static_cast<uint32_t>(
                      primitive.positions.size() / 3);
+
+                 float finalR = colorR;
+                 float finalG = colorG;
+                 float finalB = colorB;
+                 // Contrast Shadowing: multiply chosen RGB tier by 0.65f if face normal is vertical (|Ny| < 0.5f)
+                 if (&primitive == &result.wallPrimitive && std::abs(unit[1]) < 0.5f)
+                 {
+                     finalR = tierR * 0.65f;
+                     finalG = tierG * 0.65f;
+                     finalB = tierB * 0.65f;
+                 }
+
                  for (const Vertex3& vertex : {a, b, c})
                  {
                      primitive.positions.push_back(
@@ -509,7 +530,7 @@ BuildingMesh BuildingMesher::generate(
                          static_cast<float>(bldg.buildingId));
                      primitive.colors->insert(
                          primitive.colors->end(),
-                         {colorR, colorG, colorB, colorA});
+                         {finalR, finalG, finalB, colorA});
                      expandBounds(bounds, vertex);
                  }
                  primitive.indices.insert(

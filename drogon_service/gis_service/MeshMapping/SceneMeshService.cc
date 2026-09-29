@@ -2,145 +2,17 @@
 #include "LocalFrameTransformer.h"
 #include "TerrainMesher.h"
 #include "TerrainSurfaceComposer.h"
-#include "TerrainTextureComposer.h"
 #include "BuildingMesher.h"
 #include "SceneAssembler.h"
 #include "../FileGenerators/GltfPackager.h"
-#include <iostream>
-#include <unordered_set>
-#include <algorithm>
-
-GlbBuildResult SceneMeshService::generateGlb(
-     const SceneInput& scene,
-     const GeoreferencedSurfaceBundle& surface,
-     const MeshPrimitive& externalBuildingMesh,
-     const SpatialMetadata& metadata,
-     const MeshBuildConfig& config)
-{
-     GlbBuildResult result;
-     auto terrainConfig = config.terrain;
-     const bool flat = config.presentation == ScenePresentation::FLAT_URBAN;
-     if (flat) terrainConfig.elevationSource = TerrainElevationSource::FLAT_PRESENTATION;
-     terrainConfig.generateSkirt = !flat;
-
-     // Establish Mathematical Anchor
-     LocalSceneFrame frame = LocalFrameTransformer::create(metadata, surface);
-
-     // Generate Terrain Mesh
-     TerrainMesh terrain = TerrainMesher::generate(
-         surface,
-         metadata,
-         frame,
-         terrainConfig);
-
-     SceneMesh sceneMesh;
-     sceneMesh.localFrame = frame;
-     sceneMesh.presentationMode = flat ? "flat_urban" : "metric";
-     sceneMesh.terrainPrimitive = std::move(terrain.terrainPrimitive);
-     sceneMesh.wallPrimitive = externalBuildingMesh;
-
-     sceneMesh.sceneBounds = sceneMesh.terrainPrimitive.localBounds;
-     if (externalBuildingMesh.localBounds.isInitialized)
-     {
-         if (!sceneMesh.sceneBounds.isInitialized)
-         {
-             sceneMesh.sceneBounds = externalBuildingMesh.localBounds;
-         }
-         else
-         {
-             sceneMesh.sceneBounds.minX = std::min(sceneMesh.sceneBounds.minX, externalBuildingMesh.localBounds.minX);
-             sceneMesh.sceneBounds.minY = std::min(sceneMesh.sceneBounds.minY, externalBuildingMesh.localBounds.minY);
-             sceneMesh.sceneBounds.minZ = std::min(sceneMesh.sceneBounds.minZ, externalBuildingMesh.localBounds.minZ);
-             sceneMesh.sceneBounds.maxX = std::max(sceneMesh.sceneBounds.maxX, externalBuildingMesh.localBounds.maxX);
-             sceneMesh.sceneBounds.maxY = std::max(sceneMesh.sceneBounds.maxY, externalBuildingMesh.localBounds.maxY);
-             sceneMesh.sceneBounds.maxZ = std::max(sceneMesh.sceneBounds.maxZ, externalBuildingMesh.localBounds.maxZ);
-         }
-     }
-
-     sceneMesh.materials = {
-         MaterialRole::TERRAIN_TEXTURE,
-         MaterialRole::BUILDING_WALL
-     };
-
-     if (!scene.rgbTextureBytes.empty())
-     {
-         TextureAsset texAsset;
-         texAsset.bytes = scene.rgbTextureBytes;
-         texAsset.mimeType = scene.textureMimeType;
-         sceneMesh.texture = std::move(texAsset);
-     }
-
-     // Compress Primitives Independently via Draco
-     std::vector<CompressedPrimitive> compressedPrimitives;
-
-     // Compress Terrain
-     CompressedPrimitive compTerrain = DracoCompressor::compress(sceneMesh.terrainPrimitive, config.draco);
-     if (!compTerrain.success)
-     {
-         result.geometryWarnings.push_back("Failed to compress Terrain: " + compTerrain.errorMessage);
-         return result;
-     }
-     else
-     {
-         compressedPrimitives.push_back(std::move(compTerrain));
-         result.vertexCount += sceneMesh.terrainPrimitive.positions.size() / 3;
-         result.triangleCount += sceneMesh.terrainPrimitive.indices.size() / 3;
-         result.terrainTriangleCount = sceneMesh.terrainPrimitive.indices.size() / 3;
-     }
-
-     // Compress Buildings directly from externalBuildingMesh
-     if (!externalBuildingMesh.indices.empty())
-     {
-         CompressedPrimitive compBuildings = DracoCompressor::compress(externalBuildingMesh, config.draco);
-         if (!compBuildings.success)
-         {
-             result.geometryWarnings.push_back("Failed to compress Buildings: " + compBuildings.errorMessage);
-             return result;
-         }
-         else
-         {
-             compressedPrimitives.push_back(std::move(compBuildings));
-             result.vertexCount += externalBuildingMesh.positions.size() / 3;
-             result.triangleCount += externalBuildingMesh.indices.size() / 3;
-             result.wallTriangleCount = externalBuildingMesh.indices.size() / 3;
-         }
-     }
-
-     // Abort if no geometry survived compression
-     if (compressedPrimitives.empty())
-     {
-         result.geometryWarnings.push_back("Errror: All primitives failed compression. Cannot generate GLB.");
-         return result;
-     }
-
-     // Binary Packaging
-     size_t buildingCount = externalBuildingMesh.indices.empty() ? 0 : 1;
-
-     GlbBuildResult packagedResult = GltfPackager::buildSceneToMemory(
-         sceneMesh, compressedPrimitives, buildingCount);
-
-     packagedResult.vertexCount = result.vertexCount;
-     packagedResult.triangleCount = result.triangleCount;
-     packagedResult.terrainTriangleCount = result.terrainTriangleCount;
-     packagedResult.roofTriangleCount = result.roofTriangleCount;
-     packagedResult.wallTriangleCount = result.wallTriangleCount;
-     packagedResult.buildingCount = buildingCount;
-
-     packagedResult.geometryWarnings.insert(
-         packagedResult.geometryWarnings.end(),
-         result.geometryWarnings.begin(),
-         result.geometryWarnings.end()
-     );
-
-     return packagedResult;
-}
 
 GlbBuildResult SceneMeshService::generateGlb(
      const SceneInput& scene,
      const GeoreferencedSurfaceBundle& surface,
      const BuildingCollection& buildings,
      const SpatialMetadata& metadata,
-     const MeshBuildConfig& config)
+     const MeshBuildConfig& config,
+     const MeshPrimitive* externalBuildingMesh) // <-- Add this parameter
 {
      GlbBuildResult result;
      auto terrainConfig = config.terrain;
@@ -162,7 +34,7 @@ GlbBuildResult SceneMeshService::generateGlb(
              config.terrain.buildingTerrainClearanceMetres);
 
      // Default scene mode uses DTM throughout the continuous terrain.
-     // Missing/rejected objects cannot become textured DSM mounds. The
+     // Missing/rejected objects cannot become DSM mounds. The
      // scientific DSM stays in surface for exports and measurement.
      TerrainMesh terrain = TerrainMesher::generate(
          surface,
@@ -171,6 +43,72 @@ GlbBuildResult SceneMeshService::generateGlb(
          frame,
          terrainConfig);
      BuildingMesh bldgMesh = BuildingMesher::generate(buildings, frame, buildingConfig);
+     // Fuse the external SAT2LoD2 buildings with the native semantic walls
+     // Fuse the external SAT2LoD2 buildings with the native semantic walls
+     if (externalBuildingMesh != nullptr && !externalBuildingMesh->indices.empty()) {
+         // Count native vertices before appending
+         size_t nativeVertCount = bldgMesh.wallPrimitive.positions.size() / 3;
+         size_t externalVertCount = externalBuildingMesh->positions.size() / 3;
+         uint32_t indexOffset = static_cast<uint32_t>(nativeVertCount);
+
+         // 1. Pad Native Normals to match Positions
+         if (externalBuildingMesh->normals.has_value()) {
+             if (!bldgMesh.wallPrimitive.normals.has_value()) {
+                 bldgMesh.wallPrimitive.normals.emplace();
+             }
+             // Fill missing native normals with a default outward vector
+             while (bldgMesh.wallPrimitive.normals->size() < nativeVertCount * 3) {
+                 bldgMesh.wallPrimitive.normals->push_back(0.0f);
+                 bldgMesh.wallPrimitive.normals->push_back(1.0f);
+                 bldgMesh.wallPrimitive.normals->push_back(0.0f);
+             }
+             bldgMesh.wallPrimitive.normals->insert(bldgMesh.wallPrimitive.normals->end(),
+                                                    externalBuildingMesh->normals->begin(),
+                                                    externalBuildingMesh->normals->end());
+         }
+
+         // 2. Pad Native Colors to match Positions
+         if (externalBuildingMesh->colors.has_value()) {
+             if (!bldgMesh.wallPrimitive.colors.has_value()) {
+                 bldgMesh.wallPrimitive.colors.emplace();
+             }
+             // Fill missing native fallback buildings with a default Cyan MapFlow color
+             while (bldgMesh.wallPrimitive.colors->size() < nativeVertCount * 4) {
+                 bldgMesh.wallPrimitive.colors->push_back(0.0f);   // R
+                 bldgMesh.wallPrimitive.colors->push_back(0.80f);  // G
+                 bldgMesh.wallPrimitive.colors->push_back(0.95f);  // B
+                 bldgMesh.wallPrimitive.colors->push_back(1.0f);   // A
+             }
+             bldgMesh.wallPrimitive.colors->insert(bldgMesh.wallPrimitive.colors->end(),
+                                                   externalBuildingMesh->colors->begin(),
+                                                   externalBuildingMesh->colors->end());
+         }
+
+         // 3. Append Positions (Must be done AFTER padding so nativeVertCount is accurate)
+         bldgMesh.wallPrimitive.positions.insert(bldgMesh.wallPrimitive.positions.end(),
+                                                 externalBuildingMesh->positions.begin(),
+                                                 externalBuildingMesh->positions.end());
+
+         // The native wall primitive carries one feature ID per vertex. Keep
+         // that attribute aligned when SAT vertices have no feature IDs.
+         if (bldgMesh.wallPrimitive.featureIds.has_value()) {
+             if (externalBuildingMesh->featureIds.has_value()) {
+                 bldgMesh.wallPrimitive.featureIds->insert(
+                     bldgMesh.wallPrimitive.featureIds->end(),
+                     externalBuildingMesh->featureIds->begin(),
+                     externalBuildingMesh->featureIds->end());
+             } else {
+                 bldgMesh.wallPrimitive.featureIds->insert(
+                     bldgMesh.wallPrimitive.featureIds->end(),
+                     externalVertCount, 0.0f);
+             }
+         }
+
+         // 4. Safely offset and append indices to prevent vertex collisions
+         for (auto idx : externalBuildingMesh->indices) {
+             bldgMesh.wallPrimitive.indices.push_back(idx + indexOffset);
+         }
+     }
      for (uint32_t id : bldgMesh.rejectedBuildingIds)
      {
          result.geometryWarnings.push_back(
@@ -192,25 +130,6 @@ GlbBuildResult SceneMeshService::generateGlb(
      //Assemble into Unified Scene
      SceneMesh sceneMesh = SceneAssembler::assemble(terrain, bldgMesh, scene, frame);
      sceneMesh.presentationMode = flat ? "flat_urban" : "metric";
-     if (sceneMesh.texture.has_value() && !bldgMesh.emittedBuildingIds.empty())
-     {
-         // The DTM ground must not display a second photographic copy of the
-         // accepted roofs around their untextured walls. Repair only the GLB
-         // texture; the uploaded image and scientific rasters stay unchanged.
-         const std::unordered_set<uint32_t> emittedIds(
-             bldgMesh.emittedBuildingIds.begin(),
-             bldgMesh.emittedBuildingIds.end());
-         BuildingCollection emittedBuildings;
-         for (const auto& building : buildings.buildings)
-             if (emittedIds.contains(building.buildingId))
-                 emittedBuildings.buildings.push_back(building);
-         const RasterGrid<uint8_t> exactFootprints =
-             TerrainSurfaceComposer::buildAcceptedBuildingMask(
-                 emittedBuildings, metadata, 0.0f);
-         sceneMesh.texture = TerrainTextureComposer::concealAcceptedRoofs(
-             *sceneMesh.texture, exactFootprints, metadata,
-             terrainConfig.buildingTextureHaloMetres);
-     }
 
      //Compress Primitives Independently via Draco
      std::vector<CompressedPrimitive> compressedPrimitives;

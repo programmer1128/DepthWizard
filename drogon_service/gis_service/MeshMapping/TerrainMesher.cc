@@ -1,4 +1,5 @@
 #include "TerrainMesher.h"
+#include "TerrainTextureComposer.h"
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -267,6 +268,7 @@ TerrainMesh TerrainMesher::generate(
      result.terrainPrimitive.normals = std::move(normals);
      result.terrainPrimitive.uvs = std::move(uvs);
      result.terrainPrimitive.localBounds = bounds;
+     TerrainTextureComposer::applySolidGreyTerrainColors(result.terrainPrimitive);
 
      return result;
 }

@@ -79,3 +79,49 @@ TextureAsset TerrainTextureComposer::concealAcceptedRoofs(
         throw std::runtime_error("TerrainTextureComposer: texture encoding failed");
     return output;
 }
+
+std::vector<float> TerrainTextureComposer::composeSolidTerrainColors(
+    std::size_t vertexCount,
+    float r,
+    float g,
+    float b,
+    float a)
+{
+    // Bypass the standard RGB orthophoto sampling. Force the terrain vertex colors
+    // to emit a solid, unlit dark grey (RGB values 0.26f, 0.26f, 0.26f).
+    std::vector<float> colors;
+    colors.reserve(vertexCount * 4);
+    for (std::size_t i = 0; i < vertexCount; ++i)
+    {
+        colors.push_back(r);
+        colors.push_back(g);
+        colors.push_back(b);
+        colors.push_back(a);
+    }
+    return colors;
+}
+
+void TerrainTextureComposer::applySolidGreyTerrainColors(
+    MeshPrimitive& terrainPrimitive,
+    float r,
+    float g,
+    float b,
+    float a)
+{
+    const std::size_t vertexCount = terrainPrimitive.positions.size() / 3;
+    terrainPrimitive.colors = composeSolidTerrainColors(vertexCount, r, g, b, a);
+}
+
+std::vector<float> TerrainTextureComposer::sampleTerrainVertexColors(
+    const TextureAsset& /*original*/,
+    const std::vector<float>& uvs,
+    float r,
+    float g,
+    float b,
+    float a)
+{
+    // Bypass the standard RGB orthophoto sampling. Force the terrain vertex colors
+    // to emit a solid, unlit dark grey (RGB values 0.26f, 0.26f, 0.26f).
+    const std::size_t vertexCount = uvs.size() / 2;
+    return composeSolidTerrainColors(vertexCount, r, g, b, a);
+}

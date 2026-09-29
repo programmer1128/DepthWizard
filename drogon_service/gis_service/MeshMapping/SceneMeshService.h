@@ -10,16 +10,10 @@ class SceneMeshService
 {
      public:
      static GlbBuildResult generateGlb(
-         const SceneInput& scene,
-         const GeoreferencedSurfaceBundle& surface,
-         const MeshPrimitive& externalBuildingMesh,
-         const SpatialMetadata& metadata,
-         const MeshBuildConfig& config = MeshBuildConfig());
-
-     static GlbBuildResult generateGlb(
-         const SceneInput& scene,
-         const GeoreferencedSurfaceBundle& surface,
-         const BuildingCollection& buildings,
-         const SpatialMetadata& metadata,
-         const MeshBuildConfig& config = MeshBuildConfig());
+     const SceneInput& scene,
+     const GeoreferencedSurfaceBundle& surface,
+     const BuildingCollection& buildings,
+     const SpatialMetadata& metadata,
+     const MeshBuildConfig& config,
+     const MeshPrimitive* externalBuildingMesh = nullptr); // <-- Add this parameter
 };

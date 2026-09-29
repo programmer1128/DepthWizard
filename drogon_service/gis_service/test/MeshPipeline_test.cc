@@ -380,7 +380,7 @@ TEST(MeshPipelineTest, BuildingPrimitivesAreUntexturedShadedAndSeparateFromTerra
     EXPECT_TRUE(model.materials[wall.material].name == "Building_Wall" ||
                 model.materials[wall.material].name == "Hologram_Wall");
     EXPECT_EQ(std::count(model.extensionsUsed.begin(), model.extensionsUsed.end(),
-        "KHR_materials_unlit"), 0);
+        "KHR_materials_unlit"), 1);
     const auto& wallPbr = model.materials[wall.material].pbrMetallicRoughness;
     const auto& roofPbr = model.materials[roof.material].pbrMetallicRoughness;
     EXPECT_DOUBLE_EQ(wallPbr.baseColorFactor[0], 1.0);
@@ -796,9 +796,9 @@ TEST(MeshPipelineTest, BuildingMesherAssignsHeightBinnedMapflowColors)
 
     BuildingInstance midRise;
     midRise.buildingId = 2;
-    midRise.heightAboveGround = 35.0F;
+    midRise.heightAboveGround = 25.0F;
     midRise.representativeBaseElevation = 100.0F;
-    midRise.roofElevation = 135.0F;
+    midRise.roofElevation = 125.0F;
     midRise.projectedFootprint.outerRing = {{20,0}, {30,0}, {30,10}, {20,10}};
 
     BuildingInstance highRise;
@@ -836,31 +836,123 @@ TEST(MeshPipelineTest, BuildingMesherAssignsHeightBinnedMapflowColors)
     EXPECT_NEAR((*mesh.edgePrimitive.colors)[2], 1.00F, 1e-4F);
     EXPECT_NEAR((*mesh.edgePrimitive.colors)[3], 0.90F, 1e-4F);
 
-    // Low-rise cyan.
-    // Opaque cyan roof and walls.
+    // Low-rise cyan with walls darkened by 35%.
     EXPECT_NEAR((*mesh.wallPrimitive.colors)[0], 0.00F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[1], 0.82F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[2], 0.95F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[1], 0.52F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[2], 0.6175F, 1e-4F);
     EXPECT_NEAR((*mesh.wallPrimitive.colors)[3], 1.0F, 1e-4F);
 
     EXPECT_NEAR((*mesh.roofPrimitive.colors)[0], 0.00F, 1e-4F);
-    EXPECT_NEAR((*mesh.roofPrimitive.colors)[1], 0.65F, 1e-4F);
-    EXPECT_NEAR((*mesh.roofPrimitive.colors)[2], 0.85F, 1e-4F);
+    EXPECT_NEAR((*mesh.roofPrimitive.colors)[1], 0.80F, 1e-4F);
+    EXPECT_NEAR((*mesh.roofPrimitive.colors)[2], 0.95F, 1e-4F);
     EXPECT_NEAR((*mesh.roofPrimitive.colors)[3], 1.0F, 1e-4F);
 
-    // Mid-rise coral. Four edges give 16 wall vertices per building.
+    // Mid-rise blue. Four edges give 16 wall vertices per building.
     std::size_t midRiseWallColorOffset = 16 * 4;
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 0], 0.95F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 1], 0.28F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 2], 0.35F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 0], 0.065F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 1], 0.1625F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 2], 0.585F, 1e-4F);
     EXPECT_NEAR((*mesh.wallPrimitive.colors)[midRiseWallColorOffset + 3], 1.0F, 1e-4F);
 
-    // Tower blue.
+    // High-rise red.
     std::size_t highRiseWallColorOffset = 32 * 4;
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 0], 0.20F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 1], 0.37F, 1e-4F);
-    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 2], 0.95F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 0], 0.65F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 1], 0.0975F, 1e-4F);
+    EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 2], 0.195F, 1e-4F);
     EXPECT_NEAR((*mesh.wallPrimitive.colors)[highRiseWallColorOffset + 3], 1.0F, 1e-4F);
+}
+
+TEST(MeshPipelineTest, MapflowPresentationAestheticTerrainAndBuildingColors)
+{
+    // 1. TerrainTextureComposer emits solid unlit dark grey (0.26f, 0.26f, 0.26f, 1.0f)
+    const auto colors = TerrainTextureComposer::composeSolidTerrainColors(4);
+    ASSERT_EQ(colors.size(), 16U);
+    for (std::size_t i = 0; i < 4; ++i)
+    {
+        EXPECT_NEAR(colors[i * 4 + 0], 0.26F, 1e-5F);
+        EXPECT_NEAR(colors[i * 4 + 1], 0.26F, 1e-5F);
+        EXPECT_NEAR(colors[i * 4 + 2], 0.26F, 1e-5F);
+        EXPECT_NEAR(colors[i * 4 + 3], 1.00F, 1e-5F);
+    }
+
+    // 2. TerrainMesher assigns solid unlit dark grey to terrainPrimitive.colors
+    const auto metadata = makeProjectedMetadata(4, 4);
+    const auto surface = makeSurface(4, 4, 100.0F, 0.0F);
+    const auto frame = LocalFrameTransformer::create(metadata, surface);
+    TerrainMeshConfig terrainConfig;
+    terrainConfig.generateSkirt = false;
+    const auto terrainMesh = TerrainMesher::generate(surface, metadata, frame, terrainConfig);
+    ASSERT_TRUE(terrainMesh.terrainPrimitive.colors.has_value());
+    const auto& tColors = *terrainMesh.terrainPrimitive.colors;
+    ASSERT_EQ(tColors.size(), (terrainMesh.terrainPrimitive.positions.size() / 3) * 4);
+    for (std::size_t i = 0; i < tColors.size(); i += 4)
+    {
+        EXPECT_NEAR(tColors[i + 0], 0.26F, 1e-5F);
+        EXPECT_NEAR(tColors[i + 1], 0.26F, 1e-5F);
+        EXPECT_NEAR(tColors[i + 2], 0.26F, 1e-5F);
+        EXPECT_NEAR(tColors[i + 3], 1.00F, 1e-5F);
+    }
+
+    // 3. BuildingMesher absolute tier boundary checks (no scene maximum)
+    BuildingInstance b14_5;
+    b14_5.buildingId = 1;
+    b14_5.heightAboveGround = 14.5F; // Low-rise (< 15m)
+    b14_5.representativeBaseElevation = 100.0F;
+    b14_5.roofElevation = 114.5F;
+    b14_5.projectedFootprint.outerRing = {{0,0}, {10,0}, {10,10}, {0,10}};
+
+    BuildingInstance b15_0;
+    b15_0.buildingId = 2;
+    b15_0.heightAboveGround = 15.0F; // Mid-rise (15m to 45m)
+    b15_0.representativeBaseElevation = 100.0F;
+    b15_0.roofElevation = 115.0F;
+    b15_0.projectedFootprint.outerRing = {{20,0}, {30,0}, {30,10}, {20,10}};
+
+    BuildingInstance b45_0;
+    b45_0.buildingId = 3;
+    b45_0.heightAboveGround = 45.0F; // Mid-rise (15m to 45m)
+    b45_0.representativeBaseElevation = 100.0F;
+    b45_0.roofElevation = 145.0F;
+    b45_0.projectedFootprint.outerRing = {{40,0}, {50,0}, {50,10}, {40,10}};
+
+    BuildingInstance b45_5;
+    b45_5.buildingId = 4;
+    b45_5.heightAboveGround = 45.5F; // High-rise (> 45m)
+    b45_5.representativeBaseElevation = 100.0F;
+    b45_5.roofElevation = 145.5F;
+    b45_5.projectedFootprint.outerRing = {{60,0}, {70,0}, {70,10}, {60,10}};
+
+    BuildingCollection buildings;
+    buildings.buildings = {b14_5, b15_0, b45_0, b45_5};
+    const auto bldgMesh = BuildingMesher::generate(buildings, frame);
+
+    ASSERT_TRUE(bldgMesh.roofPrimitive.colors.has_value());
+    ASSERT_TRUE(bldgMesh.wallPrimitive.colors.has_value());
+
+    // Check roof and wall colors for each building
+    // Building 1 (< 15m): Cyan (0.0, 0.8, 0.95), walls darkened by 0.65x
+    std::size_t wallOff0 = 0 * 16 * 4;
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff0 + 0], 0.00F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff0 + 1], 0.80F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff0 + 2], 0.95F * 0.65F, 1e-4F);
+
+    // Building 2 (15.0m): Deep Blue (0.1, 0.25, 0.9), walls darkened by 0.65x
+    std::size_t wallOff1 = 1 * 16 * 4;
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff1 + 0], 0.10F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff1 + 1], 0.25F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff1 + 2], 0.90F * 0.65F, 1e-4F);
+
+    // Building 3 (45.0m): Deep Blue (0.1, 0.25, 0.9), walls darkened by 0.65x
+    std::size_t wallOff2 = 2 * 16 * 4;
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff2 + 0], 0.10F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff2 + 1], 0.25F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff2 + 2], 0.90F * 0.65F, 1e-4F);
+
+    // Building 4 (> 45m): Hologram Red (1.0, 0.15, 0.3), walls darkened by 0.65x
+    std::size_t wallOff3 = 3 * 16 * 4;
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff3 + 0], 1.00F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff3 + 1], 0.15F * 0.65F, 1e-4F);
+    EXPECT_NEAR((*bldgMesh.wallPrimitive.colors)[wallOff3 + 2], 0.30F * 0.65F, 1e-4F);
 }
 
 TEST(MeshPipelineTest, GltfPackagerPacksEdgeHighlightLinesAsUncompressedLinesMode)
