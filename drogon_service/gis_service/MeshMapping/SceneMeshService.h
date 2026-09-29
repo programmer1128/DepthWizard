@@ -14,6 +14,5 @@ class SceneMeshService
      const GeoreferencedSurfaceBundle& surface,
      const BuildingCollection& buildings,
      const SpatialMetadata& metadata,
-     const MeshBuildConfig& config,
-     const MeshPrimitive* externalBuildingMesh = nullptr); // <-- Add this parameter
+     const MeshBuildConfig& config = MeshBuildConfig());
 };

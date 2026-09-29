@@ -1,8 +1,7 @@
 #include "PipelineService.h"
 
 #include "../BuildingReconstruction/BuildingReconstructionService.h"
-#define TINYOBJLOADER_IMPLEMENTATION
-#include "tiny_obj_loader.h"
+#include "../BuildingReconstruction/Sat2Lod2Importer.h"
 #include "../DataHandlers/MiniIOClient.h"
 #include "../FileGenerators/BackgroundTiffExportService.h"
 #include "../ImagePreprocessing/ImagePreprocessingService.h"
@@ -28,8 +27,8 @@
 #include <string>
 #include <utility>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
-#include <cstdio>
 
 #include "../FileGenerators/TiffExporter.h"
 
@@ -317,74 +316,74 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
 
          scene.localFrame = LocalFrameTransformer::create(metadata, surface);
 
-         // 7. Extract Physical Files for Python SAT2LoD2 Microservice
-         const std::string tmpDsmPath = "/tmp/dsm_" + jobId + ".tif";
-         const std::string tmpOrthoPath = "/tmp/ortho_" + jobId + ".jpg";
-         const std::string tmpLabelPath = "/tmp/label_" + jobId + ".tif";
-         const std::string pyOutputDir = "/tmp/lod2_" + jobId;
-
-         // Write the corrected nDSM from RAM to physical disk
-         TiffExporter::writeFloatTiff(tmpDsmPath, correction.correctedMetricNdsm.data, 
-                                      metadata.width, metadata.height, 
-                                      const_cast<double*>(metadata.geoTransform.data()), 
-                                      metadata.projectionRef.c_str());
-
-         // Export the 2D Semantic Mask for SAT2LoD2
-         std::vector<float> buildingMask(metadata.width * metadata.height, 0.0f);
-         for (size_t i = 0; i < semantics.finalClassMap.data.size(); ++i) {
-             if (semantics.finalClassMap.data[i] == SemanticClass::BUILDING) {
-                 buildingMask[i] = 255.0f; // SAT2LoD2 expects 255 for foreground pixels
-             }
-         }
-         TiffExporter::writeFloatTiff(tmpLabelPath, buildingMask, 
-                                      metadata.width, metadata.height, 
-                                      const_cast<double*>(metadata.geoTransform.data()), 
-                                      metadata.projectionRef.c_str());
-
-         // Write the optical texture to physical disk
-         if (!scene.rgbTextureBytes.empty()) {
-             std::ofstream orthoFile(tmpOrthoPath, std::ios::binary);
-             orthoFile.write(reinterpret_cast<const char*>(scene.rgbTextureBytes.data()), 
-                             scene.rgbTextureBytes.size());
-             orthoFile.close();
-         }
-
-         std::string satObjPath;
-         try
+         // 7. SAT2LoD2 regularizes footprints and decomposes them into
+         //    rectangles. It receives the corrected nDSM as its "DSM", so its
+         //    bases sit at 0 m; its heights only describe roof shape, and
+         //    Sat2Lod2Importer re-measures every block from our nDSM.
+         std::string satBuildingsPath;
+         const std::filesystem::path satWorkDir =
+             std::filesystem::temp_directory_path() / ("lod2_" + jobId);
+         const char* satSetting = std::getenv("DEPTHWIZARD_SAT2LOD2");
+         if (!satSetting || std::string(satSetting) != "0")
          {
-             Json::Value pyRequest;
-             pyRequest["dsm_path"] = tmpDsmPath;
-             pyRequest["ortho_path"] = tmpOrthoPath;
-             pyRequest["label_path"] = tmpLabelPath;
-             pyRequest["output_dir"] = pyOutputDir;
-             auto httpClient = drogon::HttpClient::newHttpClient("http://127.0.0.1:8000");
-             auto req = drogon::HttpRequest::newHttpJsonRequest(pyRequest);
-             req->setPath("/api/v1/reconstruct");
-             req->setMethod(drogon::Post);
-             LOG_INFO << "PipelineService: awaiting SAT2LoD2 reconstruction";
-             auto pyResponse = co_await httpClient->sendRequestCoro(req);
-             if (!pyResponse || pyResponse->statusCode() != 200 ||
-                 !pyResponse->getJsonObject() ||
-                 !(*pyResponse->getJsonObject())["obj_path"].isString())
+             try
              {
-                 throw std::runtime_error("SAT2LoD2 did not return an OBJ path");
+                 std::filesystem::create_directories(satWorkDir);
+                 const std::string dsmPath = (satWorkDir / "ndsm.tif").string();
+                 const std::string orthoPath = (satWorkDir / "ortho.jpg").string();
+                 const std::string labelPath = (satWorkDir / "label.tif").string();
+
+                 TiffExporter::writeFloatTiff(dsmPath, correction.correctedMetricNdsm.data,
+                                              metadata.width, metadata.height,
+                                              const_cast<double*>(metadata.geoTransform.data()),
+                                              metadata.projectionRef.c_str());
+
+                 std::vector<float> buildingMask(semantics.finalClassMap.data.size(), 0.0f);
+                 for (std::size_t i = 0; i < semantics.finalClassMap.data.size(); ++i)
+                     if (semantics.finalClassMap.data[i] == SemanticClass::BUILDING)
+                         buildingMask[i] = 255.0f; // SAT2LoD2 foreground value
+                 TiffExporter::writeFloatTiff(labelPath, buildingMask,
+                                              metadata.width, metadata.height,
+                                              const_cast<double*>(metadata.geoTransform.data()),
+                                              metadata.projectionRef.c_str());
+
+                 std::ofstream orthoFile(orthoPath, std::ios::binary);
+                 orthoFile.write(reinterpret_cast<const char*>(scene.rgbTextureBytes.data()),
+                                 static_cast<std::streamsize>(scene.rgbTextureBytes.size()));
+                 orthoFile.close();
+
+                 Json::Value pyRequest;
+                 pyRequest["dsm_path"] = dsmPath;
+                 pyRequest["ortho_path"] = orthoPath;
+                 pyRequest["label_path"] = labelPath;
+                 pyRequest["output_dir"] = (satWorkDir / "out").string();
+
+                 const char* urlSetting = std::getenv("DEPTHWIZARD_SAT2LOD2_URL");
+                 const char* timeoutSetting = std::getenv("DEPTHWIZARD_SAT2LOD2_TIMEOUT_S");
+                 const double timeoutSeconds = timeoutSetting ? std::atof(timeoutSetting) : 900.0;
+                 auto httpClient = drogon::HttpClient::newHttpClient(
+                     urlSetting ? urlSetting : "http://127.0.0.1:8000");
+                 auto req = drogon::HttpRequest::newHttpJsonRequest(pyRequest);
+                 req->setPath("/api/v1/reconstruct");
+                 req->setMethod(drogon::Post);
+                 LOG_INFO << "PipelineService: awaiting SAT2LoD2 reconstruction";
+                 auto pyResponse = co_await httpClient->sendRequestCoro(
+                     req, timeoutSeconds > 0.0 ? timeoutSeconds : 900.0);
+                 if (!pyResponse || pyResponse->statusCode() != 200 ||
+                     !pyResponse->getJsonObject() ||
+                     !(*pyResponse->getJsonObject())["buildings_path"].isString())
+                 {
+                     throw std::runtime_error("SAT2LoD2 did not return buildings_path");
+                 }
+                 satBuildingsPath = (*pyResponse->getJsonObject())["buildings_path"].asString();
+                 LOG_INFO << "PipelineService: received SAT2LoD2 buildings at " << satBuildingsPath;
              }
-             satObjPath = (*pyResponse->getJsonObject())["obj_path"].asString();
-             const auto slash = satObjPath.find_last_of('/');
-             satObjPath = satObjPath.substr(0, slash == std::string::npos ? 0 : slash + 1) +
-                          "building_model.obj";
-             LOG_INFO << "PipelineService: received SAT2LoD2 OBJ at " << satObjPath;
+             catch (const std::exception& error)
+             {
+                 LOG_WARN << "PipelineService: SAT2LoD2 unavailable: "
+                          << error.what() << "; using native reconstruction";
+             }
          }
-         catch (const std::exception& error)
-         {
-             LOG_WARN << "PipelineService: SAT2LoD2 microservice unavailable: "
-                      << error.what() << "; falling back to native reconstruction";
-         }
-         std::remove(tmpDsmPath.c_str());
-         std::remove(tmpOrthoPath.c_str());
-         std::remove(tmpLabelPath.c_str());
-         std::remove(("/tmp/ortho_" + jobId + ".tif").c_str());
-         std::remove(("/tmp/ortho_" + jobId + ".tfw").c_str());
 
          const char* diagnosticsSetting = std::getenv("DEPTHWIZARD_DIAGNOSTICS");
          const bool captureDiagnostics = !diagnosticsSetting || std::string(diagnosticsSetting) != "0";
@@ -394,6 +393,33 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
              semantics, surface, metadata, config,
              captureDiagnostics ? &stages : nullptr,
              &correction.correctedMetricNdsm, &scene.rgbTextureBytes);
+
+         bool usingSat2Lod2 = false;
+         if (!satBuildingsPath.empty())
+         {
+             Sat2Lod2ImportResult imported = Sat2Lod2Importer::importFile(
+                 satBuildingsPath, semantics, surface, metadata, config,
+                 correction.correctedMetricNdsm);
+             for (const std::string& warning : imported.warnings)
+                 LOG_WARN << "PipelineService: " << jobId << ": " << warning;
+             if (!imported.buildings.buildings.empty())
+             {
+                 const std::size_t keptNative = Sat2Lod2Importer::appendUncoveredNative(
+                     imported.buildings, buildings, metadata);
+                 LOG_INFO << "PipelineService: SAT2LoD2 segments=" << imported.segmentCount
+                          << "; parts=" << imported.buildings.buildings.size() - keptNative
+                          << "; rectangle_parts=" << imported.buildings.lod2BlockCount
+                          << "; residual_parts=" << imported.residualPartCount
+                          << "; irregular=" << imported.irregularCount
+                          << "; skipped=" << imported.skippedSegmentCount
+                          << "; native_kept=" << keptNative
+                          << "; native_replaced=" << buildings.buildings.size() - keptNative;
+                 buildings = std::move(imported.buildings);
+                 usingSat2Lod2 = true;
+             }
+         }
+         std::error_code cleanupError;
+         std::filesystem::remove_all(satWorkDir, cleanupError);
 
          MeshBuildConfig meshConfig;
          const ScenePresentationDecision sceneDecision = ScenePresentationSelector::select(
@@ -416,7 +442,7 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
              }
          }
          else if (presentation == ScenePresentation::METRIC &&
-                  (!buildings.buildings.empty() || !satObjPath.empty()) &&
+                  !buildings.buildings.empty() &&
                   sceneDecision.vegetationFraction < 0.55 &&
                   sceneDecision.groundReliefMetres <= 80.0)
          {
@@ -424,147 +450,15 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
              presentation = ScenePresentation::FLAT_URBAN;
          }
          meshConfig.presentation = presentation;
-         MeshPrimitive externalBuildingMesh;
-         externalBuildingMesh.topology = PrimitiveTopology::TRIANGLES;
-         externalBuildingMesh.materialRole = MaterialRole::BUILDING_ROOF;
-         externalBuildingMesh.normals.emplace();
-         externalBuildingMesh.colors.emplace();
-
-         struct BoundingBox2D {
-             double minX{std::numeric_limits<double>::max()};
-             double maxX{std::numeric_limits<double>::lowest()};
-             double minZ{std::numeric_limits<double>::max()};
-             double maxZ{std::numeric_limits<double>::lowest()};
-             bool intersects(const BoundingBox2D& other) const {
-                 return !(maxX < other.minX || minX > other.maxX || maxZ < other.minZ || minZ > other.maxZ);
-             }
-         };
-         std::vector<BoundingBox2D> satBoxes;
-
-         if (!satObjPath.empty()) {
-             tinyobj::attrib_t attrib;
-             std::vector<tinyobj::shape_t> shapes;
-             std::vector<tinyobj::material_t> materials;
-             std::string warn, err;
-
-             if (tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, satObjPath.c_str())) {
-                 const double gsdX = std::abs(metadata.geoTransform[1]);
-                 const double gsdY = std::abs(metadata.geoTransform[5]);
-                 const double originElev = scene.localFrame.elevationOrigin;
-
-                 for (const auto& shape : shapes) {
-                     BoundingBox2D satBox;
-                     
-                     // Find the peak height of this specific building to determine its solid color tier
-                     float shapeMaxZ = 0.0f;
-                     for (auto index : shape.mesh.indices) {
-                         if (attrib.vertices[3 * index.vertex_index + 2] > shapeMaxZ) {
-                             shapeMaxZ = static_cast<float>(attrib.vertices[3 * index.vertex_index + 2]);
-                         }
-                     }
-                     
-                     float trueShapeHeight = (shapeMaxZ - originElev) * config.heightScaleMultiplier;
-                     float r = 0.0f, g = 0.80f, b = 0.95f; // Cyan (Low-rise)
-                     if (trueShapeHeight > 45.0f) { r = 1.0f; g = 0.15f; b = 0.30f; }      // Red (High-rise)
-                     else if (trueShapeHeight >= 15.0f) { r = 0.10f; g = 0.25f; b = 0.90f; } // Blue (Mid-rise)
-
-                     for (size_t f = 0; f < shape.mesh.indices.size(); f += 3) {
-                         float v[3][3];
-                         
-                         // Read vertices in reverse order (2 - v_idx) to preserve CCW winding order after Y-mirror
-                         for (int v_idx = 0; v_idx < 3; ++v_idx) {
-                             auto index = shape.mesh.indices[f + (2 - v_idx)];
-                             double objX = attrib.vertices[3 * index.vertex_index + 0];
-                             double objY = attrib.vertices[3 * index.vertex_index + 1];
-                             double objZ = attrib.vertices[3 * index.vertex_index + 2];
-
-                             double localX = objX * gsdX;
-                             double localZ = (static_cast<double>(metadata.height) - objY) * gsdY;
-                             // Enlarge height strictly using the multiplier to preserve pristine flat CAD roofs
-                             double localY = (objZ > 0.05) ? ((objZ - originElev) * config.heightScaleMultiplier) : 0.0;
-
-                             v[v_idx][0] = static_cast<float>(localX);
-                             v[v_idx][1] = static_cast<float>(localY);
-                             v[v_idx][2] = static_cast<float>(localZ);
-
-                             satBox.minX = std::min(satBox.minX, localX);
-                             satBox.maxX = std::max(satBox.maxX, localX);
-                             satBox.minZ = std::min(satBox.minZ, localZ);
-                             satBox.maxZ = std::max(satBox.maxZ, localZ);
-                         }
-
-                         // Compute flat normal for this triangle
-                         float Ux = v[1][0] - v[0][0], Uy = v[1][1] - v[0][1], Uz = v[1][2] - v[0][2];
-                         float Vx = v[2][0] - v[0][0], Vy = v[2][1] - v[0][1], Vz = v[2][2] - v[0][2];
-                         float Nx = Uy * Vz - Uz * Vy, Ny = Uz * Vx - Ux * Vz, Nz = Ux * Vy - Uy * Vx;
-                         float len = std::sqrt(Nx * Nx + Ny * Ny + Nz * Nz);
-                         if (len > 0.0f) { Nx /= len; Ny /= len; Nz /= len; }
-
-                         // Shadow vertical walls
-                         float faceR = r, faceG = g, faceB = b;
-                         if (std::abs(Ny) < 0.5f) { faceR *= 0.65f; faceG *= 0.65f; faceB *= 0.65f; }
-
-                         for (int v_idx = 0; v_idx < 3; ++v_idx) {
-                             externalBuildingMesh.positions.push_back(v[v_idx][0]);
-                             externalBuildingMesh.positions.push_back(v[v_idx][1]);
-                             externalBuildingMesh.positions.push_back(v[v_idx][2]);
-
-                             externalBuildingMesh.normals->push_back(Nx);
-                             externalBuildingMesh.normals->push_back(Ny);
-                             externalBuildingMesh.normals->push_back(Nz);
-
-                             externalBuildingMesh.colors->push_back(faceR);
-                             externalBuildingMesh.colors->push_back(faceG);
-                             externalBuildingMesh.colors->push_back(faceB);
-                             externalBuildingMesh.colors->push_back(1.0f);
-
-                             externalBuildingMesh.indices.push_back(static_cast<uint32_t>(externalBuildingMesh.indices.size()));
-                             externalBuildingMesh.localBounds.expand(v[v_idx][0], v[v_idx][1], v[v_idx][2]);
-                         }
-                     }
-                     if (!shape.mesh.indices.empty()) satBoxes.push_back(satBox);
-                 }
-
-                 // Execute Local Metric Bounding-Box Fallback
-                 if (!satBoxes.empty()) {
-                     const size_t beforeCount = buildings.buildings.size();
-                     buildings.buildings.erase(
-                         std::remove_if(buildings.buildings.begin(), buildings.buildings.end(),
-                             [&](const BuildingInstance& bldg) {
-                                 BoundingBox2D bldgBox;
-                                 for (const auto& pt : bldg.projectedFootprint.outerRing) {
-                                     double localX = pt.easting - scene.localFrame.projectedOriginX;
-                                     double localZ = -(pt.northing - scene.localFrame.projectedOriginY);
-                                     bldgBox.minX = std::min(bldgBox.minX, localX);
-                                     bldgBox.maxX = std::max(bldgBox.maxX, localX);
-                                     bldgBox.minZ = std::min(bldgBox.minZ, localZ);
-                                     bldgBox.maxZ = std::max(bldgBox.maxZ, localZ);
-                                 }
-                                 for (const auto& sBox : satBoxes) {
-                                     if (bldgBox.intersects(sBox)) return true;
-                                 }
-                                 return false;
-                             }),
-                         buildings.buildings.end()
-                     );
-                     LOG_INFO << "PipelineService: SAT2LoD2 filtered " << (beforeCount - buildings.buildings.size())
-                              << " overlapping native buildings.";
-                 }
-             }
-             else
-             {
-                 LOG_WARN << "PipelineService: Failed to parse SAT2LoD2 OBJ at " << satObjPath
-                          << ": " << warn << " " << err;
-             }
-         }
 
          LOG_INFO << "PipelineService: automatic scene policy for " << jobId
                   << "; " << sceneDecision.reason
                   << "; strong_building_fraction=" << sceneDecision.strongBuildingFraction
                   << "; vegetation_fraction=" << sceneDecision.vegetationFraction
-                  << "; supported_ground_relief_m=" << sceneDecision.groundReliefMetres;
+                  << "; supported_ground_relief_m=" << sceneDecision.groundReliefMetres
+                  << "; building_source=" << (usingSat2Lod2 ? "sat2lod2" : "native");
          GlbBuildResult glb = SceneMeshService::generateGlb(
-            scene, surface, buildings, metadata, meshConfig, &externalBuildingMesh);
+            scene, surface, buildings, metadata, meshConfig);
 
          LOG_INFO << "PipelineService: mesh summary for " << jobId
                   << "; presentation=" << (presentation == ScenePresentation::FLAT_URBAN ? "flat_urban" : "metric")

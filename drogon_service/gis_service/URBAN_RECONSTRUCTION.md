@@ -95,6 +95,75 @@ Metric exports are unchanged, not independently verified ground truth.
    image and scientific rasters are unchanged. Urban scenes have no pedestal; terrain scenes retain
    skirts down to a common base 2 m below the scene's sampled minimum.
 
+## SAT2LoD2 footprints (optional microservice)
+
+When the SAT2LoD2 service is running, it replaces the native footprints:
+
+```sh
+cd ~/LOD2BuildingModel
+~/.conda/envs/sat2lod2/bin/uvicorn server:app --port 8000
+```
+
+The backend sends it the corrected nDSM, the building class mask and the
+optical image, then imports `buildings.json` (`Sat2Lod2Importer`). OpenStreetMap
+refinement is disabled (`osm_name='none'`): only image and model evidence is used.
+
+- SAT2LoD2 contributes 2D geometry only: each segment's outline and its
+  rectangle decomposition, in pixel-centre coordinates of the uploaded raster.
+- The semantic mask cannot see party walls, so one segment is often a whole
+  city block. The building separations come from SAT2LoD2's rectangles (split
+  on optical edges and nDSM steps): every rectangle becomes its own building
+  part. Never extrude the segment outline over them, as that merges the block
+  into one slab.
+- Taller rectangles are placed first and stay intact (among equal heights the
+  smaller goes first, so a tower is not swallowed by its podium); lower ones
+  are clipped around them. Neighbours keep a `sat2lod2PartGapMetres` gap
+  (default 0.3 m). Parts smaller than `minDecomposedBlockAreaSquareMetres` or
+  narrower than 2 m are dropped.
+- Footprint areas no rectangle covers stay empty by default. SAT2LoD2's
+  rectangles sit inside the semantic mask and its outlines have courtyards
+  filled (`binary_fill_holes`), so filling the remainder frames every block,
+  welds neighbours together and paves courtyards. Setting
+  `sat2lod2MinResidualAreaSquareMetres` > 0 fills remainder pieces that are at
+  least that large, 3 m wide and 70% building-class pixels.
+- Every part's height is measured after clipping from the backend nDSM by
+  `BuildingHeightEstimator` (the native 85th-percentile estimate and
+  `heightScaleMultiplier`). Parts within `sat2lod2TierSnapMetres` (default 1 m)
+  in one segment share a roof level. SAT2LoD2's own heights only describe roof
+  shape.
+- Segments without rectangles are extruded from their outline, snapped to a
+  rectilinear shape along its facade direction (`sat2lod2MinFootprintEdgeMetres`,
+  default 2.5 m), or simplified and CGAL-regularized when not credibly
+  rectilinear (IoU below `minimumFootprintMaskIoU`).
+- Roofs are flat. SAT2LoD2's gable/hip labels are honoured only with
+  `enableLod2RoofFitting`: on a smooth monocular nDSM it labels most flat
+  Manhattan roofs as pitched.
+- Native buildings covering at most 10% SAT2LoD2 area are kept, since SAT2LoD2
+  drops small segments whose rectangle fit fails.
+
+If the service is down, fails or exceeds `DEPTHWIZARD_SAT2LOD2_TIMEOUT_S`
+(default 900 s), native reconstruction is used. `DEPTHWIZARD_SAT2LOD2=0`
+disables the call and `DEPTHWIZARD_SAT2LOD2_URL` changes its address. The
+backend log reports `building_source=sat2lod2|native`.
+
+`server.py` runs every job as a fresh `sat2lod2_worker.py` process in its own
+session, one job at a time. `SAT2LOD2_JOB_TIMEOUT_S` (default 600 s, below the
+backend's 900 s) kills the job and all its workers and returns 504, so the
+backend falls back to native reconstruction. Inside a job, each segment's
+rectangle decomposition has `SAT2LOD2_SEGMENT_BUDGET_S` (default 90 s); a
+segment that exceeds it, or whose decomposition raises, keeps no rectangles and
+is extruded from its Manhattan footprint.
+
+Two deadlocks of SAT2LoD2's forked `multiprocessing.Pool` looked like an
+infinite loop at "Step3 ... 35%"; neither was algorithmic:
+- OpenCV's OpenMP pool does not survive fork. `pipeline.py` disables OpenCV
+  threading before import, or workers hang in `cv2.warpAffine`.
+- Workers forked inside uvicorn inherited its SIGTERM handler, so the
+  `Pool.terminate()` at the end of every `with Pool(...)` block could not
+  kill them and waited forever after Step 3 had finished. Jobs now run in a
+  separate process, and pool workers also reset SIGTERM/SIGINT to defaults.
+Never call `run_reconstruction` from inside the server process.
+
 These are heuristic instances, not guaranteed property/building identities.
 Two equal-height touching roofs with no semantic boundary can remain one block.
 Multiple roof levels of one real building may become separate render objects.

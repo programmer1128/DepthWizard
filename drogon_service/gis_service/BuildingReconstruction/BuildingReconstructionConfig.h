@@ -84,6 +84,21 @@ struct BuildingReconstructionConfig
      float commercialFlatRoofAreaSquareMetres{250.0f};
      float minSetbackHeightStepMetres{3.0f};
 
+     // SAT2LoD2 footprints are snapped to a rectilinear outline with no wall
+     // shorter than this; 0 disables the Manhattan snap.
+     float sat2lod2MinFootprintEdgeMetres{2.5f};
+     // Every SAT2LoD2 rectangle becomes its own building part, separated from
+     // its neighbours by this gap so individual buildings stay legible.
+     float sat2lod2PartGapMetres{0.3f};
+     // Neighbouring parts closer than this in height share one roof level.
+     float sat2lod2TierSnapMetres{1.0f};
+     // Footprint areas no rectangle covers become extra parts when at least
+     // this large, 3 m wide and mostly building-class pixels. Off by default:
+     // SAT2LoD2 rectangles sit inside the semantic mask and its outlines have
+     // courtyards filled, so the remainder is a frame that welds neighbouring
+     // buildings together and paves courtyards.
+     float sat2lod2MinResidualAreaSquareMetres{0.0f};
+
      //Height Estimator Thresholds
      float groundBufferRadiusMetres{3.0f};               // How far out to search for ground
      float footprintErosionRadiusMetres{1.0f};           // How far in to erode to avoid edge-blur
@@ -135,6 +150,10 @@ struct BuildingReconstructionConfig
              std::isfinite(minPitchedRoofDegrees) && minPitchedRoofDegrees <= 45.0f &&
              std::isfinite(commercialFlatRoofAreaSquareMetres) && commercialFlatRoofAreaSquareMetres > 0.0f &&
              std::isfinite(minSetbackHeightStepMetres) && minSetbackHeightStepMetres > 0.0f &&
+             std::isfinite(sat2lod2MinFootprintEdgeMetres) && sat2lod2MinFootprintEdgeMetres >= 0.0f &&
+             std::isfinite(sat2lod2PartGapMetres) && sat2lod2PartGapMetres >= 0.0f && sat2lod2PartGapMetres <= 2.0f &&
+             std::isfinite(sat2lod2TierSnapMetres) && sat2lod2TierSnapMetres >= 0.0f &&
+             std::isfinite(sat2lod2MinResidualAreaSquareMetres) && sat2lod2MinResidualAreaSquareMetres >= 0.0f &&
              std::isfinite(groundBufferRadiusMetres) && groundBufferRadiusMetres >= 0.0f &&
              std::isfinite(footprintErosionRadiusMetres) && footprintErosionRadiusMetres >= 0.0f &&
              minRequiredSamples > 0 &&
