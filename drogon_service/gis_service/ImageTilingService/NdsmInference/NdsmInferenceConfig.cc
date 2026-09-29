@@ -89,7 +89,7 @@ NdsmInferenceConfig NdsmInferenceConfig::loadDefaults()
         .enabled = true
     });
 
-    config.network.maxConcurrentRequests = 4;
+    config.network.maxConcurrentRequests = 8;
     config.network.maxRetries = 3;
     config.network.connectTimeoutMs = 20000;
     config.network.sendTimeoutMs = 120000;
