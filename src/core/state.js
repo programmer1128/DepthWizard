@@ -118,3 +118,49 @@ export function setCurrentUuid(uuid) {
         }
     }
 }
+
+export function showProcessingOverlay(
+    title = 'Processing terrain',
+    message = 'Generating 3D elevation model…'
+) {
+
+    if (!dom.processingOverlay) {
+        return;
+    }
+
+    if (dom.processingTitle) {
+        dom.processingTitle.textContent =
+            title;
+    }
+
+    if (dom.processingMessage) {
+        dom.processingMessage.textContent =
+            message;
+    }
+
+    if (dom.processingPercent) {
+        dom.processingPercent.textContent =
+            'WORKING';
+    }
+
+    if (dom.processingProgressBar) {
+        dom.processingProgressBar.style.width =
+            '35%';
+    }
+
+    dom.processingOverlay.classList.remove(
+        'hidden'
+    );
+}
+
+
+export function hideProcessingOverlay() {
+
+    if (!dom.processingOverlay) {
+        return;
+    }
+
+    dom.processingOverlay.classList.add(
+        'hidden'
+    );
+}

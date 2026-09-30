@@ -281,11 +281,28 @@
           <span class="section-badge" id="routeWaypointsBadge">0 Pts</span>
         </div>
 
-        <div class="control-grid-2">
-          <button class="tool-btn btn-route-draw" id="drawRouteBtn" title="Click terrain to place waypoints">
+        <div class="control-grid-3">
+          <button
+            class="tool-btn btn-route-draw"
+            id="drawRouteBtn"
+            title="Click terrain to place waypoints"
+          >
             ✎ Draw Route
           </button>
-          <button class="tool-btn" id="clearRouteBtn" title="Remove all waypoints and route line">
+
+          <button
+            class="tool-btn"
+            id="undoRouteBtn"
+            title="Remove the last waypoint"
+          >
+            ↶ Undo
+          </button>
+
+          <button
+            class="tool-btn"
+            id="clearRouteBtn"
+            title="Remove all waypoints and route line"
+          >
             ✕ Clear
           </button>
         </div>
@@ -401,6 +418,52 @@
     </aside>
 
     <section id="viewer">
+      <div id="processingOverlay" class="processing-overlay hidden">
+
+    <div class="processing-card">
+
+        <div class="processing-spinner">
+            <div class="spinner-ring"></div>
+            <div class="spinner-core"></div>
+        </div>
+
+        <div class="processing-content">
+            <div class="processing-eyebrow">
+                DEPTHWIZARD
+            </div>
+
+            <div
+                id="processingTitle"
+                class="processing-title"
+            >
+                Processing terrain
+            </div>
+
+            <div
+                id="processingMessage"
+                class="processing-message"
+            >
+                Generating 3D elevation model…
+            </div>
+
+            <div class="processing-progress">
+                <div
+                    id="processingProgressBar"
+                    class="processing-progress-bar"
+                ></div>
+            </div>
+
+            <div
+                id="processingPercent"
+                class="processing-percent"
+            >
+                WORKING
+            </div>
+        </div>
+
+    </div>
+
+</div>
 
       <button class="layout-toggle sidebar-toggle" id="sidebarToggleBtn" type="button" title="Collapse sidebar" aria-label="Collapse sidebar" aria-expanded="true">
         <span class="layout-toggle-icon">‹</span>

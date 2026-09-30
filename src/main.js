@@ -10,6 +10,7 @@ import {
     initFlood,
     clearFlood,
     updateFloodForTerrain
+    //updateFloodAnimation
 } from './features/flood.js';
 
 import {
@@ -104,6 +105,7 @@ import {
 import {
     initRoute,
     clearRoute,
+    removeLastWaypoint,
     updateRouteFlythrough
 } from './features/route.js';
 
@@ -167,7 +169,9 @@ import {
     setSystemStatus,
     setFileStatus,
     setModeStatus,
-    setGridStatus
+    setGridStatus,
+    showProcessingOverlay,
+    hideProcessingOverlay
 } from './ui/status.js';
 
 
@@ -275,6 +279,8 @@ function initializeApplication() {
     setFileStatus(
         'No terrain loaded'
     );
+
+    
 
 
     // --------------------------------------------------------
@@ -426,6 +432,11 @@ async function handleUpload() {
             `Processing ${file.name}...`
         );
 
+        showProcessingOverlay(
+            'Processing terrain',
+            `Analyzing ${file.name} and generating the 3D elevation model...`
+        );
+
 
         // ----------------------------------------------------
         // GeoTIFF 2D optical preview
@@ -532,6 +543,7 @@ async function handleUpload() {
         setFileStatus(
             `${file.name} ready • 3D mesh generated`
         );
+        hideProcessingOverlay();
 
 
 
@@ -554,6 +566,7 @@ async function handleUpload() {
         setFileStatus(
             'Processing failed'
         );
+        hideProcessingOverlay();
 
     }
 
@@ -595,7 +608,7 @@ async function handleDemo() {
         // ----------------------------------------------------
 
         await loadTerrainGLB(
-            '/test_8_output.glb'
+            '/new_test.glb'
         );
 
 
@@ -615,7 +628,7 @@ async function handleDemo() {
         if (dom.pipImage) {
 
             dom.pipImage.src =
-                '/demo_optical.jpg';
+                '/demo_optical.png';
 
             dom.pipImage.classList.remove(
                 'hidden'
@@ -885,6 +898,12 @@ function animate() {
     // --------------------------------------------------------
 
     updateTiles();
+
+    // // --------------------------------------------------------
+    // // Flood water animation
+    // // --------------------------------------------------------
+
+    // updateFloodAnimation(delta);
 
 
     // --------------------------------------------------------

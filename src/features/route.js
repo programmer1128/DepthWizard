@@ -159,6 +159,10 @@ function updateRouteUI() {
             count === 0;
 
     }
+    if (dom.undoRouteBtn) {
+        dom.undoRouteBtn.disabled =
+            count === 0;
+    }
 
 }
 
@@ -847,6 +851,66 @@ export function clearRoute() {
 
 }
 
+// ============================================================
+// REMOVE LAST WAYPOINT
+// ============================================================
+
+export function removeLastWaypoint() {
+
+    if (!state.routeWaypoints.length) {
+        return;
+    }
+
+    // Invalidate any route calculation currently in progress.
+    state.currentRouteCalculationId++;
+
+    // Remove the last waypoint.
+    state.routeWaypoints.pop();
+
+    // Remove the corresponding marker.
+    const marker =
+        state.routeMarkerMeshes.pop();
+
+    if (marker) {
+
+        scene.remove(marker);
+
+        if (marker.geometry) {
+            marker.geometry.dispose();
+        }
+
+    }
+
+    // Rebuild route from the remaining points.
+    updateRouteUI();
+
+    if (!state.routeWaypoints.length) {
+
+        disposeRouteLine();
+
+        state.routeSurfaceCurve = null;
+        state.routeDistance = 0;
+
+        if (dom.routeDistance) {
+            dom.routeDistance.textContent = '0.00 m';
+        }
+
+        setRouteStatus('No route');
+
+        drawElevationProfile([]);
+
+        return;
+    }
+
+    setRouteStatus(
+        `${state.routeWaypoints.length} waypoint${
+            state.routeWaypoints.length === 1 ? '' : 's'
+        }`
+    );
+
+    updateRouteLine();
+}
+
 
 // ============================================================
 // ROUTE FLYTHROUGH
@@ -1074,6 +1138,15 @@ export function initRoute() {
         'click',
         handleRouteClick
     );
+
+    if (dom.undoRouteBtn) {
+
+        dom.undoRouteBtn.addEventListener(
+            'click',
+            removeLastWaypoint
+        );
+
+    }
 
 
     updateRouteUI();

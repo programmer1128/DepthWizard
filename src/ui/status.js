@@ -140,3 +140,44 @@ export function setErrorStatus(message = 'Error') {
     setViewerStatus(message, 'error');
 }
 
+// ------------------------------------------------------------
+// Processing overlay
+// ------------------------------------------------------------
+
+export function showProcessingOverlay(
+    title = 'Processing terrain',
+    message = 'Generating 3D elevation model...'
+) {
+
+    if (!dom.processingOverlay) {
+        return;
+    }
+
+    if (dom.processingTitle) {
+        dom.processingTitle.textContent = title;
+    }
+
+    if (dom.processingMessage) {
+        dom.processingMessage.textContent = message;
+    }
+
+    if (dom.processingProgressBar) {
+        dom.processingProgressBar.style.width = '35%';
+    }
+
+    if (dom.processingPercent) {
+        dom.processingPercent.textContent = 'WORKING';
+    }
+
+    dom.processingOverlay.classList.remove('hidden');
+}
+
+
+export function hideProcessingOverlay() {
+
+    if (!dom.processingOverlay) {
+        return;
+    }
+
+    dom.processingOverlay.classList.add('hidden');
+}

@@ -245,50 +245,35 @@ export function loadTerrainGLB(url) {
                 model.updateMatrixWorld(true);
 
                 // Prepare the stable comparison shader before first render.
-                patchTerrainModel(model);
+                //patchTerrainModel(model);
 
-                // --------------------------------------------
-                // GENERATE 3D ELEVATION HEAT MAP DATA
-                // --------------------------------------------
-                model.traverse((child) => {
-                    if (child.isMesh && child.geometry) {
-                        
-                        // Calculate min/max height
-                        child.geometry.computeBoundingBox();
-                        const minY = child.geometry.boundingBox.min.y;
-                        const maxY = child.geometry.boundingBox.max.y;
-                        const range = maxY - minY || 1;
+                // ------------------------------------------------------------
+// PRESERVE ORIGINAL GLB MATERIALS
+// ------------------------------------------------------------
+// IMPORTANT:
+// Do NOT generate heatmap colors while loading the GLB.
+//
+// The default state must remain exactly as authored in the GLB.
+// Heatmap colors/materials are created only when the user
+// explicitly activates Heatmap mode.
 
-                        const positions = child.geometry.attributes.position;
-                        const colors = [];
-                        const color = new THREE.Color();
+model.traverse((child) => {
 
-                        // Map Y height to Blue->Red Hue
-                        for (let i = 0; i < positions.count; i++) {
-                            const y = positions.getY(i);
-                            const normalized = (y - minY) / range;
-                            const hue = (1.0 - normalized) * 0.66; 
-                            color.setHSL(hue, 1.0, 0.5);
-                            colors.push(color.r, color.g, color.b);
-                        }
+    if (!child.isMesh) {
+        return;
+    }
 
-                        child.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-                        
-                        // Preserve the original optical material exactly as loaded.
-                        child.userData.originalMaterial = child.material;
+    // Preserve the exact original GLB material.
+    child.userData.originalMaterial = child.material;
 
-                        // Create a dedicated heatmap material
-                        child.userData.heatmapMaterial = new THREE.MeshStandardMaterial({
-                            vertexColors: true,
-                            roughness: 0.8,
-                            metalness: 0.1
-                        });
+    // Remember whether the original geometry already had
+    // vertex colors. We must restore this if necessary.
+    child.userData.originalColorAttribute =
+        child.geometry.getAttribute('color') || null;
 
-                        // Apply based on current state
-                        child.material = state.heatmapEnabled ? child.userData.heatmapMaterial : child.userData.originalMaterial;
-                    }
-                });
-
+    // No heatmap material here.
+    // No generated color attribute here.
+});
             // ------------------------------------------------
             // Recalculate bounds
             // after centering
@@ -577,17 +562,141 @@ export function clearTerrain() {
 // ============================================================
 // TOGGLE HEATMAP MATERIAL
 // ============================================================
-
 export function updateTerrainHeatmap() {
-    if (!state.terrainModel || state.comparisonEnabled) {
+
+    if (!state.terrainModel) {
         return;
     }
 
     state.terrainModel.traverse((child) => {
-        if (child.isMesh && child.userData.originalMaterial && child.userData.heatmapMaterial) {
-            child.material = state.heatmapEnabled 
-                ? child.userData.heatmapMaterial 
-                : child.userData.originalMaterial;
+
+        if (!child.isMesh || !child.geometry) {
+            return;
         }
+
+        // ----------------------------------------------------
+        // HEATMAP ON
+        // ----------------------------------------------------
+
+        if (state.heatmapEnabled) {
+
+            // Create heatmap material only when requested.
+            if (!child.userData.heatmapMaterial) {
+
+                const geometry =
+                    child.geometry;
+
+                geometry.computeBoundingBox();
+
+                const minY =
+                    geometry.boundingBox?.min.y ?? 0;
+
+                const maxY =
+                    geometry.boundingBox?.max.y ?? 1;
+
+                const range =
+                    Math.max(
+                        maxY - minY,
+                        0.0001
+                    );
+
+                const positions =
+                    geometry.attributes.position;
+
+                if (!positions) {
+                    return;
+                }
+
+                const colors = [];
+                const color =
+                    new THREE.Color();
+
+                for (
+                    let i = 0;
+                    i < positions.count;
+                    i++
+                ) {
+
+                    const y =
+                        positions.getY(i);
+
+                    const normalized =
+                        THREE.MathUtils.clamp(
+                            (y - minY) / range,
+                            0,
+                            1
+                        );
+
+                    const hue =
+                        (1.0 - normalized) * 0.66;
+
+                    color.setHSL(
+                        hue,
+                        1.0,
+                        0.5
+                    );
+
+                    colors.push(
+                        color.r,
+                        color.g,
+                        color.b
+                    );
+                }
+
+                geometry.setAttribute(
+                    'color',
+                    new THREE.Float32BufferAttribute(
+                        colors,
+                        3
+                    )
+                );
+
+                child.userData.heatmapMaterial =
+                    new THREE.MeshStandardMaterial({
+
+                        vertexColors: true,
+
+                        roughness: 0.8,
+
+                        metalness: 0.05
+                    });
+            }
+
+            child.material =
+                child.userData.heatmapMaterial;
+
+        }
+
+        // ----------------------------------------------------
+        // HEATMAP OFF
+        // ----------------------------------------------------
+
+        else {
+
+            child.material =
+                child.userData.originalMaterial;
+
+            // Remove the generated heatmap colors.
+            // This is CRITICAL because otherwise the original
+            // GLB material may continue seeing the generated
+            // vertex-color attribute.
+
+            if (
+                child.userData.originalColorAttribute
+            ) {
+
+                child.geometry.setAttribute(
+                    'color',
+                    child.userData.originalColorAttribute
+                );
+
+            } else {
+
+                child.geometry.deleteAttribute(
+                    'color'
+                );
+            }
+        }
+
     });
 }

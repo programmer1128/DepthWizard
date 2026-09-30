@@ -199,6 +199,9 @@ export const dom = {
     flyRouteBtn:
         document.getElementById('flyRouteBtn'),
 
+    undoRouteBtn: 
+        document.getElementById('undoRouteBtn'),
+
     flyRouteBtnText:
         document.getElementById('flyRouteBtnText'),
 
@@ -323,6 +326,20 @@ export const dom = {
     exportTerrainBtn:
         document.getElementById('exportTerrainBtn'),
     exportStatus:
-        document.getElementById('exportStatus')
+        document.getElementById('exportStatus'),
+    processingOverlay:
+    document.getElementById('processingOverlay'),
+
+processingTitle:
+    document.getElementById('processingTitle'),
+
+processingMessage:
+    document.getElementById('processingMessage'),
+
+processingProgressBar:
+    document.getElementById('processingProgressBar'),
+
+processingPercent:
+    document.getElementById('processingPercent')
 };
 
