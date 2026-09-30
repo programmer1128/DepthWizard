@@ -2,6 +2,7 @@
 
 #include "../BuildingReconstruction/BuildingReconstructionService.h"
 #include "../BuildingReconstruction/Sat2Lod2Importer.h"
+#include "Sat2Lod2ModalTransport.h"
 #include "../DataHandlers/MiniIOClient.h"
 #include "../FileGenerators/BackgroundTiffExportService.h"
 #include "../ImagePreprocessing/ImagePreprocessingService.h"
@@ -29,6 +30,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
+#include <opencv2/imgcodecs.hpp>
 
 #include "../FileGenerators/TiffExporter.h"
 
@@ -321,6 +324,7 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          //    bases sit at 0 m; its heights only describe roof shape, and
          //    Sat2Lod2Importer re-measures every block from our nDSM.
          std::string satBuildingsPath;
+         std::optional<Json::Value> satBuildingsDocument;
          const std::filesystem::path satWorkDir =
              std::filesystem::temp_directory_path() / ("lod2_" + jobId);
          const char* satSetting = std::getenv("DEPTHWIZARD_SAT2LOD2");
@@ -328,55 +332,106 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          {
              try
              {
+                 const char* urlSetting = std::getenv("DEPTHWIZARD_SAT2LOD2_URL");
+                 const std::string satUrl = urlSetting && *urlSetting
+                     ? urlSetting
+                     : "https://programmer1128--sat2lod2-reconstruction-sat2lod2engine-app.modal.run";
+                 const char* transportSetting =
+                     std::getenv("DEPTHWIZARD_SAT2LOD2_TRANSPORT");
+                 if (transportSetting && *transportSetting &&
+                     std::string(transportSetting) != "local" &&
+                     std::string(transportSetting) != "modal")
+                     throw std::runtime_error(
+                         "DEPTHWIZARD_SAT2LOD2_TRANSPORT must be local or modal");
+                 const bool localTransport = transportSetting && *transportSetting
+                     ? std::string(transportSetting) == "local"
+                     : satUrl.starts_with("http://127.0.0.1:") ||
+                       satUrl.starts_with("http://localhost:");
                  std::filesystem::create_directories(satWorkDir);
                  const std::string dsmPath = (satWorkDir / "ndsm.tif").string();
-                 const std::string orthoPath = (satWorkDir / "ortho.jpg").string();
+                 const std::string orthoPath =
+                     (satWorkDir / (localTransport ? "ortho.jpg" : "ortho.tif")).string();
                  const std::string labelPath = (satWorkDir / "label.tif").string();
 
-                 TiffExporter::writeFloatTiff(dsmPath, correction.correctedMetricNdsm.data,
-                                              metadata.width, metadata.height,
-                                              const_cast<double*>(metadata.geoTransform.data()),
-                                              metadata.projectionRef.c_str());
+                 if (!TiffExporter::writeFloatTiff(
+                         dsmPath, correction.correctedMetricNdsm.data,
+                         metadata.width, metadata.height,
+                         const_cast<double*>(metadata.geoTransform.data()),
+                         metadata.projectionRef.c_str()))
+                     throw std::runtime_error("Cannot export SAT2LoD2 nDSM TIFF");
 
                  std::vector<float> buildingMask(semantics.finalClassMap.data.size(), 0.0f);
                  for (std::size_t i = 0; i < semantics.finalClassMap.data.size(); ++i)
                      if (semantics.finalClassMap.data[i] == SemanticClass::BUILDING)
                          buildingMask[i] = 255.0f; // SAT2LoD2 foreground value
-                 TiffExporter::writeFloatTiff(labelPath, buildingMask,
-                                              metadata.width, metadata.height,
-                                              const_cast<double*>(metadata.geoTransform.data()),
-                                              metadata.projectionRef.c_str());
+                 if (!TiffExporter::writeFloatTiff(
+                         labelPath, buildingMask,
+                         metadata.width, metadata.height,
+                         const_cast<double*>(metadata.geoTransform.data()),
+                         metadata.projectionRef.c_str()))
+                     throw std::runtime_error("Cannot export SAT2LoD2 label TIFF");
 
-                 std::ofstream orthoFile(orthoPath, std::ios::binary);
-                 orthoFile.write(reinterpret_cast<const char*>(scene.rgbTextureBytes.data()),
-                                 static_cast<std::streamsize>(scene.rgbTextureBytes.size()));
-                 orthoFile.close();
+                 if (localTransport)
+                 {
+                     std::ofstream orthoFile(orthoPath, std::ios::binary);
+                     orthoFile.write(
+                         reinterpret_cast<const char*>(scene.rgbTextureBytes.data()),
+                         static_cast<std::streamsize>(scene.rgbTextureBytes.size()));
+                     if (!orthoFile)
+                         throw std::runtime_error("Cannot export SAT2LoD2 optical JPEG");
+                 }
+                 else
+                 {
+                     const cv::Mat optical = cv::imdecode(
+                         scene.rgbTextureBytes, cv::IMREAD_COLOR);
+                     // Uncompressed: OpenCV's default LZW needs the Python
+                     // imagecodecs package, which SAT2LoD2's reader lacks.
+                     if (optical.empty() || optical.cols != metadata.width ||
+                         optical.rows != metadata.height ||
+                         !cv::imwrite(orthoPath, optical,
+                                      {cv::IMWRITE_TIFF_COMPRESSION, 1}))
+                         throw std::runtime_error("Cannot export SAT2LoD2 optical TIFF");
+                 }
 
-                 Json::Value pyRequest;
-                 pyRequest["dsm_path"] = dsmPath;
-                 pyRequest["ortho_path"] = orthoPath;
-                 pyRequest["label_path"] = labelPath;
-                 pyRequest["output_dir"] = (satWorkDir / "out").string();
-
-                 const char* urlSetting = std::getenv("DEPTHWIZARD_SAT2LOD2_URL");
                  const char* timeoutSetting = std::getenv("DEPTHWIZARD_SAT2LOD2_TIMEOUT_S");
                  const double timeoutSeconds = timeoutSetting ? std::atof(timeoutSetting) : 900.0;
-                 auto httpClient = drogon::HttpClient::newHttpClient(
-                     urlSetting ? urlSetting : "http://127.0.0.1:8000");
-                 auto req = drogon::HttpRequest::newHttpJsonRequest(pyRequest);
-                 req->setPath("/api/v1/reconstruct");
-                 req->setMethod(drogon::Post);
-                 LOG_INFO << "PipelineService: awaiting SAT2LoD2 reconstruction";
+                 auto httpClient = drogon::HttpClient::newHttpClient(satUrl);
+                 drogon::HttpRequestPtr req;
+                 if (localTransport)
+                 {
+                     Json::Value pyRequest;
+                     pyRequest["dsm_path"] = dsmPath;
+                     pyRequest["ortho_path"] = orthoPath;
+                     pyRequest["label_path"] = labelPath;
+                     pyRequest["output_dir"] = (satWorkDir / "out").string();
+                     req = drogon::HttpRequest::newHttpJsonRequest(pyRequest);
+                     req->setPath("/api/v1/reconstruct");
+                     req->setMethod(drogon::Post);
+                 }
+                 else
+                     req = Sat2Lod2ModalTransport::makeRequest(
+                         dsmPath, orthoPath, labelPath);
+                 LOG_INFO << "PipelineService: awaiting SAT2LoD2 "
+                          << (localTransport ? "local" : "Modal") << " reconstruction";
                  auto pyResponse = co_await httpClient->sendRequestCoro(
                      req, timeoutSeconds > 0.0 ? timeoutSeconds : 900.0);
-                 if (!pyResponse || pyResponse->statusCode() != 200 ||
-                     !pyResponse->getJsonObject() ||
-                     !(*pyResponse->getJsonObject())["buildings_path"].isString())
+                 if (localTransport)
                  {
-                     throw std::runtime_error("SAT2LoD2 did not return buildings_path");
+                     if (!pyResponse || pyResponse->statusCode() != 200 ||
+                         !pyResponse->getJsonObject() ||
+                         !(*pyResponse->getJsonObject())["buildings_path"].isString())
+                         throw std::runtime_error("SAT2LoD2 did not return buildings_path");
+                     satBuildingsPath =
+                         (*pyResponse->getJsonObject())["buildings_path"].asString();
+                     LOG_INFO << "PipelineService: received local SAT2LoD2 buildings at "
+                              << satBuildingsPath;
                  }
-                 satBuildingsPath = (*pyResponse->getJsonObject())["buildings_path"].asString();
-                 LOG_INFO << "PipelineService: received SAT2LoD2 buildings at " << satBuildingsPath;
+                 else
+                 {
+                     satBuildingsDocument =
+                         Sat2Lod2ModalTransport::readBuildings(pyResponse);
+                     LOG_INFO << "PipelineService: received Modal SAT2LoD2 building document";
+                 }
              }
              catch (const std::exception& error)
              {
@@ -395,11 +450,15 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
              &correction.correctedMetricNdsm, &scene.rgbTextureBytes);
 
          bool usingSat2Lod2 = false;
-         if (!satBuildingsPath.empty())
+         if (satBuildingsDocument || !satBuildingsPath.empty())
          {
-             Sat2Lod2ImportResult imported = Sat2Lod2Importer::importFile(
-                 satBuildingsPath, semantics, surface, metadata, config,
-                 correction.correctedMetricNdsm);
+             Sat2Lod2ImportResult imported = satBuildingsDocument
+                 ? Sat2Lod2Importer::import(
+                     *satBuildingsDocument, semantics, surface, metadata, config,
+                     correction.correctedMetricNdsm)
+                 : Sat2Lod2Importer::importFile(
+                     satBuildingsPath, semantics, surface, metadata, config,
+                     correction.correctedMetricNdsm);
              for (const std::string& warning : imported.warnings)
                  LOG_WARN << "PipelineService: " << jobId << ": " << warning;
              if (!imported.buildings.buildings.empty())

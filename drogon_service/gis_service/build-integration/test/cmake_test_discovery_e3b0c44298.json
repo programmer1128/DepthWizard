@@ -1,30 +1,20 @@
 {
-  "tests": 4,
+  "tests": 2,
   "name": "AllTests",
   "testsuites": [
     {
-      "name": "ScenePresentationSelectorTest",
-      "tests": 4,
+      "name": "Sat2Lod2ModalTransportTest",
+      "tests": 2,
       "testsuite": [
         {
-          "name": "DistributedUrbanBuildingsSelectFlatAutomatically",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/ScenePresentationSelector_test.cc",
-          "line": 24
+          "name": "SendsOneMultipartContentTypeWithThreeNamedFiles",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/Sat2Lod2ModalTransport_test.cc",
+          "line": 79
         },
         {
-          "name": "CityReferenceContaminationDoesNotForcePedestal",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/ScenePresentationSelector_test.cc",
-          "line": 33
-        },
-        {
-          "name": "ForestAndMajorReliefRetainTerrain",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/ScenePresentationSelector_test.cc",
-          "line": 43
-        },
-        {
-          "name": "LocalizedBuildingsAndNoDataCannotFlattenScene",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/ScenePresentationSelector_test.cc",
-          "line": 55
+          "name": "ReadsInlineBuildingDocument",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/Sat2Lod2ModalTransport_test.cc",
+          "line": 142
         }
       ]
     }

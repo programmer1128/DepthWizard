@@ -97,7 +97,11 @@ Metric exports are unchanged, not independently verified ground truth.
 
 ## SAT2LoD2 footprints (optional microservice)
 
-When the SAT2LoD2 service is running, it replaces the native footprints:
+The backend defaults to the deployed Modal SAT2LoD2 service. It uploads the
+corrected nDSM, an optical TIFF, and the semantic building mask as multipart
+fields `dsm`, `ortho`, and `label` to `/api/v1/reconstruct`. Modal returns the
+parametric `buildings` document inline; its container filesystem paths are
+never used by the backend. The local uvicorn server remains available with:
 
 ```sh
 cd ~/LOD2BuildingModel
@@ -143,8 +147,12 @@ refinement is disabled (`osm_name='none'`): only image and model evidence is use
 
 If the service is down, fails or exceeds `DEPTHWIZARD_SAT2LOD2_TIMEOUT_S`
 (default 900 s), native reconstruction is used. `DEPTHWIZARD_SAT2LOD2=0`
-disables the call and `DEPTHWIZARD_SAT2LOD2_URL` changes its address. The
-backend log reports `building_source=sat2lod2|native`.
+disables the call and `DEPTHWIZARD_SAT2LOD2_URL` changes its address. Set
+`DEPTHWIZARD_SAT2LOD2_URL=http://127.0.0.1:8000` for the local server; this
+automatically selects its JSON path protocol. Set
+`DEPTHWIZARD_SAT2LOD2_TRANSPORT=local` or `modal` to select the protocol
+explicitly for other hosts. The backend log reports
+`building_source=sat2lod2|native`.
 
 `server.py` runs every job as a fresh `sat2lod2_worker.py` process in its own
 session, one job at a time. `SAT2LOD2_JOB_TIMEOUT_S` (default 600 s, below the

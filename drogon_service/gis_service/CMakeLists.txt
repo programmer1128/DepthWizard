@@ -16,6 +16,9 @@ find_package(ZLIB REQUIRED)
 # Crucial for Geospatial Matrix warping and AWS Tile streaming
 find_package(GDAL REQUIRED) 
 
+find_package(CURL REQUIRED)
+
+
 #draco compression library for compressing .glb file
 find_package(draco CONFIG REQUIRED)
 
@@ -143,6 +146,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Eigen3::Eigen
     ${OpenCV_LIBS}
     CGAL::CGAL
+    CURL::libcurl
 )
 
 if (CMAKE_CXX_STANDARD LESS 20)

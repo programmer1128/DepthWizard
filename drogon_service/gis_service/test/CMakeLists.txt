@@ -273,6 +273,19 @@ function(add_building_reconstruction_test target_name test_source)
     )
 endfunction()
 
+add_executable(
+    sat2lod2_modal_transport_test
+    Sat2Lod2ModalTransport_test.cc
+    ../CalibrationController/Sat2Lod2ModalTransport.cc
+)
+configure_depthwizard_test(sat2lod2_modal_transport_test)
+target_link_libraries(sat2lod2_modal_transport_test PRIVATE GTest::gtest_main Drogon::Drogon)
+gtest_discover_tests(
+    sat2lod2_modal_transport_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    DISCOVERY_MODE PRE_TEST
+)
+
 add_building_reconstruction_test(
     building_mask_processor_test
     BuildingMaskProcessor_test.cc
