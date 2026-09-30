@@ -56,7 +56,7 @@ function createHeightCard() {
 
     heightCard.innerHTML = `
         <div class="height-card-header">
-            <span>Terrain Height</span>
+            <span id="height-card-title">Terrain Height</span>
             <button
                 id="height-card-close"
                 type="button"
@@ -68,7 +68,7 @@ function createHeightCard() {
 
         <div class="height-card-body">
 
-            <div class="height-card-label">
+            <div id="height-card-label" class="height-card-label">
                 ESTIMATED HEIGHT
             </div>
 
@@ -80,11 +80,21 @@ function createHeightCard() {
             </div>
 
             <div
+                id="terrain-height-details"
+                class="height-card-details"
+            ></div>
+
+            <div
                 id="terrain-height-position"
                 class="height-card-position"
             >
                 --
             </div>
+
+            <div
+                id="terrain-height-note"
+                class="height-card-note"
+            ></div>
 
             <div class="height-card-actions">
                 <button
@@ -101,64 +111,51 @@ function createHeightCard() {
 
     document.body.appendChild(heightCard);
 
-    const closeButton =
-        document.getElementById('height-card-close');
+    document.getElementById('height-card-close')
+        ?.addEventListener('click', hideHeightCard);
 
-    closeButton?.addEventListener(
-        'click',
-        hideHeightCard
-    );
-
-    const compareButton =
-        document.getElementById('height-card-compare-btn');
-
-    compareButton?.addEventListener('click', () => {
-        hideHeightCard();
-        if (currentInspectedPoint) {
-            openCompareModal({
-                x: currentInspectedPoint.x,
-                y: currentInspectedPoint.y
-            });
-        } else {
-            openCompareModal();
-        }
-    });
+    document.getElementById('height-card-compare-btn')
+        ?.addEventListener('click', () => {
+            hideHeightCard();
+            if (currentInspectedPoint) {
+                openCompareModal({
+                    x: currentInspectedPoint.x,
+                    y: currentInspectedPoint.y
+                });
+            } else {
+                openCompareModal();
+            }
+        });
 
     return heightCard;
 }
 
-function showHeightCard(
-    height,
-    x,
-    y,
-    screenX,
-    screenY,
-    statusText = null
-) {
+/**
+ * view: { title, label, value, details, note }
+ * value may be a number (metres) or text.
+ */
+function showHeightCard(view, x, y, screenX, screenY) {
 
-    const card =
-        createHeightCard();
+    const card = createHeightCard();
 
     currentInspectedPoint = { x, y };
 
-    const value =
-        document.getElementById('terrain-height-value');
+    const setText = (id, text) => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.textContent = text ?? '';
+            element.style.display = text ? '' : 'none';
+        }
+    };
 
-    const position =
-        document.getElementById('terrain-height-position');
+    setText('height-card-title', view.title || 'Terrain Height');
+    setText('height-card-label', view.label || 'ESTIMATED HEIGHT');
+    setText('terrain-height-value', formatHeight(view.value));
+    setText('terrain-height-details', view.details || '');
+    setText('terrain-height-position', `X: ${Number(x).toFixed(2)} m   Y: ${Number(y).toFixed(2)} m`);
+    setText('terrain-height-note', view.note || '');
 
-    const compareBtn =
-        document.getElementById('height-card-compare-btn');
-
-    if (value) {
-        value.textContent = formatHeight(height);
-    }
-
-    if (position) {
-        position.textContent =
-            `X: ${Number(x).toFixed(2)}   Y: ${Number(y).toFixed(2)}`;
-    }
-
+    const compareBtn = document.getElementById('height-card-compare-btn');
     if (compareBtn) {
         const metricAvailable = state.metricMode === 'metric';
         compareBtn.textContent = metricAvailable ? 'Compare Elevation' : 'Metric Compare Locked';
@@ -166,8 +163,8 @@ function showHeightCard(
     }
 
     // Keep card on screen bounds
-    const safeLeft = Math.min(screenX + 16, window.innerWidth - 240);
-    const safeTop = Math.min(screenY + 16, window.innerHeight - 200);
+    const safeLeft = Math.min(screenX + 16, window.innerWidth - 260);
+    const safeTop = Math.min(screenY + 16, window.innerHeight - 240);
 
     card.style.left = `${Math.max(10, safeLeft)}px`;
     card.style.top = `${Math.max(10, safeTop)}px`;
@@ -177,16 +174,11 @@ function showHeightCard(
 
 function formatHeight(height) {
 
-    if (
-        height === null ||
-        height === undefined ||
-        height === ''
-    ) {
+    if (height === null || height === undefined || height === '') {
         return '--';
     }
 
-    const numeric =
-        Number(height);
+    const numeric = Number(height);
 
     if (!Number.isFinite(numeric)) {
         return String(height);
@@ -204,44 +196,60 @@ export function hideHeightCard() {
     heightCard.classList.remove('visible');
 }
 
-function getHeightFromResponse(result) {
-    if (!result || typeof result !== 'object') {
-        return result;
+function finite(value) {
+    return value !== null && value !== undefined && Number.isFinite(Number(value));
+}
+
+// Building roofs and walls carry the backend building ID per vertex in the
+// GLB's _FEATURE_ID_0 attribute (Three.js lower-cases custom names).
+function featureIdAt(hit) {
+    const attributes = hit.object?.geometry?.attributes;
+    const ids = attributes?._feature_id_0 || attributes?._FEATURE_ID_0;
+    if (!ids || !hit.face) {
+        return null;
     }
+    const id = Math.round(ids.getX(hit.face.a));
+    return id >= 1 ? id : null;
+}
 
-    const candidates = [
-        result.elevation_meters,
-        result.original_height_meters,
-        result.height,
-        result.actual_height,
-        result.elevation,
-        result.data?.elevation_meters,
-        result.data?.original_height_meters,
-        result.data?.height,
-        result.data?.actual_height,
-        result.data?.elevation,
-        result.result?.elevation_meters,
-        result.result?.original_height_meters,
-        result.result?.height,
-        result.result?.actual_height,
-        result.value
-    ];
+// Turn the backend answer into what the card shows: a building shows only
+// that building's height; terrain shows the absolute elevation there.
+function viewFromResponse(result) {
 
-    // Check for positive non-zero value first
-    for (const val of candidates) {
-        if (val !== null && val !== undefined && Number.isFinite(Number(val)) && Number(val) > 0) {
-            return Number(val);
+    if (result?.kind === 'building' && finite(result.building_height_meters)) {
+        const details = [];
+        if (finite(result.roof_elevation_meters)) {
+            details.push(`Roof ${Number(result.roof_elevation_meters).toFixed(2)} m`);
         }
-    }
-
-    // Fall back to any finite number (e.g. 0)
-    for (const val of candidates) {
-        if (val !== null && val !== undefined && Number.isFinite(Number(val))) {
-            return Number(val);
+        if (finite(result.base_elevation_meters)) {
+            details.push(`Ground ${Number(result.base_elevation_meters).toFixed(2)} m (absolute)`);
         }
+        const scale = Number(result.render_height_scale);
+        return {
+            title: `Building #${result.building_id}`,
+            label: 'BUILDING HEIGHT ABOVE GROUND',
+            value: Number(result.building_height_meters),
+            details: details.join(' · '),
+            note: Number.isFinite(scale) && scale !== 1
+                ? `Drawn ×${scale.toFixed(2)} taller in 3D for visibility`
+                : ''
+        };
     }
 
-    return null;
+    const elevation = finite(result?.elevation_meters)
+        ? Number(result.elevation_meters)
+        : null;
+    const details = finite(result?.height_above_ground_meters) &&
+        Math.abs(Number(result.height_above_ground_meters)) >= 0.05
+        ? `${Number(result.height_above_ground_meters).toFixed(2)} m above bare ground`
+        : '';
+    return {
+        title: 'Terrain',
+        label: 'TERRAIN ELEVATION (ABSOLUTE)',
+        value: elevation,
+        details,
+        note: ''
+    };
 }
 
 
@@ -258,58 +266,42 @@ async function handleTerrainClick(event) {
 
     // Absolute metric probing is intentionally locked for dimensionless input.
     if (state.metricMode !== 'metric') {
-        const rect = renderer.domElement.getBoundingClientRect();
         const messageX = Math.min(event.clientX + 14, window.innerWidth - 300);
         const messageY = Math.min(event.clientY + 14, window.innerHeight - 150);
 
-        showHeightCard(
-            'Relative only',
-            0,
-            0,
-            messageX,
-            messageY,
-            'Upload a metric GeoTIFF to enable absolute height probing.'
-        );
+        showHeightCard({
+            title: 'Terrain Height',
+            value: 'Relative only',
+            note: 'Upload a metric GeoTIFF to enable absolute height probing.'
+        }, 0, 0, messageX, messageY);
         return;
     }
 
-    const rect =
-        renderer.domElement.getBoundingClientRect();
+    const rect = renderer.domElement.getBoundingClientRect();
 
-    mouse.x =
-        ((event.clientX - rect.left) /
-            rect.width) * 2 - 1;
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-    mouse.y =
-        -((event.clientY - rect.top) /
-            rect.height) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
 
-    raycaster.setFromCamera(
-        mouse,
-        camera
-    );
+    // Only solid surfaces: the white building outlines are line primitives
+    // and would otherwise intercept clicks near every edge.
+    const hit = raycaster
+        .intersectObject(state.terrainModel, true)
+        .find((intersection) => intersection.object?.isMesh);
 
-    const intersections =
-        raycaster.intersectObject(
-            state.terrainModel,
-            true
-        );
-
-    if (!intersections.length) {
+    if (!hit) {
         return;
     }
-
-    const point =
-        intersections[0].point;
 
     /*
      * Terrain coordinates:
      * Convert Three.js 3D world space (where terrain is centered at origin)
-     * into uncentered positive raster coordinates [0, width] and [0, depth]
-     * expected by backend height and compare APIs.
+     * into metres east/south of the terrain's north-west corner, which the
+     * backend height and compare APIs expect.
      */
-    const { x: apiX, y: apiY, meshHeight } =
-        worldToRasterCoordinates(point);
+    const { x: apiX, y: apiY, meshHeight } = worldToRasterCoordinates(hit.point);
+    const featureId = featureIdAt(hit);
 
     const correctedMeshHeight =
         Number(meshHeight) / Math.max(state.verticalExaggeration || 1, 0.0001);
@@ -317,88 +309,52 @@ async function handleTerrainClick(event) {
     state.lastClickedPoint = {
         x: apiX,
         y: apiY,
+        featureId,
         meshElevation: correctedMeshHeight
     };
 
-    // If no active UUID is set yet, show prompt on card
     if (!state.currentUuid) {
-        showHeightCard(
-            correctedMeshHeight, // Mesh surface height as fallback
-            apiX,
-            apiY,
-            event.clientX,
-            event.clientY,
-            'Upload image to query backend height'
-        );
+        showHeightCard({
+            title: featureId ? 'Building' : 'Terrain',
+            value: '--',
+            note: 'Upload an image to query heights from the backend.'
+        }, apiX, apiY, event.clientX, event.clientY);
         return;
     }
 
-    showHeightCard(
-        'Loading...',
-        apiX,
-        apiY,
-        event.clientX,
-        event.clientY
-    );
+    showHeightCard({
+        title: featureId ? 'Building' : 'Terrain',
+        value: 'Loading...'
+    }, apiX, apiY, event.clientX, event.clientY);
 
     try {
 
-        setViewerStatus(
-            'FETCHING ACTUAL HEIGHT',
-            'loading'
-        );
+        setViewerStatus('FETCHING ACTUAL HEIGHT', 'loading');
 
-        const result =
-            await fetchSingleHeight({
-                uuid: state.currentUuid,
-                x: apiX,
-                y: apiY
-            });
+        const result = await fetchSingleHeight({
+            uuid: state.currentUuid,
+            x: apiX,
+            y: apiY,
+            featureId
+        });
 
-        let height =
-            getHeightFromResponse(result);
+        showHeightCard(viewFromResponse(result), apiX, apiY, event.clientX, event.clientY);
 
-        // Fallback to mesh surface height if backend returned 0 or null
-        if ((height === null || height === 0) && Number.isFinite(correctedMeshHeight) && correctedMeshHeight !== 0) {
-            height = correctedMeshHeight;
-        }
-
-        showHeightCard(
-            height,
-            apiX,
-            apiY,
-            event.clientX,
-            event.clientY
-        );
-
-        setViewerStatus(
-            '3D VIEWER READY',
-            'ready'
-        );
+        setViewerStatus('3D VIEWER READY', 'ready');
 
     } catch (error) {
 
-        console.error(
-            'Actual height request failed:',
-            error
-        );
+        console.error('Actual height request failed:', error);
 
-        // Fallback to mesh surface height if available
-        const fallbackHeight = (Number.isFinite(correctedMeshHeight) && correctedMeshHeight !== 0) ? correctedMeshHeight : 'Unavailable';
+        // No mesh-height fallback: in the flat urban view the mesh Y is not
+        // an elevation, so a guessed number would be wrong.
+        showHeightCard({
+            title: featureId ? 'Building' : 'Terrain',
+            value: 'Unavailable',
+            note: error.message || 'Height request failed.'
+        }, apiX, apiY, event.clientX, event.clientY);
 
-        showHeightCard(
-            fallbackHeight,
-            apiX,
-            apiY,
-            event.clientX,
-            event.clientY,
-            error.message || 'Fetch failed'
-        );
-
-        setViewerStatus(
-            'HEIGHT FETCH FAILED',
-            'error'
-        );
+        setViewerStatus('HEIGHT FETCH FAILED', 'error');
     }
 }
 

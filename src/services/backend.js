@@ -4,16 +4,22 @@
 // ============================================================
 
 // IMPORTANT:
-// Do not change this endpoint unless the backend team
-// changes the API contract.
+// Must match the drogon listener (main.cc: 0.0.0.0:8081). Override per
+// deployment with VITE_API_BASE, e.g. VITE_API_BASE=http://host:8081 npm run dev
 
-export const API_BASE = 'http://localhost:8080';
+export const API_BASE =
+    (import.meta.env?.VITE_API_BASE || 'http://localhost:8081').replace(/\/+$/, '');
 
 export const GEOTIFF_PROCESSOR_ENDPOINT = `${API_BASE}/api/v1/processor`;
 export const NORMAL_IMAGE_PROCESSOR_ENDPOINT = `${API_BASE}/api/v1/processor/normal-image`;
 
 // Default backward-compatible alias
 export const PROCESSOR_ENDPOINT = GEOTIFF_PROCESSOR_ENDPOINT;
+
+// A full reconstruction can take several minutes: model inference, then
+// SAT2LoD2 on Modal, whose container may first have to start (cold start).
+// Kept above the backend's worst case (idle_connection_timeout: 1200 s).
+export const PROCESSOR_TIMEOUT_MS = 20 * 60 * 1000;
 
 export function isTiffFile(file) {
     if (!file) return false;
@@ -61,18 +67,35 @@ export async function processImage(file, imageType = 'auto') {
     // --------------------------------------------------------
 
     let response;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PROCESSOR_TIMEOUT_MS);
+    const started = Date.now();
     try {
         response = await fetch(
             endpoint,
             {
                 method: 'POST',
-                body: formData
+                body: formData,
+                signal: controller.signal
             }
         );
     } catch (networkError) {
+        if (networkError?.name === 'AbortError') {
+            throw new Error(
+                `The backend did not finish within ${PROCESSOR_TIMEOUT_MS / 60000} minutes.`
+            );
+        }
+        // Failing within seconds means no server; later means the connection
+        // was dropped while the backend was still working.
+        const seconds = Math.round((Date.now() - started) / 1000);
         throw new Error(
-            `Unable to connect to backend at ${API_BASE}. Please ensure the server is running.`
+            seconds < 5
+                ? `Unable to connect to backend at ${API_BASE}. Please ensure the server is running.`
+                : `The connection to the backend was lost after ${seconds} s of processing. ` +
+                  'Check the backend log; its idle_connection_timeout must exceed the processing time.'
         );
+    } finally {
+        clearTimeout(timer);
     }
 
     // --------------------------------------------------------

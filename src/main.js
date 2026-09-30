@@ -470,8 +470,28 @@ async function handleUpload() {
         // Send image to backend (GeoTIFF vs Normal Image)
         // ----------------------------------------------------
 
-        const result =
-            await processImage(file, state.imageUploadType || 'auto');
+        // Show how long the backend has been working: a cold reconstruction
+        // service can add a few minutes, which should not look like a hang.
+        const processingStarted = Date.now();
+        const elapsedTicker = setInterval(() => {
+            const seconds = Math.round((Date.now() - processingStarted) / 1000);
+            const clock = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+            if (dom.processingPercent) {
+                dom.processingPercent.textContent = clock;
+            }
+            if (dom.processingMessage && seconds >= 60) {
+                dom.processingMessage.textContent =
+                    `Reconstructing buildings for ${file.name}... ` +
+                    'The first run after a pause can take a few minutes while the reconstruction service starts.';
+            }
+        }, 1000);
+
+        let result;
+        try {
+            result = await processImage(file, state.imageUploadType || 'auto');
+        } finally {
+            clearInterval(elapsedTicker);
+        }
 
 
         const normalized =

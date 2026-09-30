@@ -557,15 +557,6 @@ export function showInspectionCard(result, datasetTag = 'opentopography', queryP
             }
         }
     }
-    // Fallback to mesh surface elevation if backend returned 0 or null
-    if (
-        (modelHeight === null || modelHeight === 0) &&
-        queryParams.meshElevation &&
-        Number.isFinite(Number(queryParams.meshElevation)) &&
-        Number(queryParams.meshElevation) !== 0
-    ) {
-        modelHeight = Number(queryParams.meshElevation);
-    }
 
     const referenceHeight =
         result.reference_height_meters ??
@@ -603,6 +594,14 @@ export function showInspectionCard(result, datasetTag = 'opentopography', queryP
         result.valid_pixels_count ??
         getValue(result, 'valid_pixels_count', 'data.valid_pixels_count');
 
+    const toleranceMeters = Number.isFinite(Number(result.tolerance_meters))
+        ? Number(result.tolerance_meters)
+        : null;
+    const medianError = result.median_absolute_error ?? null;
+    const anomalyCount = result.anomaly_pixels_count ?? null;
+    const anomalyThreshold = result.anomaly_threshold_meters ?? null;
+    const diffRange = result.diff_map_range_meters ?? null;
+
     // Difference map base64 image
     const rawDiffMap =
         result.diff_map_base64 ||
@@ -620,12 +619,15 @@ export function showInspectionCard(result, datasetTag = 'opentopography', queryP
     const conformalAssessment =
         getConformalAssessment(result, metrics);
 
-    const formattedDatasetName =
+    const providerName =
         datasetTag === 'bhuvan'
             ? 'ISRO Bhuvan'
             : datasetTag === 'opentopography'
                 ? 'OpenTopography'
                 : datasetTag;
+    const formattedDatasetName = result.reference_dataset
+        ? `${providerName} (${result.reference_dataset})`
+        : providerName;
 
     const coordStr = (queryParams.x !== undefined && queryParams.y !== undefined)
         ? `X: ${Number(queryParams.x).toFixed(2)}, Y: ${Number(queryParams.y).toFixed(2)}`
@@ -683,11 +685,16 @@ export function showInspectionCard(result, datasetTag = 'opentopography', queryP
         ` : ''}
 
         <div class="inspection-metrics">
-            ${metricBox('Accuracy', accuracy !== null ? `${formatMetric(accuracy)}%` : '--', true)}
+            ${metricBox(toleranceMeters !== null ? `Within ±${formatMetric(toleranceMeters)} m` : 'Accuracy',
+                accuracy !== null ? `${formatMetric(accuracy)}%` : '--', true)}
             ${metricBox('RMSE', rmse !== null ? `${formatMetric(rmse)} m` : '--', true)}
             ${metricBox('MAE', mae !== null ? `${formatMetric(mae)} m` : '--', true)}
             ${metricBox('Pearson Correlation', pearson !== null ? Number(pearson).toFixed(4) : '--', true)}
+            ${medianError !== null ? metricBox('Median |Δ|', `${formatMetric(medianError)} m`, true) : ''}
             ${validPixels !== null ? metricBox('Valid Pixels', Number(validPixels).toLocaleString(), true) : ''}
+            ${anomalyCount !== null ? metricBox(
+                `Excluded >${formatMetric(anomalyThreshold ?? 50)} m`,
+                Number(anomalyCount).toLocaleString(), true) : ''}
         </div>
 
         ${conformalAssessment ? `
@@ -731,6 +738,11 @@ export function showInspectionCard(result, datasetTag = 'opentopography', queryP
                     alt="Elevation Difference Map"
                     class="diff-map-image"
                 />
+            </div>
+            <div class="diff-map-legend">
+                Model − reference: <span style="color:#6f9bff">blue = lower</span>,
+                white = agree, <span style="color:#ff6f6f">red = higher</span>${
+                    diffRange !== null ? ` (saturates at ±${formatMetric(diffRange)} m)` : ''}
             </div>
         </div>
         ` : ''}

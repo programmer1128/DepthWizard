@@ -16,7 +16,7 @@ export const SUPPORTED_DATASET_TAGS = [
  * Compare elevation data against a reference dataset at (x, y) coordinates.
  *
  * Backend contract:
- * POST http://localhost:8080/api/height/compare
+ * POST <API_BASE>/api/height/compare
  * Content-Type: application/json
  * Body: {"uuid": "<YOUR_UUID>", "tag": "opentopography", "x": 12.34, "y": 56.78}
  *
