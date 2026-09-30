@@ -64,6 +64,7 @@ file(GLOB REFERENCE_TERRAIN_SRC CONFIGURE_DEPENDS "ReferenceTerrainService/*.cc"
 file(GLOB SEMANTIC_CONTEXT_SRC CONFIGURE_DEPENDS "SemanticContext/*.cc" "SemanticContext/*.cpp")
 file(GLOB SURFACE_FUSION_SRC CONFIGURE_DEPENDS "SurfaceFusion/*.cc" "SurfaceFusion/*.cpp")
 file(GLOB BUILDING_RECONSTRUCTION_SRC CONFIGURE_DEPENDS "BuildingReconstruction/*.cc" "BuildingReconstruction/*.cpp")
+file(GLOB DOWNLOAD_SERVICE_SRC CONFIGURE_DEPENDS "DownloadService/*.cc" "DownloadService/*.cpp")
 
 # The old mesher depends on the removed pre-modular Draco/glTF API.
 list(FILTER MESH_SRC EXCLUDE REGEX "/MeshService\\.cc$")
@@ -106,7 +107,8 @@ target_sources(${PROJECT_NAME}
                ${REFERENCE_TERRAIN_SRC}
                ${SEMANTIC_CONTEXT_SRC}
                ${SURFACE_FUSION_SRC}
-               ${BUILDING_RECONSTRUCTION_SRC})
+               ${BUILDING_RECONSTRUCTION_SRC}
+               ${DOWNLOAD_SERVICE_SRC})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally
@@ -130,6 +132,7 @@ target_include_directories(${PROJECT_NAME}
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/HannAssembler
                            ${CMAKE_CURRENT_SOURCE_DIR}/ImageTilingService/TilingOLS
                            ${CMAKE_CURRENT_SOURCE_DIR}/HeightService
+                           ${CMAKE_CURRENT_SOURCE_DIR}/DownloadService
                            ${OpenCV_INCLUDE_DIRS}
                            ${GDAL_INCLUDE_DIRS}) # Bind GDAL headers
 
@@ -142,7 +145,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     draco
     ${AWSSDK_LINK_LIBRARIES} #AWS sdk C++ lib for MiniIO client
     OpenMP::OpenMP_CXX #OpenMp Multi threading 
-    Halide
+    Halide::Halide
     Eigen3::Eigen
     ${OpenCV_LIBS}
     CGAL::CGAL

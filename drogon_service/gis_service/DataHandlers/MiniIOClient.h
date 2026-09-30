@@ -17,6 +17,12 @@ public:
         const std::string& contentType
     );
 
+    static bool downloadBuffer(
+        const std::string& bucketName,
+        const std::string& objectKey,
+        std::vector<uint8_t>& buffer
+    );
+
     // Generates a Pre-Signed URL for Unity to download the file directly
     static std::string generatePresignedUrl(
         const std::string& bucketName, 

@@ -1,9 +1,11 @@
 #include "MiniIOClient.h"
 #include <aws/core/Aws.h>
 #include <aws/s3/S3Client.h>
+#include <aws/s3/model/GetObjectRequest.h>
 #include <aws/s3/model/PutObjectRequest.h>
 #include <aws/core/auth/AWSCredentialsProvider.h>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <stdlib.h> // Required for setenv
 
@@ -80,6 +82,35 @@ bool MinioClient::uploadBuffer(
         return false;
     }
 
+    return true;
+}
+
+bool MinioClient::downloadBuffer(
+    const std::string& bucketName,
+    const std::string& objectKey,
+    std::vector<uint8_t>& buffer)
+{
+    buffer.clear();
+    if (!s_s3Client) return false;
+
+    Aws::S3::Model::GetObjectRequest request;
+    request.SetBucket(bucketName);
+    request.SetKey(objectKey);
+
+    auto outcome = s_s3Client->GetObject(request);
+    if (!outcome.IsSuccess())
+    {
+        std::cerr << "MinIO Download Error: "
+                  << outcome.GetError().GetExceptionName() << " - "
+                  << outcome.GetError().GetMessage() << std::endl;
+        return false;
+    }
+
+    auto& body = outcome.GetResult().GetBody();
+    const std::istreambuf_iterator<char> begin(body);
+    const std::istreambuf_iterator<char> end;
+    std::string contents(begin, end);
+    buffer.assign(contents.begin(), contents.end());
     return true;
 }
 
