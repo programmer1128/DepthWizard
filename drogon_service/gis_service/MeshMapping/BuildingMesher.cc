@@ -1,4 +1,5 @@
 #include "BuildingMesher.h"
+#include "FacadeAtlasGenerator.h"
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -300,9 +301,35 @@ BuildingMesher::TriangulationResult BuildingMesher::triangulate(
 BuildingMesh BuildingMesher::generate(
      const BuildingCollection& buildings,
      const LocalSceneFrame& frame,
-     const BuildingMeshConfig& config)
+     const BuildingMeshConfig& config,
+     const SpatialMetadata* metadata)
 {
      BuildingMesh result;
+
+     const auto computeRoofUV = [&](double localX, double localZ) -> std::pair<float, float>
+     {
+         if (metadata == nullptr || !config.generateRoofUVs)
+         {
+             return {0.5f, 0.5f};
+         }
+         const double easting = localX + frame.projectedOriginX;
+         const double northing = -localZ + frame.projectedOriginY;
+         const double* gt = metadata->geoTransform.data();
+         const double det = gt[1] * gt[5] - gt[2] * gt[4];
+         if (std::abs(det) <= 1e-12)
+         {
+             return {0.5f, 0.5f};
+         }
+         const double dx = easting - gt[0];
+         const double dy = northing - gt[3];
+         const double col = (dx * gt[5] - dy * gt[2]) / det;
+         const double row = (dy * gt[1] - dx * gt[4]) / det;
+         float u = static_cast<float>(col / metadata->width);
+         float v = static_cast<float>(row / metadata->height);
+         u = std::clamp(u, 0.0f, 1.0f);
+         v = std::clamp(v, 0.0f, 1.0f);
+         return {u, v};
+     };
 
      if (!config.validate())
      {
@@ -412,6 +439,20 @@ BuildingMesh BuildingMesher::generate(
 
          const auto selectHeightColors = [&](float h)
          {
+             if (config.presentationStyle == depthwizard::PresentationStyle::ORTHOPHOTO_REALISTIC)
+             {
+                 tierR = 1.0f; tierG = 1.0f; tierB = 1.0f; tierA = 1.0f;
+                 roofR = 1.0f; roofG = 1.0f; roofB = 1.0f; roofA = 1.0f;
+                 wallR = 1.0f; wallG = 1.0f; wallB = 1.0f; wallA = 1.0f;
+                 return;
+             }
+             if (config.presentationStyle == depthwizard::PresentationStyle::TERRA_MASSING)
+             {
+                 tierR = 0.95f; tierG = 0.94f; tierB = 0.90f; tierA = 1.0f;
+                 roofR = 0.95f; roofG = 0.94f; roofB = 0.90f; roofA = 1.0f;
+                 wallR = 0.70f; wallG = 0.69f; wallB = 0.67f; wallA = 1.0f;
+                 return;
+             }
              if (h > 45.0f)
              {
                  tierR = 1.0f; tierG = 0.15f; tierB = 0.30f;
@@ -472,7 +513,8 @@ BuildingMesh BuildingMesher::generate(
                                      Vertex3 a, Vertex3 b, Vertex3 c,
                                      float colorR, float colorG,
                                      float colorB, float colorA,
-                                     const std::array<double, 3>& preferred)
+                                     const std::array<double, 3>& preferred,
+                                     const std::array<std::pair<float, float>, 3>* customUVs = nullptr)
              {
                  const auto normal = [](const Vertex3& p0,
                                         const Vertex3& p1,
@@ -489,11 +531,19 @@ BuildingMesh BuildingMesher::generate(
                          abz * acx - abx * acz,
                          abx * acy - aby * acx};
                  };
+                 std::array<std::pair<float, float>, 3> localUVs;
+                 bool hasCustomUVs = false;
+                 if (customUVs != nullptr)
+                 {
+                     localUVs = *customUVs;
+                     hasCustomUVs = true;
+                 }
                  auto n = normal(a, b, c);
                  if (n[0] * preferred[0] + n[1] * preferred[1] +
                          n[2] * preferred[2] < 0.0)
                  {
                      std::swap(b, c);
+                     if (hasCustomUVs) std::swap(localUVs[1], localUVs[2]);
                      n = normal(a, b, c);
                  }
                  const double length = std::sqrt(
@@ -510,7 +560,8 @@ BuildingMesh BuildingMesher::generate(
                  float finalG = colorG;
                  float finalB = colorB;
                  // Contrast Shadowing: multiply chosen RGB tier by 0.65f if face normal is vertical (|Ny| < 0.5f)
-                 if (&primitive == &result.wallPrimitive && std::abs(unit[1]) < 0.5f)
+                 if (&primitive == &result.wallPrimitive && std::abs(unit[1]) < 0.5f &&
+                     config.presentationStyle == depthwizard::PresentationStyle::SCIENTIFIC)
                  {
                      finalR = tierR * 0.65f;
                      finalG = tierG * 0.65f;
@@ -531,6 +582,26 @@ BuildingMesh BuildingMesher::generate(
                      primitive.colors->insert(
                          primitive.colors->end(),
                          {finalR, finalG, finalB, colorA});
+                     if (primitive.uvs.has_value())
+                     {
+                         if (hasCustomUVs)
+                         {
+                             std::size_t vIdx = (&vertex == &a) ? 0 : ((&vertex == &b) ? 1 : 2);
+                             primitive.uvs->push_back(localUVs[vIdx].first);
+                             primitive.uvs->push_back(localUVs[vIdx].second);
+                         }
+                         else if (&primitive == &result.roofPrimitive)
+                         {
+                             auto [u, v] = computeRoofUV(vertex.x, vertex.z);
+                             primitive.uvs->push_back(u);
+                             primitive.uvs->push_back(v);
+                         }
+                         else
+                         {
+                             primitive.uvs->push_back(0.5f);
+                             primitive.uvs->push_back(0.5f);
+                         }
+                     }
                      expandBounds(bounds, vertex);
                  }
                  primitive.indices.insert(
@@ -539,6 +610,7 @@ BuildingMesh BuildingMesher::generate(
 
              auto pushEdge = [&](const Vertex3& a, const Vertex3& b)
              {
+                 if (config.presentationStyle != depthwizard::PresentationStyle::SCIENTIFIC) return;
                  const uint32_t base = static_cast<uint32_t>(
                      result.edgePrimitive.positions.size() / 3);
                  result.edgePrimitive.positions.insert(
@@ -765,15 +837,31 @@ BuildingMesh BuildingMesher::generate(
                              const std::array<double, 3> outward{
                                  endMid.x - centre.x, 0.0,
                                  endMid.z - centre.z};
-                             emitTriangle(result.wallPrimitive, wallBounds,
-                                 eaveVertex(end[0]), eaveVertex(end[1]), ridge,
-                                 wallR, wallG, wallB, wallA, outward);
-                         };
+                              const Vertex3 v0 = eaveVertex(end[0]);
+                              const Vertex3 v1 = eaveVertex(end[1]);
+                              const float gableSpan = static_cast<float>(
+                                  std::hypot(v1.x - v0.x, v1.z - v0.z));
+                              const float eaveH = block.eaveY - localBaseY;
+                              const float ridgeH = block.ridgeY - localBaseY;
+                              float u0 = 0.5f, v0_uv = 0.5f, u1 = 0.5f, v1_uv = 0.5f, uRidge = 0.5f, vRidge = 0.5f;
+                              depthwizard::FacadeAtlasGenerator::computeWallUV(
+                                  bldg.buildingId, 0.0f, eaveH, ridgeH, u0, v0_uv);
+                              depthwizard::FacadeAtlasGenerator::computeWallUV(
+                                  bldg.buildingId, gableSpan, eaveH, ridgeH, u1, v1_uv);
+                              depthwizard::FacadeAtlasGenerator::computeWallUV(
+                                  bldg.buildingId, 0.5f * gableSpan, ridgeH, ridgeH, uRidge, vRidge);
+                              std::array<std::pair<float, float>, 3> gableUVs{
+                                  {{u0, v0_uv}, {u1, v1_uv}, {uRidge, vRidge}}};
+                              emitTriangle(result.wallPrimitive, wallBounds,
+                                  v0, v1, ridge,
+                                  wallR, wallG, wallB, wallA, outward, &gableUVs);
+                          };
                          emitGableEnd(startEnd, ridgeA);
                          emitGableEnd(finishEnd, ridgeB);
                      }
                  }
 
+                 float cumulativeEdgeDist = 0.0f;
                  for (std::size_t edge = 0; edge < 4; ++edge)
                  {
                      const auto& a = block.corners[edge];
@@ -834,12 +922,31 @@ BuildingMesh BuildingMesher::generate(
                              const Vertex3 topA{start.x, block.eaveY, start.z};
                              const Vertex3 topB{finish.x, block.eaveY, finish.z};
                              const Vertex3 baseB{finish.x, wallBaseY, finish.z};
+                             const float segLen = static_cast<float>(
+                                 std::hypot(finish.x - start.x, finish.z - start.z));
+                             const float hA = block.eaveY - wallBaseY;
+                             const float hB = block.eaveY - wallBaseY;
+                             float uBaseA = 0.5f, vBaseA = 0.5f, uTopA = 0.5f, vTopA = 0.5f;
+                             float uTopB = 0.5f, vTopB = 0.5f, uBaseB = 0.5f, vBaseB = 0.5f;
+                             depthwizard::FacadeAtlasGenerator::computeWallUV(
+                                 bldg.buildingId, cumulativeEdgeDist, 0.0f, hA, uBaseA, vBaseA);
+                             depthwizard::FacadeAtlasGenerator::computeWallUV(
+                                 bldg.buildingId, cumulativeEdgeDist, hA, hA, uTopA, vTopA);
+                             depthwizard::FacadeAtlasGenerator::computeWallUV(
+                                 bldg.buildingId, cumulativeEdgeDist + segLen, hB, hB, uTopB, vTopB);
+                             depthwizard::FacadeAtlasGenerator::computeWallUV(
+                                 bldg.buildingId, cumulativeEdgeDist + segLen, 0.0f, hB, uBaseB, vBaseB);
+                             std::array<std::pair<float, float>, 3> uvQuad1{
+                                 {{uBaseA, vBaseA}, {uTopA, vTopA}, {uTopB, vTopB}}};
+                             std::array<std::pair<float, float>, 3> uvQuad2{
+                                 {{uBaseA, vBaseA}, {uTopB, vTopB}, {uBaseB, vBaseB}}};
                              emitTriangle(result.wallPrimitive, wallBounds,
                                  baseA, topA, topB,
-                                 wallR, wallG, wallB, wallA, outward);
+                                 wallR, wallG, wallB, wallA, outward, &uvQuad1);
                              emitTriangle(result.wallPrimitive, wallBounds,
                                  baseA, topB, baseB,
-                                 wallR, wallG, wallB, wallA, outward);
+                                 wallR, wallG, wallB, wallA, outward, &uvQuad2);
+                             cumulativeEdgeDist += segLen;
                              pushEdge(baseA, topA);
                          }
                          if (!std::isfinite(neighbourY) ||
@@ -903,6 +1010,12 @@ BuildingMesh BuildingMesher::generate(
                  result.roofPrimitive.colors->push_back(roofB);
                  result.roofPrimitive.colors->push_back(roofA);
              }
+             if (result.roofPrimitive.uvs.has_value())
+             {
+                 auto [u, v] = computeRoofUV(pt.x, pt.z);
+                 result.roofPrimitive.uvs->push_back(u);
+                 result.roofPrimitive.uvs->push_back(v);
+             }
 
              roofBounds.isInitialized = true;
 
@@ -923,6 +1036,7 @@ BuildingMesh BuildingMesher::generate(
          auto extrudeRing = [&](const std::vector<LocalPoint>& ring,
                                 const std::vector<float>* vertexBaseY)
          {
+             float ringDist = 0.0f;
              for (size_t i = 0; i < ring.size(); ++i) 
              {
                  size_t nextIdx = (i + 1) % ring.size();
@@ -949,7 +1063,22 @@ BuildingMesh BuildingMesher::generate(
                      : localBaseY;
 
                  // Push 4 independent vertices per wall quad to guarantee crisp corners
-                 auto pushWallVertex = [&](double vx, float vy, double vz) 
+                 const float wallHA = localRoofY - baseA;
+                 const float wallHB = localRoofY - baseB;
+                 float uBaseA = 0.5f, vBaseA = 0.5f, uRoofA = 0.5f, vRoofA = 0.5f;
+                 float uRoofB = 0.5f, vRoofB = 0.5f, uBaseB = 0.5f, vBaseB = 0.5f;
+                 if (result.wallPrimitive.uvs.has_value())
+                 {
+                     depthwizard::FacadeAtlasGenerator::computeWallUV(
+                         bldg.buildingId, ringDist, 0.0f, wallHA, uBaseA, vBaseA);
+                     depthwizard::FacadeAtlasGenerator::computeWallUV(
+                         bldg.buildingId, ringDist, wallHA, wallHA, uRoofA, vRoofA);
+                     depthwizard::FacadeAtlasGenerator::computeWallUV(
+                         bldg.buildingId, ringDist + len, wallHB, wallHB, uRoofB, vRoofB);
+                     depthwizard::FacadeAtlasGenerator::computeWallUV(
+                         bldg.buildingId, ringDist + len, 0.0f, wallHB, uBaseB, vBaseB);
+                 }
+                 auto pushWallVertex = [&](double vx, float vy, double vz, float u, float v)
                  {
                      result.wallPrimitive.positions.push_back(static_cast<float>(vx));
                      result.wallPrimitive.positions.push_back(vy);
@@ -969,6 +1098,11 @@ BuildingMesh BuildingMesher::generate(
                          result.wallPrimitive.colors->push_back(wallB);
                          result.wallPrimitive.colors->push_back(wallA);
                      }
+                     if (result.wallPrimitive.uvs.has_value())
+                     {
+                         result.wallPrimitive.uvs->push_back(u);
+                         result.wallPrimitive.uvs->push_back(v);
+                     }
 
                      wallBounds.isInitialized = true;
 
@@ -977,10 +1111,10 @@ BuildingMesh BuildingMesher::generate(
                      wallBounds.minZ = std::min(wallBounds.minZ, vz); wallBounds.maxZ = std::max(wallBounds.maxZ, vz);
                  };
 
-                 pushWallVertex(ptA.x, baseA, ptA.z); // Base A (Index 0)
-                 pushWallVertex(ptA.x, localRoofY, ptA.z); // Roof A (Index 1)
-                 pushWallVertex(ptB.x, localRoofY, ptB.z); // Roof B (Index 2)
-                 pushWallVertex(ptB.x, baseB, ptB.z); // Base B (Index 3)
+                 pushWallVertex(ptA.x, baseA, ptA.z, uBaseA, vBaseA); // Base A (Index 0)
+                 pushWallVertex(ptA.x, localRoofY, ptA.z, uRoofA, vRoofA); // Roof A (Index 1)
+                 pushWallVertex(ptB.x, localRoofY, ptB.z, uRoofB, vRoofB); // Roof B (Index 2)
+                 pushWallVertex(ptB.x, baseB, ptB.z, uBaseB, vBaseB); // Base B (Index 3)
 
                  // For the canonical CCW XZ outer ring, up x edge is
                  // (dz, 0, -dx): exactly the outward normal above. Reversing
@@ -993,6 +1127,7 @@ BuildingMesh BuildingMesher::generate(
                  result.wallPrimitive.indices.push_back(wallIdxBase + 0);
                  result.wallPrimitive.indices.push_back(wallIdxBase + 2);
                  result.wallPrimitive.indices.push_back(wallIdxBase + 3);
+                 ringDist += len;
              }
          };
 
@@ -1010,6 +1145,7 @@ BuildingMesh BuildingMesher::generate(
          auto pushEdgeSegment = [&](double x1, float y1, double z1,
                                     double x2, float y2, double z2)
          {
+             if (config.presentationStyle != depthwizard::PresentationStyle::SCIENTIFIC) return;
              uint32_t baseIdx = static_cast<uint32_t>(result.edgePrimitive.positions.size() / 3);
              result.edgePrimitive.positions.push_back(static_cast<float>(x1));
              result.edgePrimitive.positions.push_back(y1);

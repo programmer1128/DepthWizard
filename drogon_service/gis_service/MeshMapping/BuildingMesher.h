@@ -10,7 +10,8 @@ class BuildingMesher
      static BuildingMesh generate(
          const BuildingCollection& buildings,
          const LocalSceneFrame& frame,
-         const BuildingMeshConfig& config = BuildingMeshConfig());
+         const BuildingMeshConfig& config = BuildingMeshConfig(),
+         const SpatialMetadata* metadata = nullptr);
 
      private:
      struct TriangulationResult

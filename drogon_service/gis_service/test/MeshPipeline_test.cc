@@ -6,6 +6,7 @@
 #include "MeshMapping/TerrainMesher.h"
 #include "MeshMapping/TerrainSurfaceComposer.h"
 #include "MeshMapping/TerrainTextureComposer.h"
+#include "MeshMapping/FacadeAtlasGenerator.h"
 #include <opencv2/imgcodecs.hpp>
 #include "TestGridSupport.h"
 #include "BuildingReconstructionTestSupport.h"
@@ -1051,4 +1052,249 @@ TEST(MeshPipelineTest, CollinearVertexAlongStraightWallDoesNotEmitVerticalSeam)
     // Exactly 4 vertical seams for the 4 corners
     EXPECT_EQ(verticalSeams, 4);
 }
+
+TEST(MeshPipelineTest, ExactBuildingMaskConcealAcceptedRoofsPreservesSurroundingRoads)
+{
+    constexpr int n = 64;
+    auto metadata = makeProjectedMetadata(n, n, 1.0, -1.0);
+
+    // Create 64x64 optical image: grey road (120, 120, 120), red roof (10, 10, 200) inside [20, 40] x [20, 40]
+    cv::Mat optical(n, n, CV_8UC3, cv::Scalar(120, 120, 120));
+    optical(cv::Rect(20, 20, 20, 20)).setTo(cv::Scalar(10, 10, 200));
+
+    TextureAsset original;
+    original.mimeType = "image/png";
+    ASSERT_TRUE(cv::imencode(".png", optical, original.bytes));
+
+    // Construct BuildingInstance exactly matching the 20x20 pixel footprint
+    // In UTM: col 20 = easting 20.0, row 20 = northing -20.0
+    BuildingInstance bldg;
+    bldg.buildingId = 1;
+    bldg.heightAboveGround = 15.0F;
+    bldg.representativeBaseElevation = 100.0F;
+    bldg.roofElevation = 115.0F;
+    bldg.pixelFootprint.outerRing = {
+        {20.0, 20.0}, {40.0, 20.0}, {40.0, 40.0}, {20.0, 40.0}
+    };
+    bldg.projectedFootprint.outerRing = {
+        {20.0, -20.0}, {40.0, -20.0}, {40.0, -40.0}, {20.0, -40.0}
+    };
+    BuildingCollection buildings;
+    buildings.buildings.push_back(bldg);
+
+    // Build exact building mask (clearance = 0.0m)
+    const RasterGrid<uint8_t> exactMask =
+        TerrainSurfaceComposer::buildAcceptedBuildingMask(buildings, metadata, 0.0F);
+
+    // Conceal accepted roofs with 1.0m visual halo
+    TextureAsset repaired = TerrainTextureComposer::concealAcceptedRoofs(
+        original, exactMask, metadata, 1.0F);
+    ASSERT_FALSE(repaired.bytes.empty());
+
+    cv::Mat repairedMat = cv::imdecode(repaired.bytes, cv::IMREAD_COLOR);
+    ASSERT_EQ(repairedMat.cols, n);
+    ASSERT_EQ(repairedMat.rows, n);
+
+    // 1. Center of roof (30, 30) should be inpainted (no longer pure red 10, 10, 200)
+    const auto centerPixel = repairedMat.at<cv::Vec3b>(30, 30);
+    EXPECT_NE(centerPixel, cv::Vec3b(10, 10, 200));
+
+    // 2. Distant road pixel (5, 5) must be 100% untouched
+    const auto roadPixel = repairedMat.at<cv::Vec3b>(5, 5);
+    EXPECT_EQ(roadPixel, cv::Vec3b(120, 120, 120));
+
+    // 3. Another road pixel (55, 55) must be 100% untouched
+    const auto roadPixel2 = repairedMat.at<cv::Vec3b>(55, 55);
+    EXPECT_EQ(roadPixel2, cv::Vec3b(120, 120, 120));
+}
+
+TEST(MeshPipelineTest, FacadeAtlasDeterministicGenerationAndWallUvs)
+{
+    // 1. Deterministic generation: identical bytes on successive runs
+    TextureAsset atlas1 = depthwizard::FacadeAtlasGenerator::generateAtlasPng(false);
+    TextureAsset atlas2 = depthwizard::FacadeAtlasGenerator::generateAtlasPng(false);
+    EXPECT_EQ(atlas1.bytes, atlas2.bytes);
+    EXPECT_EQ(atlas1.semantic, TextureSemantic::FACADE_ATLAS);
+    EXPECT_EQ(atlas1.mimeType, "image/png");
+
+    cv::Mat mat = cv::imdecode(atlas1.bytes, cv::IMREAD_COLOR);
+    ASSERT_FALSE(mat.empty());
+    EXPECT_EQ(mat.cols, depthwizard::FacadeAtlasGenerator::kAtlasWidth);
+    EXPECT_EQ(mat.rows, depthwizard::FacadeAtlasGenerator::kAtlasHeight);
+
+    // 2. Wall UV computation tests
+    for (uint32_t bldgId = 0; bldgId < 4; ++bldgId)
+    {
+        float uBase, vBase, uTop, vTop;
+        depthwizard::FacadeAtlasGenerator::computeWallUV(bldgId, 0.0F, 0.0F, 15.0F, uBase, vBase);
+        depthwizard::FacadeAtlasGenerator::computeWallUV(bldgId, 0.0F, 15.0F, 15.0F, uTop, vTop);
+
+        EXPECT_GE(uBase, 0.0F); EXPECT_LE(uBase, 1.0F);
+        EXPECT_GE(vBase, 0.0F); EXPECT_LE(vBase, 1.0F);
+        EXPECT_GE(uTop, 0.0F); EXPECT_LE(uTop, 1.0F);
+        EXPECT_GE(vTop, 0.0F); EXPECT_LE(vTop, 1.0F);
+
+        // Ground is bottom of cell (higher V in glTF), top of wall is lower V
+        EXPECT_GT(vBase, vTop);
+    }
+
+    // 3. Neutral-only generation
+    TextureAsset neutralAtlas = depthwizard::FacadeAtlasGenerator::generateAtlasPng(true);
+    ASSERT_FALSE(neutralAtlas.bytes.empty());
+    float uNeut, vNeut;
+    depthwizard::FacadeAtlasGenerator::computeWallUV(0, 5.0F, 10.0F, 20.0F, uNeut, vNeut, true);
+    // Neutral variant is variant 3: cell row 1, col 1 -> u in [0.5, 1.0], v in [0.5, 1.0]
+    EXPECT_GE(uNeut, 0.5F); EXPECT_LE(uNeut, 1.0F);
+    EXPECT_GE(vNeut, 0.5F); EXPECT_LE(vNeut, 1.0F);
+}
+
+TEST(MeshPipelineTest, ParametricGableAndHipRidgesReceiveValidRoofUvs)
+{
+    constexpr int n = 64;
+    auto metadata = makeProjectedMetadata(n, n, 1.0, -1.0);
+
+    BuildingInstance gableBldg;
+    gableBldg.buildingId = 101;
+    gableBldg.heightAboveGround = 15.0F;
+    gableBldg.representativeBaseElevation = 100.0F;
+    gableBldg.roofElevation = 115.0F;
+    gableBldg.projectedFootprint.outerRing = {
+        {10.0, -10.0}, {30.0, -10.0}, {30.0, -30.0}, {10.0, -30.0}
+    };
+    DecomposedBuildingBlock gableBlock;
+    gableBlock.projectedCorners = {{{10.0, -10.0}, {30.0, -10.0}, {30.0, -30.0}, {10.0, -30.0}}};
+    gableBlock.roof.type = RoofType::GABLE;
+    gableBlock.roof.eaveHeightAboveGround = 10.0F;
+    gableBlock.roof.ridgeHeightAboveGround = 15.0F;
+    gableBlock.roof.ridgeStartProjected = {10.0, -20.0};
+    gableBlock.roof.ridgeEndProjected = {30.0, -20.0};
+    gableBldg.blocks.push_back(gableBlock);
+
+    BuildingInstance hipBldg;
+    hipBldg.buildingId = 102;
+    hipBldg.heightAboveGround = 20.0F;
+    hipBldg.representativeBaseElevation = 100.0F;
+    hipBldg.roofElevation = 120.0F;
+    hipBldg.projectedFootprint.outerRing = {
+        {35.0, -10.0}, {55.0, -10.0}, {55.0, -30.0}, {35.0, -30.0}
+    };
+    DecomposedBuildingBlock hipBlock;
+    hipBlock.projectedCorners = {{{35.0, -10.0}, {55.0, -10.0}, {55.0, -30.0}, {35.0, -30.0}}};
+    hipBlock.roof.type = RoofType::HIP;
+    hipBlock.roof.eaveHeightAboveGround = 12.0F;
+    hipBlock.roof.ridgeHeightAboveGround = 20.0F;
+    hipBlock.roof.ridgeStartProjected = {38.0, -20.0};
+    hipBlock.roof.ridgeEndProjected = {52.0, -20.0};
+    hipBldg.blocks.push_back(hipBlock);
+
+    BuildingCollection buildings;
+    buildings.buildings = {gableBldg, hipBldg};
+
+    LocalSceneFrame frame;
+    frame.projectedOriginX = 32.0;
+    frame.projectedOriginY = -32.0;
+    frame.elevationOrigin = 100.0;
+
+    BuildingMeshConfig config;
+    config.generateRoofUVs = true;
+    config.generateWallUVs = true;
+    config.presentationStyle = depthwizard::PresentationStyle::ORTHOPHOTO_REALISTIC;
+
+    const auto mesh = BuildingMesher::generate(buildings, frame, config, &metadata);
+
+    // 1. Verify UV existence and cardinality
+    ASSERT_TRUE(mesh.roofPrimitive.uvs.has_value());
+    ASSERT_TRUE(mesh.wallPrimitive.uvs.has_value());
+    EXPECT_EQ(mesh.roofPrimitive.uvs->size(), (mesh.roofPrimitive.positions.size() / 3) * 2);
+    EXPECT_EQ(mesh.wallPrimitive.uvs->size(), (mesh.wallPrimitive.positions.size() / 3) * 2);
+
+    // 2. Verify all roof UVs are valid in [0.0, 1.0] without NaN or Inf
+    for (std::size_t i = 0; i < mesh.roofPrimitive.uvs->size(); i += 2)
+    {
+        float u = (*mesh.roofPrimitive.uvs)[i];
+        float v = (*mesh.roofPrimitive.uvs)[i + 1];
+        EXPECT_TRUE(std::isfinite(u));
+        EXPECT_TRUE(std::isfinite(v));
+        EXPECT_GE(u, 0.0F); EXPECT_LE(u, 1.0F);
+        EXPECT_GE(v, 0.0F); EXPECT_LE(v, 1.0F);
+    }
+
+    // 3. Realistic presentation style emits 0 edge lines
+    EXPECT_TRUE(mesh.edgePrimitive.positions.empty());
+}
+
+TEST(MeshPipelineTest, GltfPackagerPacksMultiTextureDescriptorsAndClampedSamplers)
+{
+    SceneMesh scene;
+    scene.presentationStyle = "ORTHOPHOTO_REALISTIC";
+    scene.localFrame.horizontalCrs = "EPSG:32633";
+
+    // Dummy triangle primitive
+    MeshPrimitive prim;
+    prim.topology = PrimitiveTopology::TRIANGLES;
+    prim.positions = {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F};
+    prim.normals = std::vector<float>{0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F};
+    prim.uvs = std::vector<float>{0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F};
+    prim.indices = {0, 1, 2};
+    prim.materialRole = MaterialRole::TERRAIN_TEXTURE;
+
+    // Create 3 tiny 8x8 dummy textures
+    for (int t = 0; t < 3; ++t)
+    {
+        cv::Mat img(8, 8, CV_8UC3, cv::Scalar(50 * (t + 1), 60, 70));
+        TextureAsset asset;
+        asset.mimeType = "image/png";
+        ASSERT_TRUE(cv::imencode(".png", img, asset.bytes));
+        scene.textures.push_back(asset);
+    }
+
+    MaterialDescriptor mat0;
+    mat0.name = "Terrain_Repaired";
+    mat0.role = MaterialRole::TERRAIN_TEXTURE;
+    mat0.textureIndex = 0;
+    mat0.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
+
+    MaterialDescriptor mat1;
+    mat1.name = "Roof_Original";
+    mat1.role = MaterialRole::BUILDING_ROOF;
+    mat1.textureIndex = 1;
+    mat1.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
+
+    MaterialDescriptor mat2;
+    mat2.name = "Wall_Facade";
+    mat2.role = MaterialRole::BUILDING_WALL;
+    mat2.textureIndex = 2;
+    mat2.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
+
+    scene.materialDescriptors = {mat0, mat1, mat2};
+
+    DracoCompressionConfig dracoConfig;
+    CompressedPrimitive compPrim = DracoCompressor::compress(prim, dracoConfig);
+    ASSERT_TRUE(compPrim.success);
+
+    GlbBuildResult result = GltfPackager::buildSceneToMemory(scene, {compPrim}, 1);
+    ASSERT_FALSE(result.compressedGlbByteBuffer.empty());
+
+    tinygltf::TinyGLTF loader;
+    tinygltf::Model model;
+    std::string err, warn;
+    ASSERT_TRUE(loader.LoadBinaryFromMemory(&model, &err, &warn,
+        result.compressedGlbByteBuffer.data(), result.compressedGlbByteBuffer.size())) << err;
+
+    EXPECT_EQ(model.images.size(), 3U);
+    EXPECT_EQ(model.textures.size(), 3U);
+    EXPECT_EQ(model.samplers.size(), 3U);
+    EXPECT_EQ(model.materials.size(), 3U);
+
+    for (const auto& sampler : model.samplers)
+    {
+        EXPECT_EQ(sampler.wrapS, TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE);
+        EXPECT_EQ(sampler.wrapT, TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE);
+    }
+
+    EXPECT_EQ(model.materials[0].pbrMetallicRoughness.baseColorTexture.index, 0);
+    EXPECT_EQ(model.materials[1].pbrMetallicRoughness.baseColorTexture.index, 1);
+    EXPECT_EQ(model.materials[2].pbrMetallicRoughness.baseColorTexture.index, 2);
+}
+
 } // namespace

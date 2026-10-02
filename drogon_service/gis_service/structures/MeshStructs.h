@@ -20,10 +20,34 @@ enum class MaterialRole
      ANALYSIS_OVERLAY 
 };// Typed materials
 
+enum class TextureSemantic
+{
+    NONE,
+    OPTICAL_ORIGINAL,
+    OPTICAL_GROUND_REPAIRED,
+    FACADE_ATLAS,
+    AO_ATLAS
+};
+
+struct MaterialDescriptor
+{
+    std::string name;
+    MaterialRole role{MaterialRole::TERRAIN_TEXTURE};
+    TextureSemantic textureSemantic{TextureSemantic::NONE};
+    int textureIndex{-1}; // Index into scene.textures, -1 if untextured
+    std::vector<double> baseColorFactor{1.0, 1.0, 1.0, 1.0};
+    double metallicFactor{0.0};
+    double roughnessFactor{0.9};
+    bool doubleSided{false};
+    bool unlit{false};
+    std::string alphaMode{"OPAQUE"};
+};
+
 struct TextureAsset 
 {
     std::vector<uint8_t> bytes;
     std::string mimeType; // Preserves image/jpeg or image/png
+    TextureSemantic semantic{TextureSemantic::NONE};
 };
 
 struct MeshPrimitive 
@@ -99,6 +123,9 @@ struct SceneMesh
     MeshPrimitive edgePrimitive; // Wireframe edge lines (Mode: LINES)
     std::optional<MeshPrimitive> overlayPrimitive;
     std::vector<MaterialRole> materials;
-    std::optional<TextureAsset> texture; // Bound with MIME type
+    std::optional<TextureAsset> texture; // Bound with MIME type (legacy fallback)
+    std::vector<TextureAsset> textures;  // Multi-texture table
+    std::vector<MaterialDescriptor> materialDescriptors; // PBR material table
+    std::string presentationStyle{"SCIENTIFIC"}; // Presentation style extras
     AxisAlignedBounds sceneBounds;
 };

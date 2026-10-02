@@ -365,6 +365,7 @@ add_executable(
     ../CompressionLib/DracoCompressor.cc
     ../FileGenerators/GltfPackager.cc
     ../MeshMapping/BuildingMesher.cc
+    ../MeshMapping/FacadeAtlasGenerator.cc
     ../MeshMapping/LocalFrameTransformers.cc
     ../MeshMapping/TerrainMesher.cc
     ../MeshMapping/TerrainSurfaceComposer.cc
@@ -411,6 +412,7 @@ add_executable(urban_scene_integration_test
     ../MeshMapping/ScenePresentationSelector.cc
     ../MeshMapping/SceneAssembler.cc
     ../MeshMapping/BuildingMesher.cc
+    ../MeshMapping/FacadeAtlasGenerator.cc
     ../MeshMapping/LocalFrameTransformers.cc
     ../MeshMapping/TerrainMesher.cc
     ../MeshMapping/TerrainSurfaceComposer.cc
@@ -462,6 +464,7 @@ add_executable(generate_baseline_fixtures
     ../MeshMapping/ScenePresentationSelector.cc
     ../MeshMapping/SceneAssembler.cc
     ../MeshMapping/BuildingMesher.cc
+    ../MeshMapping/FacadeAtlasGenerator.cc
     ../MeshMapping/LocalFrameTransformers.cc
     ../MeshMapping/TerrainMesher.cc
     ../MeshMapping/TerrainSurfaceComposer.cc

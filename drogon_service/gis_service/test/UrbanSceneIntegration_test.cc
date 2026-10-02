@@ -175,3 +175,236 @@ TEST(UrbanSceneIntegrationTest, NarrowRoofReachesGlbAndRoadNoiseCannotEngulfIt)
         EXPECT_FLOAT_EQ(terrain.terrainPrimitive.positions[i * 3 + 1], 0.0F);
     EXPECT_FLOAT_EQ(surface.dsm.data[12 * size + 11], 112.0F);
 }
+
+
+
+TEST(UrbanSceneIntegrationTest, SceneMeshServiceEmitsOrthophotoRealisticMultiTexturePbrGlb)
+{
+    constexpr int n = 32;
+    auto metadata = makeProjectedMetadata(n, n, .5, -.5);
+    auto semantics = makeSemanticScene(n, n, SemanticClass::ROAD);
+    fillRectangle(semantics.finalClassMap, 4, 4, 28, 28, SemanticClass::BUILDING);
+    fillRectangle(semantics.buildingProbability, 4, 4, 28, 28, .95F);
+    auto surface = makeSurface(n, n, 100, 10);
+    surface.spatialMetadata = metadata;
+    fillRectangle(surface.ndsm, 16, 4, 28, 28, 25.0F);
+    for (int y = 0; y < n; ++y)
+        for (int x = 0; x < n; ++x) {
+            const int i = y * n + x;
+            surface.dtm.data[i] += x * .1F;
+            surface.dsm.data[i] = surface.dtm.data[i] + surface.ndsm.data[i];
+        }
+    const auto originalDtm = surface.dtm.data;
+    const auto originalDsm = surface.dsm.data;
+    const auto originalNdsm = surface.ndsm.data;
+
+    BuildingReconstructionDiagnostics stages;
+    BuildingReconstructionConfig bldgConfig;
+    const auto buildings = BuildingReconstructionService::reconstruct(
+        semantics, surface, metadata, bldgConfig, &stages);
+    ASSERT_EQ(buildings.buildings.size(), 2U);
+
+    SceneInput scene;
+    scene.width = scene.height = n;
+    scene.spatialMetadata = metadata;
+    scene.textureMimeType = "image/png";
+    cv::Mat optical(n, n, CV_8UC3, cv::Scalar(70, 70, 70));
+    optical(cv::Rect(4, 4, 24, 24)).setTo(cv::Scalar(20, 20, 220));
+    ASSERT_TRUE(cv::imencode(".png", optical, scene.rgbTextureBytes));
+    const auto originalOpticalBytes = scene.rgbTextureBytes;
+
+    MeshBuildConfig config;
+    config.presentationStyle = depthwizard::PresentationStyle::ORTHOPHOTO_REALISTIC;
+
+    const auto glb = SceneMeshService::generateGlb(scene, surface, buildings, metadata, config);
+    ASSERT_FALSE(glb.compressedGlbByteBuffer.empty());
+    EXPECT_EQ(glb.buildingCount, 2U);
+    EXPECT_GT(glb.roofTriangleCount, 0U);
+    EXPECT_GT(glb.wallTriangleCount, 0U);
+    EXPECT_GT(glb.terrainTriangleCount, 0U);
+
+    tinygltf::TinyGLTF loader;
+    tinygltf::Model model;
+    std::string error, warning;
+    ASSERT_TRUE(loader.LoadBinaryFromMemory(&model, &error, &warning,
+        glb.compressedGlbByteBuffer.data(), glb.compressedGlbByteBuffer.size())) << error;
+
+    // 1. Asset extras
+    EXPECT_EQ(model.asset.extras.Get("presentationStyle").Get<std::string>(), "ORTHOPHOTO_REALISTIC");
+
+    // 2. Images, Textures, and Samplers: exactly 3 distinct textures embedded
+    ASSERT_EQ(model.images.size(), 3U);
+    ASSERT_EQ(model.textures.size(), 3U);
+    ASSERT_EQ(model.samplers.size(), 3U);
+
+    // Verify CLAMP_TO_EDGE sampler modes on all textures
+    for (const auto& sampler : model.samplers)
+    {
+        EXPECT_EQ(sampler.wrapS, TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE);
+        EXPECT_EQ(sampler.wrapT, TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE);
+        EXPECT_EQ(sampler.magFilter, TINYGLTF_TEXTURE_FILTER_LINEAR);
+        EXPECT_EQ(sampler.minFilter, TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR);
+    }
+
+    // 3. Materials
+    ASSERT_GE(model.materials.size(), 3U);
+    const auto& terrainMat = model.materials[0];
+    EXPECT_EQ(terrainMat.pbrMetallicRoughness.baseColorTexture.index, 0);
+    EXPECT_FALSE(terrainMat.extensions.contains("KHR_materials_unlit"));
+
+    const auto& roofMat = model.materials[1];
+    EXPECT_EQ(roofMat.pbrMetallicRoughness.baseColorTexture.index, 1);
+    EXPECT_TRUE(roofMat.doubleSided);
+
+    const auto& wallMat = model.materials[2];
+    EXPECT_EQ(wallMat.pbrMetallicRoughness.baseColorTexture.index, 2);
+    EXPECT_TRUE(wallMat.doubleSided);
+
+    // 4. Primitives: Exactly 3 primitives (terrain, roof, wall) - NO white wireframe edge line primitive in realistic style
+    ASSERT_EQ(model.meshes[0].primitives.size(), 3U);
+    for (const auto& prim : model.meshes[0].primitives)
+    {
+        EXPECT_EQ(prim.mode, TINYGLTF_MODE_TRIANGLES);
+        ASSERT_TRUE(prim.attributes.contains("POSITION"));
+        ASSERT_TRUE(prim.attributes.contains("NORMAL"));
+        ASSERT_TRUE(prim.attributes.contains("TEXCOORD_0"));
+        const auto& posAcc = model.accessors[prim.attributes.at("POSITION")];
+        const auto& uvAcc = model.accessors[prim.attributes.at("TEXCOORD_0")];
+        EXPECT_EQ(posAcc.count, uvAcc.count);
+    }
+
+    // Feature ID preserved on roof and wall primitives
+    const auto& roofPrim = model.meshes[0].primitives[1];
+    const auto& wallPrim = model.meshes[0].primitives[2];
+    EXPECT_TRUE(roofPrim.attributes.contains("_FEATURE_ID_0"));
+    EXPECT_TRUE(wallPrim.attributes.contains("_FEATURE_ID_0"));
+
+    // 5. Scientific height / raster invariance: no mutation of source rasters or uploaded image
+    EXPECT_EQ(scene.rgbTextureBytes, originalOpticalBytes);
+    EXPECT_EQ(surface.dtm.data, originalDtm);
+    EXPECT_EQ(surface.dsm.data, originalDsm);
+    EXPECT_EQ(surface.ndsm.data, originalNdsm);
+}
+
+TEST(UrbanSceneIntegrationTest, SceneMeshServiceEmitsTerraMassingIvoryRoofsAndRepairedGround)
+{
+    constexpr int n = 32;
+    auto metadata = makeProjectedMetadata(n, n, .5, -.5);
+    auto semantics = makeSemanticScene(n, n, SemanticClass::ROAD);
+    fillRectangle(semantics.finalClassMap, 4, 4, 28, 28, SemanticClass::BUILDING);
+    fillRectangle(semantics.buildingProbability, 4, 4, 28, 28, .95F);
+    auto surface = makeSurface(n, n, 100, 10);
+    surface.spatialMetadata = metadata;
+    fillRectangle(surface.ndsm, 16, 4, 28, 28, 25.0F);
+    for (int y = 0; y < n; ++y)
+        for (int x = 0; x < n; ++x) {
+            const int i = y * n + x;
+            surface.dtm.data[i] += x * .1F;
+            surface.dsm.data[i] = surface.dtm.data[i] + surface.ndsm.data[i];
+        }
+
+    BuildingReconstructionDiagnostics stages;
+    BuildingReconstructionConfig bldgConfig;
+    const auto buildings = BuildingReconstructionService::reconstruct(
+        semantics, surface, metadata, bldgConfig, &stages);
+    ASSERT_EQ(buildings.buildings.size(), 2U);
+
+    SceneInput scene;
+    scene.width = scene.height = n;
+    scene.spatialMetadata = metadata;
+    scene.textureMimeType = "image/png";
+    cv::Mat optical(n, n, CV_8UC3, cv::Scalar(75, 75, 75));
+    optical(cv::Rect(4, 4, 24, 24)).setTo(cv::Scalar(10, 10, 200));
+    ASSERT_TRUE(cv::imencode(".png", optical, scene.rgbTextureBytes));
+
+    MeshBuildConfig config;
+    config.presentationStyle = depthwizard::PresentationStyle::TERRA_MASSING;
+
+    const auto glb = SceneMeshService::generateGlb(scene, surface, buildings, metadata, config);
+    ASSERT_FALSE(glb.compressedGlbByteBuffer.empty());
+
+    tinygltf::TinyGLTF loader;
+    tinygltf::Model model;
+    std::string error, warning;
+    ASSERT_TRUE(loader.LoadBinaryFromMemory(&model, &error, &warning,
+        glb.compressedGlbByteBuffer.data(), glb.compressedGlbByteBuffer.size())) << error;
+
+    EXPECT_EQ(model.asset.extras.Get("presentationStyle").Get<std::string>(), "TERRA_MASSING");
+
+    // Exactly 1 texture embedded (repaired ground only; no fake facade windows)
+    ASSERT_EQ(model.images.size(), 1U);
+    ASSERT_EQ(model.textures.size(), 1U);
+
+    // Primitives: exactly 3 (terrain, roof, wall) - NO edge lines
+    ASSERT_EQ(model.meshes[0].primitives.size(), 3U);
+
+    // Roof material: untextured ivory
+    const auto& roofMat = model.materials[1];
+    EXPECT_EQ(roofMat.pbrMetallicRoughness.baseColorTexture.index, -1);
+    EXPECT_NEAR(roofMat.pbrMetallicRoughness.baseColorFactor[0], 0.95, 1e-4);
+    EXPECT_NEAR(roofMat.pbrMetallicRoughness.baseColorFactor[1], 0.94, 1e-4);
+    EXPECT_NEAR(roofMat.pbrMetallicRoughness.baseColorFactor[2], 0.90, 1e-4);
+
+    // Wall material: untextured neutral darker warm grey
+    const auto& wallMat = model.materials[2];
+    EXPECT_EQ(wallMat.pbrMetallicRoughness.baseColorTexture.index, -1);
+    EXPECT_NEAR(wallMat.pbrMetallicRoughness.baseColorFactor[0], 0.70, 1e-4);
+    EXPECT_NEAR(wallMat.pbrMetallicRoughness.baseColorFactor[1], 0.69, 1e-4);
+    EXPECT_NEAR(wallMat.pbrMetallicRoughness.baseColorFactor[2], 0.67, 1e-4);
+}
+
+TEST(UrbanSceneIntegrationTest, SceneMeshServicePreservesScientificHypsometricBaseline)
+{
+    constexpr int n = 32;
+    auto metadata = makeProjectedMetadata(n, n, .5, -.5);
+    auto semantics = makeSemanticScene(n, n, SemanticClass::ROAD);
+    fillRectangle(semantics.finalClassMap, 4, 4, 28, 28, SemanticClass::BUILDING);
+    fillRectangle(semantics.buildingProbability, 4, 4, 28, 28, .95F);
+    auto surface = makeSurface(n, n, 100, 10);
+    surface.spatialMetadata = metadata;
+    fillRectangle(surface.ndsm, 16, 4, 28, 28, 25.0F);
+    for (int y = 0; y < n; ++y)
+        for (int x = 0; x < n; ++x) {
+            const int i = y * n + x;
+            surface.dtm.data[i] += x * .1F;
+            surface.dsm.data[i] = surface.dtm.data[i] + surface.ndsm.data[i];
+        }
+
+    BuildingReconstructionDiagnostics stages;
+    BuildingReconstructionConfig bldgConfig;
+    const auto buildings = BuildingReconstructionService::reconstruct(
+        semantics, surface, metadata, bldgConfig, &stages);
+    ASSERT_EQ(buildings.buildings.size(), 2U);
+
+    SceneInput scene;
+    scene.width = scene.height = n;
+    scene.spatialMetadata = metadata;
+
+    MeshBuildConfig config;
+    config.presentationStyle = depthwizard::PresentationStyle::SCIENTIFIC; // Default
+
+    const auto glb = SceneMeshService::generateGlb(scene, surface, buildings, metadata, config);
+    ASSERT_FALSE(glb.compressedGlbByteBuffer.empty());
+
+    tinygltf::TinyGLTF loader;
+    tinygltf::Model model;
+    std::string error, warning;
+    ASSERT_TRUE(loader.LoadBinaryFromMemory(&model, &error, &warning,
+        glb.compressedGlbByteBuffer.data(), glb.compressedGlbByteBuffer.size())) << error;
+
+    EXPECT_EQ(model.asset.extras.Get("presentationStyle").Get<std::string>(), "SCIENTIFIC");
+
+    // 0 textures embedded
+    EXPECT_TRUE(model.images.empty());
+    EXPECT_TRUE(model.textures.empty());
+
+    // 4 primitives (terrain, roof, wall, lines)
+    ASSERT_EQ(model.meshes[0].primitives.size(), 4U);
+    EXPECT_EQ(model.meshes[0].primitives[3].mode, TINYGLTF_MODE_LINE);
+
+    // Terrain is unlit solid grey (0.26)
+    const auto& terrainMat = model.materials[0];
+    EXPECT_TRUE(terrainMat.extensions.contains("KHR_materials_unlit"));
+    EXPECT_EQ(terrainMat.pbrMetallicRoughness.baseColorFactor,
+              (std::vector<double>{0.26, 0.26, 0.26, 1.0}));
+}

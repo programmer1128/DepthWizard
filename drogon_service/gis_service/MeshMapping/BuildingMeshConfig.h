@@ -1,10 +1,12 @@
 #pragma once
 
+#include "PresentationStyle.h"
 #include <cmath>
 
 struct BuildingMeshConfig 
 {
      bool flatPresentation{false}; // Set centrally by SceneMeshService.
+     depthwizard::PresentationStyle presentationStyle{depthwizard::PresentationStyle::SCIENTIFIC};
      bool generateRoofUVs{false}; 
      bool generateWallUVs{false};
 
