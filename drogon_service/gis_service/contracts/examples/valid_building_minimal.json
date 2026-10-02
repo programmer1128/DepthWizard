@@ -1,0 +1,57 @@
+{
+  "schema": "depthwizard.roofgraph.v1",
+  "raster_width": 512,
+  "raster_height": 512,
+  "coordinate_convention": "pixel_edge_column_row",
+  "buildings": [
+    {
+      "id": "building-1",
+      "footprint_proposal": [
+        [10.0, 10.0],
+        [50.0, 10.0],
+        [50.0, 40.0],
+        [10.0, 40.0]
+      ],
+      "roofprint_proposal": [
+        [10.0, 10.0],
+        [50.0, 10.0],
+        [50.0, 40.0],
+        [10.0, 40.0]
+      ],
+      "holes": [],
+      "scores": {
+        "semantic": 0.95,
+        "ndsm": 0.88,
+        "sam2": 0.92,
+        "kibs": 0.0
+      },
+      "roof_sections": [
+        {
+          "id": "b1-s0",
+          "polygon": [
+            [10.0, 10.0],
+            [50.0, 10.0],
+            [50.0, 40.0],
+            [10.0, 40.0]
+          ],
+          "corners": [
+            {"xy": [10.0, 10.0], "height_class_m": null, "score": 0.9},
+            {"xy": [50.0, 10.0], "height_class_m": null, "score": 0.9},
+            {"xy": [50.0, 40.0], "height_class_m": null, "score": 0.9},
+            {"xy": [10.0, 40.0], "height_class_m": null, "score": 0.9}
+          ],
+          "type_hint": "flat",
+          "adjacent_sections": [],
+          "score": 0.91
+        }
+      ],
+      "provenance": [
+        {
+          "stage": "semantic_detection",
+          "source": "native_ndsm",
+          "timestamp": "2026-10-02T10:00:00Z"
+        }
+      ]
+    }
+  ]
+}

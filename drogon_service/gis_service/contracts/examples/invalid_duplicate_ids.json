@@ -1,0 +1,32 @@
+{
+  "schema": "depthwizard.roofgraph.v1",
+  "raster_width": 512,
+  "raster_height": 512,
+  "coordinate_convention": "pixel_edge_column_row",
+  "buildings": [
+    {
+      "id": "building-dup",
+      "footprint_proposal": [
+        [10.0, 10.0],
+        [50.0, 10.0],
+        [50.0, 40.0],
+        [10.0, 40.0]
+      ],
+      "scores": { "semantic": 0.9, "ndsm": 0.8 },
+      "roof_sections": [],
+      "provenance": []
+    },
+    {
+      "id": "building-dup",
+      "footprint_proposal": [
+        [60.0, 10.0],
+        [90.0, 10.0],
+        [90.0, 40.0],
+        [60.0, 40.0]
+      ],
+      "scores": { "semantic": 0.9, "ndsm": 0.8 },
+      "roof_sections": [],
+      "provenance": []
+    }
+  ]
+}

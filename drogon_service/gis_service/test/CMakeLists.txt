@@ -349,6 +349,16 @@ add_building_reconstruction_test(
 )
 target_link_libraries(sat2lod2_importer_test PRIVATE Drogon::Drogon CGAL::CGAL ${DEPTHWIZARD_GDAL_TARGET})
 
+add_building_reconstruction_test(
+    hybrid_roofgraph_importer_test
+    HybridRoofGraphImporter_test.cc
+    ../BuildingReconstruction/HybridRoofGraphImporter.cc
+    ../BuildingReconstruction/BuildingHeightEstimator.cc
+    ../BuildingReconstruction/FootprintGeometryRegularizer.cc
+)
+target_link_libraries(hybrid_roofgraph_importer_test PRIVATE Drogon::Drogon CGAL::CGAL ${DEPTHWIZARD_GDAL_TARGET})
+
+
 add_executable(
     mesh_pipeline_test
     MeshPipeline_test.cc
