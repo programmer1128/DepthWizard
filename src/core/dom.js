@@ -74,6 +74,12 @@ export const dom = {
     emptyDemoTrigger:
         document.getElementById('emptyDemoTrigger'),
 
+    emptyGlobalMapTrigger:
+        document.getElementById('emptyGlobalMapTrigger'),
+
+    emptyDemoSampleSelect:
+        document.getElementById('emptyDemoSampleSelect'),
+
     // --------------------------------------------------------
     // Optical imagery input
     // --------------------------------------------------------
@@ -122,6 +128,12 @@ export const dom = {
 
     demoBtn:
         document.getElementById('demoBtn'),
+
+    demoSampleSelect:
+        document.getElementById('demoSampleSelect'),
+
+    globalMapTrigger:
+        document.getElementById('globalMapTrigger'),
 
     // --------------------------------------------------------
     // 2D / 3D comparison PiP

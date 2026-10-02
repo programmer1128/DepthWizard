@@ -166,6 +166,10 @@ function handleFile(file) {
     displaySelectedFile(file);
 }
 
+export function selectFileForUpload(file) {
+    handleFile(file);
+}
+
 function handleInputChange(event) {
     const file = event.target.files?.[0];
     handleFile(file);

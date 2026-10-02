@@ -153,15 +153,29 @@
           </div>
         </div>
 
+        <button class="btn-secondary global-map-panel-btn" id="globalMapTrigger" type="button">
+          <span>◎</span>
+          <span>Select from Global Map</span>
+        </button>
+
         <button class="btn-primary" id="uploadBtn">
           <span>⚡</span>
           <span>Generate 3D Terrain</span>
         </button>
 
-        <button class="btn-secondary" id="demoBtn" title="Load sample GLB terrain directly">
-          <span>📦</span>
-          <span>Load Sample Terrain</span>
-        </button>
+        <div class="sample-terrain-control">
+          <label for="demoSampleSelect">Sample landscape</label>
+          <select id="demoSampleSelect" class="sample-terrain-select">
+            <option value="urban">Urban Area</option>
+            <option value="sparse">Sparse / Rural Area</option>
+            <option value="hilly">Hilly Terrain</option>
+            <option value="forested">Forested Landscape</option>
+          </select>
+          <button class="btn-secondary" id="demoBtn" type="button" title="Load the selected sample terrain">
+            <span>📦</span>
+            <span>Load Selected Sample</span>
+          </button>
+        </div>
       </section>
 
       <section class="sidebar-section" id="workflow-explore">
@@ -570,8 +584,22 @@
             Single-view height estimation backend processes optical satellite textures into 3D elevation GLB meshes.
           </p>
           <div class="empty-state-actions">
+            <button class="empty-btn-global" id="emptyGlobalMapTrigger" type="button">
+              <span>◎</span>
+              <span>Select from Global Map</span>
+            </button>
             <button class="empty-btn-upload" id="emptyUploadTrigger">Select Imagery</button>
-            <button class="empty-btn-demo" id="emptyDemoTrigger">Load Sample Terrain</button>
+            <div class="empty-sample-control">
+              <select id="emptyDemoSampleSelect" aria-label="Sample landscape">
+                <option value="urban">Urban Area</option>
+                <option value="sparse">Sparse / Rural Area</option>
+                <option value="hilly">Hilly Terrain</option>
+                <option value="forested">Forested Landscape</option>
+              </select>
+              <button class="empty-btn-demo" id="emptyDemoTrigger" type="button">
+                Load Sample Terrain
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -604,7 +632,7 @@
       <button id="sourcePreviewLauncher" class="source-preview-launcher hidden" type="button"
         title="Open the generated 2D source preview" aria-label="Open 2D source preview">
         <span class="source-preview-icon">▧</span>
-        <span>2D View</span>
+        <span>2D source</span>
       </button>
 
       <!-- COMPASS: PROFESSIONAL GIS -->
@@ -622,7 +650,7 @@
         </div>
       </div>
 
-      <div id="routeBanner">
+     <div id="routeBanner">
   <span>✦</span>
   <span>Route Draw Active: Click terrain to place waypoints (Esc to finish)</span>
 </div>

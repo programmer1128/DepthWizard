@@ -46,6 +46,10 @@ import {
     onUuidChange
 } from './core/state.js';
 
+import {
+    getSampleTerrain
+} from './core/sampleTerrains.js';
+
 
 
 // ============================================================
@@ -138,8 +142,13 @@ import {
 } from './ui/panel.js';
 
 import {
-    initFileUI
+    initFileUI,
+    selectFileForUpload
 } from './ui/fileUI.js';
+
+import {
+    initGlobalMap
+} from './features/globalMap.js';
 
 import {
     initControlsUI
@@ -180,15 +189,21 @@ import {
 
 
 // ============================================================
-// CLOCK
+// TIMER
 // ============================================================
 
-const clock =
-    new THREE.Clock();
+const timer =
+    new THREE.Timer();
 
-const previousCameraPosition = new THREE.Vector3();
-let hasPreviousCameraPosition = false;
+timer.connect(
+    document
+);
 
+const previousCameraPosition =
+    new THREE.Vector3();
+
+let hasPreviousCameraPosition =
+    false;
 
 // ============================================================
 // APPLICATION INITIALIZATION
@@ -234,6 +249,30 @@ function initializeApplication() {
     initFileUI();
     initControlsUI();
     initPiP();
+    initGlobalMap({
+       onGeoTIFF: async (file) => {
+        console.info(
+            '[DepthWizard Global Map] 3/3 Submitting GeoTIFF to terrain processor:',
+            {
+                filename:
+                    file.name,
+
+                type:
+                    file.type,
+
+                sizeBytes:
+                    file.size,
+
+                processorEndpoint:
+                    'POST /api/v1/processor'
+            }
+        );
+
+        selectFileForUpload(file);
+
+        await handleUpload();
+    }
+    });
 
     initHeightInspection();
 
@@ -315,7 +354,9 @@ function initializeApplicationEvents() {
 
         dom.demoBtn.addEventListener(
             'click',
-            handleDemo
+            () => handleDemo(
+                dom.demoSampleSelect?.value || 'urban'
+            )
         );
 
     }
@@ -324,7 +365,9 @@ function initializeApplicationEvents() {
 
         dom.emptyDemoTrigger.addEventListener(
             'click',
-            handleDemo
+            () => handleDemo(
+                dom.emptyDemoSampleSelect?.value || 'urban'
+            )
         );
 
     }
@@ -599,9 +642,12 @@ async function handleUpload() {
 // DEMO TERRAIN
 // ============================================================
 
-async function handleDemo() {
+async function handleDemo(sampleId = 'urban') {
 
     try {
+
+        const sample =
+            getSampleTerrain(sampleId);
 
         clearRoute();
         clearFlood();
@@ -615,13 +661,13 @@ async function handleDemo() {
 
 
         setViewerStatus(
-            'Loading demo terrain...',
+            `Loading ${sample.label.toLowerCase()} sample...`,
             'loading'
         );
 
 
         setFileStatus(
-            'Loading ISRO satellite sample...'
+            `Loading ${sample.label} sample terrain...`
         );
 
 
@@ -630,7 +676,7 @@ async function handleDemo() {
         // ----------------------------------------------------
 
         await loadTerrainGLB(
-            '/new_test.glb'
+            sample.modelUrl
         );
 
 
@@ -639,7 +685,7 @@ async function handleDemo() {
         // ----------------------------------------------------
 
         setFileStatus(
-            'test_8_output.glb (Demo)'
+            `${sample.label} sample • ${sample.description}`
         );
 
 
@@ -648,15 +694,15 @@ async function handleDemo() {
         // ----------------------------------------------------
 
         setPiPImage(
-            '/demo_optical.png',
-            'Demo Terrain Mesh',
-            'Optical source reference'
+            sample.previewUrl,
+            `${sample.label} Sample`,
+            sample.description
         );
         hidePiP();
 
 
         setViewerStatus(
-            'Demo terrain ready',
+            `${sample.label} sample ready`,
             'ready'
         );
 
@@ -835,16 +881,19 @@ function handleKeyboard(event) {
 // ANIMATION LOOP
 // ============================================================
 
-function animate() {
+function animate(timestamp) {
 
     requestAnimationFrame(
         animate
     );
 
+    timer.update(
+        timestamp
+    );
 
     const delta =
         Math.min(
-            clock.getDelta(),
+            timer.getDelta(),
             0.1
         );
 

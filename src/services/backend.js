@@ -12,6 +12,7 @@ export const API_BASE =
 
 export const GEOTIFF_PROCESSOR_ENDPOINT = `${API_BASE}/api/v1/processor`;
 export const NORMAL_IMAGE_PROCESSOR_ENDPOINT = `${API_BASE}/api/v1/processor/normal-image`;
+export const GLOBAL_MAP_GEOTIFF_ENDPOINT = `${API_BASE}/api/v1/global-map/geotiff`;
 
 // Default backward-compatible alias
 export const PROCESSOR_ENDPOINT = GEOTIFF_PROCESSOR_ENDPOINT;
@@ -136,6 +137,261 @@ export async function processNormalImage(file) {
 }
 
 // ============================================================
+// GLOBAL MAP -> OPTICAL GEOTIFF
+// Credentials remain on the backend. The browser only sends
+// the selected WGS84 bounding box and output dimensions.
+// ============================================================
+
+export async function generateGlobalMapGeoTIFF({
+    bbox,
+    width = 1024,
+    height = 1024,
+    maxCloudCoverage = 20
+}) {
+    if (
+        !Array.isArray(bbox) ||
+        bbox.length !== 4 ||
+        bbox.some((value) => !Number.isFinite(Number(value)))
+    ) {
+        throw new Error(
+            'Select a valid map area before generating.'
+        );
+    }
+
+    const payload = {
+        bbox: bbox.map(Number),
+        width: Math.max(
+            256,
+            Math.min(2048, Math.round(width))
+        ),
+        height: Math.max(
+            256,
+            Math.min(2048, Math.round(height))
+        ),
+        maxCloudCoverage: Math.max(
+            0,
+            Math.min(
+                100,
+                Number(maxCloudCoverage) || 20
+            )
+        )
+    };
+
+    console.groupCollapsed(
+        '[DepthWizard Global Map] 1/3 Requesting GeoTIFF'
+    );
+
+    console.info(
+        'Endpoint:',
+        GLOBAL_MAP_GEOTIFF_ENDPOINT
+    );
+
+    console.info(
+        'Selected bounding box:',
+        payload.bbox
+    );
+
+    console.info(
+        'Output resolution:',
+        `${payload.width} × ${payload.height}`
+    );
+
+    console.info(
+        'Maximum cloud coverage:',
+        `${payload.maxCloudCoverage}%`
+    );
+
+    console.info(
+        'Request payload:',
+        payload
+    );
+
+    console.groupEnd();
+
+    const controller =
+        new AbortController();
+
+    const timeout =
+        setTimeout(
+            () => controller.abort(),
+            3 * 60 * 1000
+        );
+
+    let response;
+
+    try {
+        response = await fetch(
+            GLOBAL_MAP_GEOTIFF_ENDPOINT,
+            {
+                method: 'POST',
+
+                headers: {
+                    'Content-Type':
+                        'application/json'
+                },
+
+                body:
+                    JSON.stringify(payload),
+
+                signal:
+                    controller.signal
+            }
+        );
+    } catch (error) {
+        console.error(
+            '[DepthWizard Global Map] Backend connection failed:',
+            {
+                endpoint:
+                    GLOBAL_MAP_GEOTIFF_ENDPOINT,
+
+                error,
+
+                explanation:
+                    'The frontend request is correct, but no backend is responding at this address.'
+            }
+        );
+
+        if (error?.name === 'AbortError') {
+            throw new Error(
+                'Global imagery generation timed out after 3 minutes.'
+            );
+        }
+
+        throw new Error(
+            `Unable to connect to the global-map backend at ` +
+            `${GLOBAL_MAP_GEOTIFF_ENDPOINT}. ` +
+            `Make sure the backend is running on port 8081.`
+        );
+    } finally {
+        clearTimeout(timeout);
+    }
+
+    console.info(
+        '[DepthWizard Global Map] 2/3 Backend responded:',
+        {
+            status:
+                response.status,
+
+            statusText:
+                response.statusText,
+
+            contentType:
+                response.headers.get(
+                    'content-type'
+                ),
+
+            provider:
+                response.headers.get(
+                    'x-imagery-provider'
+                )
+        }
+    );
+
+    if (!response.ok) {
+        let message =
+            `Global imagery request failed (${response.status}).`;
+
+        try {
+            const errorBody =
+                await response.json();
+
+            message =
+                errorBody.message ||
+                errorBody.error ||
+                errorBody.detail ||
+                message;
+
+            console.error(
+                '[DepthWizard Global Map] Backend error body:',
+                errorBody
+            );
+        } catch (_) {
+            console.error(
+                '[DepthWizard Global Map] Backend returned an HTTP error without JSON.'
+            );
+        }
+
+        throw new Error(message);
+    }
+
+    const contentType =
+        response.headers.get(
+            'content-type'
+        ) || '';
+
+    if (
+        !contentType.includes('tiff') &&
+        !contentType.includes(
+            'octet-stream'
+        )
+    ) {
+        console.error(
+            '[DepthWizard Global Map] Invalid response type:',
+            contentType
+        );
+
+        throw new Error(
+            'The global-map backend did not return a GeoTIFF.'
+        );
+    }
+
+    const blob =
+        await response.blob();
+
+    if (!blob.size) {
+        throw new Error(
+            'The generated GeoTIFF was empty.'
+        );
+    }
+
+    const timestamp =
+        new Date()
+            .toISOString()
+            .replace(/[:.]/g, '-');
+
+    const file =
+        new File(
+            [blob],
+            `global-map-${timestamp}.tif`,
+            {
+                type:
+                    'image/tiff',
+
+                lastModified:
+                    Date.now()
+            }
+        );
+
+    console.groupCollapsed(
+        '[DepthWizard Global Map] GeoTIFF received successfully'
+    );
+
+    console.info(
+        'Filename:',
+        file.name
+    );
+
+    console.info(
+        'MIME type:',
+        file.type
+    );
+
+    console.info(
+        'File size:',
+        `${(file.size / 1024 / 1024).toFixed(2)} MB`
+    );
+
+    console.info(
+        'Next step:',
+        'The file will now be submitted to /api/v1/processor.'
+    );
+
+    console.groupEnd();
+
+    return file;
+}
+
+// ============================================================
 // API INFORMATION
 // ============================================================
 
@@ -143,6 +399,7 @@ export const API_CONFIG = {
     baseUrl: API_BASE,
     geotiffEndpoint: GEOTIFF_PROCESSOR_ENDPOINT,
     normalImageEndpoint: NORMAL_IMAGE_PROCESSOR_ENDPOINT,
+    globalMapGeoTiffEndpoint: GLOBAL_MAP_GEOTIFF_ENDPOINT,
     processorEndpoint: GEOTIFF_PROCESSOR_ENDPOINT
 };
 
