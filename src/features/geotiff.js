@@ -14,7 +14,8 @@ import {
 
 import {
     setPiPImage,
-    setPiPMetadata
+    setPiPMetadata,
+    hidePiP
 } from '../ui/pipUI.js';
 
 
@@ -386,6 +387,7 @@ function updatePreviewUI(
         file.name,
         `${width} × ${height}px`
     );
+    hidePiP();
 
 }
 

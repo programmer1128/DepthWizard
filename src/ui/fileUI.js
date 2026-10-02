@@ -7,7 +7,7 @@ import { dom } from '../core/dom.js';
 import { state, setCurrentUuid } from '../core/state.js';
 import { setFileStatus } from './status.js';
 import { setScientificDataMode } from './workstationUI.js';
-import { setPiPImage, showPiP } from './pipUI.js';
+import { setPiPImage, showPiP, hidePiP } from './pipUI.js';
 
 function formatFileSize(bytes) {
     if (!Number.isFinite(bytes)) return '';
@@ -98,6 +98,12 @@ function displaySelectedFile(file) {
         dom.thumbnailPreview.src = state.currentPreviewUrl;
         dom.thumbnailPreview.classList.remove('hidden');
         dom.thumbnailPreview.style.display = 'block';
+        setPiPImage(
+            state.currentPreviewUrl,
+            file.name,
+            'Local optical source'
+        );
+        hidePiP();
 
     } else if (dom.thumbnailPreview) {
         dom.thumbnailPreview.removeAttribute('src');

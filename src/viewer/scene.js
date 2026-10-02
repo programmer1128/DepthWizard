@@ -56,6 +56,10 @@ renderer.setClearColor(
     0
 );
 
+// Three r186 performs lighting in linear space. Display conversion belongs at
+// the renderer output only; colour maps are tagged separately by terrain.js.
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
 renderer.toneMapping =
     THREE.ACESFilmicToneMapping;
 
@@ -65,6 +69,8 @@ renderer.toneMappingExposure =
 renderer.shadowMap.enabled = true;
 
 renderer.shadowMap.type =
+    // r186 removed PCFSoftShadowMap; PCFShadowMap is the supported filtered
+    // shadow implementation and respects the light's radius setting.
     THREE.PCFShadowMap;
 
 renderer.setSize(

@@ -19,7 +19,6 @@
       <div class="brand-info">
         <h1>
           DEPTHWIZARD 3D WORKSTATION
-          <span class="brand-tag"></span>
         </h1>
         <div class="brand-sub">
           Single-View Height Estimation & Geospatial 3D Terrain
@@ -92,7 +91,6 @@
       <section class="sidebar-section" id="workflow-data">
         <div class="section-header">
           <span class="section-title">Data · Mission Overview</span>
-          <span class="section-badge"></span>
         </div>
         <div class="panel-card project-card">
           <div class="project-title">
@@ -107,7 +105,7 @@
         </div>
       </section>
 
-      <section class="sidebar-section">
+      <section class="sidebar-section" id="workflow-readiness">
         <div class="section-header">
           <span class="section-title">Data Readiness</span>
           <span class="section-badge">MODE GATE</span>
@@ -248,7 +246,7 @@
       </section>
 
       <!-- VISUAL CONTROLS: RESTORED -->
-      <section class="sidebar-section">
+      <section class="sidebar-section" id="workflow-visual-controls">
         <div class="section-header">
           <span class="section-title">Explore · Visual Controls</span>
           <span class="section-badge">LIGHTING</span>
@@ -257,6 +255,25 @@
         <div class="panel-card visual-control-card">
 
           <div class="visual-control-header">
+            <label for="presentationStyleSelect">Presentation style</label>
+          </div>
+          <select id="presentationStyleSelect" class="viewer-select" title="Choose the terrain presentation style">
+            <option value="scientific">Scientific</option>
+            <option value="terra">Terra massing</option>
+            <option value="orthophoto" selected>Orthophoto</option>
+          </select>
+
+          <div class="visual-control-header compact-top">
+            <label for="renderQualitySelect">Shadows &amp; AO quality</label>
+          </div>
+          <select id="renderQualitySelect" class="viewer-select" title="AO remains off until GPU cost is measured">
+            <option value="performance">Performance · shadows off</option>
+            <option value="balanced" selected>Balanced · soft shadows</option>
+            <option value="high">High · soft shadows</option>
+          </select>
+          <div class="control-caption">AO is intentionally disabled pending a measured GPU budget.</div>
+
+          <div class="visual-control-header compact-top">
             <span>Time of Day (Sun)</span>
             <button
               id="lightingBtn"
@@ -297,7 +314,7 @@
           </div>
 
           <div class="visual-control-header compact-top">
-            <span>Vertical Exaggeration</span>
+            <span>Vertical Exaggeration · visual only</span>
             <strong id="verticalExaggerationValue">1.00×</strong>
           </div>
           <input id="verticalExaggerationSlider" type="range" min="1" max="2.5" step="0.05" value="1" title="Visual vertical exaggeration" />
@@ -309,7 +326,7 @@
       </section>
 
       <!-- INTERACTIVE ROUTE PLANNING -->
-      <section class="sidebar-section">
+      <section class="sidebar-section" id="workflow-flight">
         <div class="section-header">
           <span class="section-title">Analyze · Flight Path</span>
           <span class="section-badge" id="routeWaypointsBadge">0 Pts</span>
@@ -368,7 +385,7 @@
         </div>
       </section>
 
-      <section class="sidebar-section">
+      <section class="sidebar-section" id="workflow-hydrology">
         <div class="section-header">
           <span class="section-title">Advanced · Hydrology</span>
           <span class="section-badge">ADVANCED</span>
@@ -411,7 +428,7 @@
         </div>
       </section>
 
-      <section class="sidebar-section">
+      <section class="sidebar-section" id="workflow-exports">
         <div class="section-header">
           <span class="section-title">Output · Exports & Evidence</span>
           <span class="section-badge">EXPORT</span>
@@ -584,6 +601,11 @@
           <span id="pipDimensions">—</span>
         </div>
       </div>
+      <button id="sourcePreviewLauncher" class="source-preview-launcher hidden" type="button"
+        title="Open the generated 2D source preview" aria-label="Open 2D source preview">
+        <span class="source-preview-icon">▧</span>
+        <span>2D View</span>
+      </button>
 
       <!-- COMPASS: PROFESSIONAL GIS -->
       <div id="compass-control" title="Reset orientation to North" aria-label="Compass">
@@ -600,29 +622,45 @@
         </div>
       </div>
 
-      <div id="coordinates" class="coordinates-readout">X: —  Y: —  Z: —</div>
+      <div id="routeBanner">
+  <span>✦</span>
+  <span>Route Draw Active: Click terrain to place waypoints (Esc to finish)</span>
+</div>
+
+<div id="bottom-hud">
+  <div class="bottom-hud-left">
+
+    <div class="bottom-status-row">
+      <div id="coordinates" class="coordinates-readout">
+        X: — Y: — Z: —
+      </div>
 
       <div class="viewer-hud-status">
         <span class="status-dot ready" id="hudStatusDot"></span>
-        <span id="viewerStatus" style="font-weight: 600; font-size: 11px;">
+
+        <span
+          id="viewerStatus"
+          style="font-weight: 600; font-size: 11px;"
+        >
           3D VIEWER READY
         </span>
-        <span class="mode-badge" id="currentModeBadge">ORBIT</span>
-      </div>
 
-      <div id="routeBanner">
-        <span>✦</span>
-        <span>Route Draw Active: Click terrain to place waypoints (Esc to finish)</span>
+        <span class="mode-badge" id="currentModeBadge">
+          ORBIT
+        </span>
       </div>
+    </div>
 
-      <div id="bottom-hud">
-        <div class="hud-pill">
-          Orbit  Left Drag   •   Pan  Right Drag   •   Zoom  Scroll   •   F  Free Fly
-        </div>
-        <div class="hud-pill">
-          DEPTHWIZARD 3D WORKSTATION
-        </div>
-      </div>
+    <div class="hud-pill navigation-help">
+      Orbit Left Drag • Pan Right Drag • Zoom Scroll • F Free Fly
+    </div>
+
+  </div>
+
+  <div class="hud-pill workstation-label">
+    DEPTHWIZARD 3D WORKSTATION
+  </div>
+</div>
 
       <div id="help-panel">
         <div class="help-title">

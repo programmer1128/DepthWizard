@@ -37,6 +37,9 @@ export const state = {
     gridVisible: true,
     heatmapEnabled: false,
     autoRotateEnabled: false,
+    presentationStyle: 'orthophoto',
+    renderQuality: 'balanced',
+    frameTimes: [],
 
     // ----------------------------------------------------------
     // Route system

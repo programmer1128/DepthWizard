@@ -188,6 +188,12 @@ export const dom = {
 
     lightValue:
         document.getElementById('lightValue'),
+    presentationStyleSelect:
+        document.getElementById('presentationStyleSelect'),
+    renderQualitySelect:
+        document.getElementById('renderQualitySelect'),
+    sourcePreviewLauncher:
+        document.getElementById('sourcePreviewLauncher'),
 
     // --------------------------------------------------------
     // Route planning

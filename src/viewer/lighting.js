@@ -5,7 +5,7 @@
 
 import * as THREE from 'three';
 
-import { scene } from './scene.js';
+import { scene, renderer } from './scene.js';
 import { dom } from '../core/dom.js';
 import { state } from '../core/state.js';
 import { CONFIG } from '../core/constants.js';
@@ -17,16 +17,17 @@ import { setGridStatus } from '../ui/status.js';
 // ============================================================
 
 // Main ambient illumination
-export const ambientLight = new THREE.AmbientLight(
-    0xffffff,
-    1.6
+export const ambientLight = new THREE.HemisphereLight(
+    0xa9cfff,
+    0x382b25,
+    0.72
 );
 
 
 // Main directional sunlight
 export const directionalLight = new THREE.DirectionalLight(
-    0xffffff,
-    2.0
+    0xfff1d2,
+    3.0
 );
 
 directionalLight.position.set(
@@ -52,7 +53,7 @@ directionalLight.shadow.camera.bottom = -1000;
 // Secondary cool fill light
 export const secondaryLight = new THREE.DirectionalLight(
     0x38bdf8,
-    0.8
+    0.22
 );
 
 secondaryLight.position.set(
@@ -66,7 +67,8 @@ secondaryLight.position.set(
 scene.add(
     ambientLight,
     directionalLight,
-    secondaryLight
+    secondaryLight,
+    directionalLight.target
 );
 
 
@@ -92,6 +94,55 @@ scene.add(gridHelper);
 // ============================================================
 
 let lightIntensity = 2.0;
+
+export function configureLightingForBounds(bounds) {
+    if (!bounds || bounds.isEmpty()) return;
+
+    const center = bounds.getCenter(new THREE.Vector3());
+    const size = bounds.getSize(new THREE.Vector3());
+    const radius = Math.max(size.x, size.z, size.y * 2, 1);
+
+    directionalLight.target.position.copy(center);
+    directionalLight.position.set(
+        center.x + radius * 0.85,
+        bounds.max.y + radius * 1.35,
+        center.z + radius * 0.65
+    );
+
+    // A fitted camera gives useful texel density and avoids the unstable,
+    // kilometre-wide shadow volume that previously caused acne/peter-panning.
+    const half = radius * 0.72;
+    const shadowCamera = directionalLight.shadow.camera;
+    shadowCamera.left = -half;
+    shadowCamera.right = half;
+    shadowCamera.top = half;
+    shadowCamera.bottom = -half;
+    shadowCamera.near = Math.max(radius * 0.02, 0.1);
+    shadowCamera.far = radius * 4;
+    shadowCamera.updateProjectionMatrix();
+
+    directionalLight.shadow.bias = -0.00018;
+    directionalLight.shadow.normalBias = Math.max(radius * 0.0007, 0.015);
+    directionalLight.shadow.radius = 2;
+    directionalLight.shadow.needsUpdate = true;
+}
+
+export function setRenderQuality(quality = 'balanced') {
+    state.renderQuality = quality;
+    const settings = {
+        performance: { shadows: false, mapSize: 1024, pixelRatio: 1.25 },
+        balanced: { shadows: true, mapSize: 2048, pixelRatio: 1.75 },
+        high: { shadows: true, mapSize: 4096, pixelRatio: 2 }
+    }[quality] || { shadows: true, mapSize: 2048, pixelRatio: 1.75 };
+
+    renderer.shadowMap.enabled = settings.shadows;
+    directionalLight.castShadow = settings.shadows;
+    directionalLight.shadow.mapSize.set(settings.mapSize, settings.mapSize);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, settings.pixelRatio));
+    directionalLight.shadow.map?.dispose();
+    directionalLight.shadow.map = null;
+    directionalLight.shadow.needsUpdate = true;
+}
 
 
 // ============================================================
@@ -153,8 +204,8 @@ export function setTimeOfDay(hours) {
     
     // 2. Calculate Brightness (peaks at noon / PI/2)
     const intensityMultiplier = Math.max(0.1, Math.sin(angle));
-    directionalLight.intensity = intensityMultiplier * 2.8;
-    ambientLight.intensity = 0.6 + (intensityMultiplier * 1.0);
+    directionalLight.intensity = intensityMultiplier * 3.0;
+    ambientLight.intensity = 0.42 + (intensityMultiplier * 0.38);
     
     // 3. Calculate Color Temperature
     // Warm orange/yellow at dawn/dusk, crisp white at midday

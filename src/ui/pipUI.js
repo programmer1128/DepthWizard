@@ -5,6 +5,7 @@
 
 import { dom } from '../core/dom.js';
 import { state } from '../core/state.js';
+import { setSidebar } from './layoutUI.js';
 
 
 // ============================================================
@@ -18,10 +19,14 @@ export function showPiP() {
     }
 
     dom.comparisonPiP.classList.remove('hidden');
+    dom.comparisonPiP.classList.remove('minimized');
 
     if (dom.pipToggle) {
         dom.pipToggle.checked = true;
     }
+
+    if (dom.pipMinimizeBtn) dom.pipMinimizeBtn.textContent = '−';
+    dom.sourcePreviewLauncher?.classList.add('hidden');
 
 }
 
@@ -40,6 +45,10 @@ export function hidePiP() {
 
     if (dom.pipToggle) {
         dom.pipToggle.checked = false;
+    }
+
+    if (dom.pipImage?.getAttribute('src')) {
+        dom.sourcePreviewLauncher?.classList.remove('hidden');
     }
 
 }
@@ -137,7 +146,9 @@ export function setPiPImage(imageSource, filename = 'Comparison Image', dimensio
     }
 
     setPiPMetadata(filename, dimensions);
-    showPiP();
+    // Keep the viewer unobstructed. The compact source button opens this only
+    // when the user asks for the 2D reference.
+    dom.sourcePreviewLauncher?.classList.remove('hidden');
 }
 // ============================================================
 // SET METADATA
@@ -177,6 +188,7 @@ export function clearPiPImage() {
     }
 
     setPiPMetadata('No comparison image', '');
+    dom.sourcePreviewLauncher?.classList.add('hidden');
 }
 
 // ============================================================
@@ -204,6 +216,18 @@ export function initPiP() {
             'click',
             closePiP
         );
+    }
+
+    if (dom.sourcePreviewLauncher) {
+        dom.sourcePreviewLauncher.addEventListener('click', () => {
+            const isHidden = dom.comparisonPiP?.classList.contains('hidden');
+            if (isHidden) {
+                setSidebar(true);
+                window.requestAnimationFrame(showPiP);
+            } else {
+                hidePiP();
+            }
+        });
     }
 
     // Start closed, matching the original UI behavior.

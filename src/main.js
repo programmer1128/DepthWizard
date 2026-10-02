@@ -146,7 +146,9 @@ import {
 } from './ui/controlsUI.js';
 
 import {
-    initPiP
+    initPiP,
+    setPiPImage,
+    hidePiP
 } from './ui/pipUI.js';
 
 import {
@@ -645,51 +647,12 @@ async function handleDemo() {
         // Demo PiP image
         // ----------------------------------------------------
 
-        if (dom.pipImage) {
-
-            dom.pipImage.src =
-                '/demo_optical.png';
-
-            dom.pipImage.classList.remove(
-                'hidden'
-            );
-
-        }
-
-        if (dom.pipPlaceholder) {
-
-            dom.pipPlaceholder.classList.add(
-                'hidden'
-            );
-
-        }
-
-        if (dom.pipFilename) {
-
-            dom.pipFilename.textContent =
-                'Demo Terrain Mesh';
-
-        }
-
-        if (dom.pipDimensions) {
-
-            dom.pipDimensions.textContent =
-                'Embedded optical texture from demo GLB';
-
-        }
-
-
-        if (dom.pipToggle) {
-            dom.pipToggle.checked = true;
-        }
-
-        if (dom.comparisonPiP) {
-
-            dom.comparisonPiP.classList.remove(
-                'hidden'
-            );
-
-        }
+        setPiPImage(
+            '/demo_optical.png',
+            'Demo Terrain Mesh',
+            'Optical source reference'
+        );
+        hidePiP();
 
 
         setViewerStatus(
@@ -884,6 +847,22 @@ function animate() {
             clock.getDelta(),
             0.1
         );
+
+    state.frameTimes.push(delta * 1000);
+    if (state.frameTimes.length > 240) state.frameTimes.shift();
+    if (state.frameTimes.length && state.frameTimes.length % 30 === 0) {
+        const ordered = [...state.frameTimes].sort((a, b) => a - b);
+        window.depthWizardPerformance = {
+            capturedAt: performance.now(),
+            samples: ordered.length,
+            averageMs: state.frameTimes.reduce((sum, value) => sum + value, 0) / state.frameTimes.length,
+            p95Ms: ordered[Math.min(ordered.length - 1, Math.floor(ordered.length * 0.95))],
+            drawCalls: renderer.info.render.calls,
+            triangles: renderer.info.render.triangles,
+            quality: state.renderQuality,
+            pixelRatio: renderer.getPixelRatio()
+        };
+    }
 
 
     // --------------------------------------------------------

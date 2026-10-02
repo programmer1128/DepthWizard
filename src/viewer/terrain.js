@@ -9,11 +9,13 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
 import {
     scene,
-    camera
+    camera,
+    renderer
 } from './scene.js';
 
 import {
-    gridHelper
+    gridHelper,
+    configureLightingForBounds
 } from './lighting.js';
 
 import {
@@ -55,6 +57,147 @@ const gltfLoader =
 gltfLoader.setDRACOLoader(
     dracoLoader
 );
+
+const COLOR_TEXTURE_KEYS = ['map', 'emissiveMap'];
+const DATA_TEXTURE_KEYS = [
+    'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap',
+    'alphaMap', 'bumpMap', 'displacementMap', 'lightMap'
+];
+
+function eachMaterial(object, callback) {
+    const materials = Array.isArray(object.material)
+        ? object.material
+        : [object.material];
+    materials.filter(Boolean).forEach(callback);
+}
+
+function configureMaterial(material) {
+    const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
+
+    COLOR_TEXTURE_KEYS.forEach((key) => {
+        const texture = material[key];
+        if (!texture) return;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.anisotropy = maxAnisotropy;
+        texture.needsUpdate = true;
+    });
+
+    DATA_TEXTURE_KEYS.forEach((key) => {
+        const texture = material[key];
+        if (!texture) return;
+        texture.colorSpace = THREE.NoColorSpace;
+        texture.anisotropy = maxAnisotropy;
+        texture.needsUpdate = true;
+    });
+
+    material.toneMapped = true;
+    if (/roof|wall|building/i.test(material.name || '')) {
+        material.flatShading = true;
+        material.needsUpdate = true;
+    }
+}
+
+function buildStyleMaterial(material, style) {
+    const clone = material.clone();
+    clone.name = `${material.name || 'material'}__${style}`;
+
+    if (style === 'terra') {
+        clone.map = null;
+        clone.emissiveMap = null;
+        clone.vertexColors = false;
+        clone.color?.set(0xb9916c);
+        clone.roughness = 0.86;
+        clone.metalness = 0.0;
+    } else if (style === 'scientific') {
+        // Preserve authored analytical vertex colours. Plain optical meshes
+        // receive a restrained blue so the style remains clearly scientific.
+        clone.map = null;
+        clone.emissiveMap = null;
+        if (!clone.vertexColors) clone.color?.set(0x4c83cf);
+        clone.roughness = 0.78;
+        clone.metalness = 0.0;
+    }
+
+    if (/roof|wall|building/i.test(material.name || '')) {
+        clone.flatShading = true;
+    }
+    configureMaterial(clone);
+    clone.needsUpdate = true;
+    return clone;
+}
+
+export function applyPresentationStyle(style = state.presentationStyle) {
+    state.presentationStyle = ['scientific', 'terra', 'orthophoto'].includes(style)
+        ? style
+        : 'orthophoto';
+
+    if (!state.terrainModel) return;
+
+    state.heatmapEnabled = false;
+    dom.heatmapBtn?.classList.remove('active', 'active-green');
+
+    state.terrainModel.traverse((child) => {
+        if (child.userData.isPresentationEdge) {
+            child.visible = state.presentationStyle === 'scientific';
+            return;
+        }
+        if (!child.isMesh || !child.userData.originalMaterial) return;
+
+        if (state.presentationStyle === 'orthophoto') {
+            child.material = child.userData.originalMaterial;
+        } else {
+            const cacheKey = `${state.presentationStyle}Materials`;
+            if (!child.userData[cacheKey]) {
+                const original = Array.isArray(child.userData.originalMaterial)
+                    ? child.userData.originalMaterial
+                    : [child.userData.originalMaterial];
+                const styled = original.map((material) =>
+                    buildStyleMaterial(material, state.presentationStyle)
+                );
+                child.userData[cacheKey] = Array.isArray(child.userData.originalMaterial)
+                    ? styled
+                    : styled[0];
+            }
+            child.material = child.userData[cacheKey];
+        }
+    });
+}
+
+function fitSceneToTerrain(bounds) {
+    const size = bounds.getSize(new THREE.Vector3());
+    const center = bounds.getCenter(new THREE.Vector3());
+    const horizontal = Math.max(size.x, size.z, 1);
+    const vertical = Math.max(size.y, 1);
+    const fov = THREE.MathUtils.degToRad(camera.fov);
+    const fitHeightDistance = (Math.max(horizontal * 0.62, vertical) * 0.5) /
+        Math.tan(fov * 0.5);
+    const fitWidthDistance = fitHeightDistance / Math.max(camera.aspect, 0.5);
+    const cameraDistance = Math.max(fitHeightDistance, fitWidthDistance, horizontal) * 1.15;
+
+    camera.position.set(
+        center.x + cameraDistance * 0.78,
+        center.y + cameraDistance * 0.58,
+        center.z + cameraDistance * 0.78
+    );
+    camera.near = Math.max(horizontal / 5000, 0.05);
+    camera.far = Math.max(cameraDistance * 12, horizontal * 8);
+    camera.updateProjectionMatrix();
+    camera.lookAt(center);
+
+    orbitControls.target.copy(center);
+    orbitControls.minDistance = Math.max(horizontal * 0.015, 0.5);
+    orbitControls.maxDistance = cameraDistance * 6;
+    orbitControls.update();
+
+    // Fog follows tile scale and starts beyond the model rather than obscuring
+    // geometry at a fixed world-space distance.
+    scene.fog = new THREE.Fog(0x101927, cameraDistance * 1.5, cameraDistance * 5.5);
+    gridHelper.scale.setScalar(Math.max(horizontal * 1.65 / 1200, 0.02));
+    gridHelper.position.y = bounds.min.y - Math.max(horizontal * 0.002, 0.02);
+
+    configureLightingForBounds(bounds);
+    return cameraDistance;
+}
 
 // ============================================================
 // DISPOSE OBJECT
@@ -258,21 +401,28 @@ export function loadTerrainGLB(url) {
 // explicitly activates Heatmap mode.
 
 model.traverse((child) => {
+    const isEdgeObject = child.isLine ||
+        child.isLineSegments ||
+        (child.material && []
+            .concat(child.material)
+            .some((material) => /edge|outline/i.test(material?.name || '')));
 
-    if (!child.isMesh) {
+    if (isEdgeObject) {
+        child.userData.isPresentationEdge = true;
+        child.visible = state.presentationStyle === 'scientific';
         return;
     }
 
-    // Preserve the exact original GLB material.
-    child.userData.originalMaterial = child.material;
+    if (!child.isMesh) return;
 
-    // Remember whether the original geometry already had
-    // vertex colors. We must restore this if necessary.
+    child.castShadow = true;
+    child.receiveShadow = true;
+
+    // Preserve the exact original GLB material for orthophoto mode.
+    child.userData.originalMaterial = child.material;
     child.userData.originalColorAttribute =
         child.geometry.getAttribute('color') || null;
-
-    // No heatmap material here.
-    // No generated color attribute here.
+    eachMaterial(child, configureMaterial);
 });
             // ------------------------------------------------
             // Recalculate bounds
@@ -288,57 +438,8 @@ model.traverse((child) => {
                     new THREE.Vector3()
                 );
 
-            // ------------------------------------------------
-            // Put grid below terrain
-            // ------------------------------------------------
-
-            gridHelper.position.y =
-                centeredBox.min.y - 1;
-
-            // ------------------------------------------------
-            // Calculate useful dimensions
-            // ------------------------------------------------
-
-            const maxDim =
-                Math.max(
-                    centeredSize.x,
-                    centeredSize.y,
-                    centeredSize.z
-                );
-
-            // ------------------------------------------------
-            // Automatically position camera
-            // ------------------------------------------------
-
-            const cameraDistance =
-                Math.max(
-                    maxDim * 1.4,
-                    40
-                );
-
-            camera.position.set(
-                cameraDistance,
-                cameraDistance * 0.75,
-                cameraDistance
-            );
-
-            camera.lookAt(
-                0,
-                0,
-                0
-            );
-
-            // ------------------------------------------------
-            // Reset orbit target
-            // ------------------------------------------------
-
-            orbitControls.target.set(
-                0,
-                0,
-                0
-            );
-
-            orbitControls.update();
+            fitSceneToTerrain(centeredBox);
+            applyPresentationStyle(state.presentationStyle);
 
             // ------------------------------------------------
             // Save reset camera state
@@ -482,7 +583,10 @@ export function setVerticalExaggeration(value) {
     const centeredBox =
         new THREE.Box3().setFromObject(state.terrainModel);
 
-    gridHelper.position.y = centeredBox.min.y - 1;
+    const centeredSize = centeredBox.getSize(new THREE.Vector3());
+    gridHelper.position.y = centeredBox.min.y -
+        Math.max(Math.max(centeredSize.x, centeredSize.z) * 0.002, 0.02);
+    configureLightingForBounds(centeredBox);
 
     updateComparisonBounds(state.terrainModel);
 

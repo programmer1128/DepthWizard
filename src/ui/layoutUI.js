@@ -23,7 +23,7 @@ function writeBool(key, value) {
     }
 }
 
-function setSidebar(collapsed, persist = true, resetScroll = true) {
+export function setSidebar(collapsed, persist = true, resetScroll = true) {
     const workspace = document.getElementById('workspace');
     const sidebar = document.getElementById('sidebar');
     const panel = document.getElementById('sidebarPanel');
@@ -49,9 +49,68 @@ function setSidebar(collapsed, persist = true, resetScroll = true) {
             panel.scrollTop = 0;
         });
     }
+
+    // The viewer is a flex child, so changing sidebar width does not emit a
+    // window resize by itself. Notify Three.js after the CSS transition.
+    window.setTimeout(() => {
+        window.dispatchEvent(new Event('resize'));
+    }, 240);
+}
+
+const WORKFLOW_GROUPS = {
+    'workflow-data': ['workflow-data', 'workflow-readiness'],
+    'workflow-input': ['workflow-input'],
+    'workflow-explore': ['workflow-input', 'workflow-visual-controls', 'workflow-explore'],
+    'workflow-analyze': ['workflow-analyze', 'workflow-flight'],
+    'workflow-validate': ['workflow-validate'],
+    'workflow-output': ['workflow-output', 'workflow-exports']
+};
+
+const SECTION_ORDER = [
+    'workflow-data',
+    'workflow-readiness',
+    'workflow-input',
+    'workflow-visual-controls',
+    'workflow-explore',
+    'workflow-analyze',
+    'workflow-flight',
+    'workflow-validate',
+    'workflow-hydrology',
+    'workflow-output',
+    'workflow-exports'
+];
+
+function reorderWorkflowSections() {
+    const panel = document.getElementById('sidebarPanel');
+    if (!panel) return;
+
+    const ordered = new Set();
+    SECTION_ORDER.forEach((id) => {
+        const section = document.getElementById(id);
+        if (!section) return;
+        panel.appendChild(section);
+        ordered.add(section);
+    });
+
+    // Keep ungrouped support/status sections after the workflow tools.
+    Array.from(panel.children).forEach((section) => {
+        if (!ordered.has(section)) panel.appendChild(section);
+    });
+}
+
+function expandSection(section) {
+    if (!section) return;
+    section.classList.remove('is-collapsed');
+    const button = section.querySelector('.section-collapse-btn');
+    if (button) {
+        button.textContent = '−';
+        button.setAttribute('aria-expanded', 'true');
+        button.setAttribute('aria-label', 'Collapse section');
+    }
 }
 
 export function initLayoutUI() {
+    reorderWorkflowSections();
     const sidebarButton = document.getElementById('sidebarToggleBtn');
 
     if (sidebarButton) {
@@ -87,12 +146,17 @@ export function initLayoutUI() {
     document.querySelectorAll('[data-rail-target]').forEach((button) => {
         button.addEventListener('click', () => {
             const targetId = button.getAttribute('data-rail-target');
-            const target = targetId ? document.getElementById(targetId) : null;
+            const groupIds = WORKFLOW_GROUPS[targetId] || [targetId];
+            const targets = groupIds
+                .map((id) => document.getElementById(id))
+                .filter(Boolean);
+            const target = targets[0];
             if (!target) return;
 
             setSidebar(false, true, false);
             setRailActive(targetId);
-            scrollPanelTo(target);
+            targets.forEach(expandSection);
+            window.requestAnimationFrame(() => scrollPanelTo(target));
         });
     });
 

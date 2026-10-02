@@ -95,10 +95,10 @@ function patchMaterial(material) {
         );
 
         shader.fragmentShader = shader.fragmentShader.replace(
-            '#include <output_fragment>',
+            '#include <opaque_fragment>',
             `
                 // Preserve the renderer's fully lit, textured optical result first.
-                #include <output_fragment>
+                #include <opaque_fragment>
 
                 float dwNormalizedHeight = clamp(
                     (vDWWorldY - uMinY) / max(uMaxY - uMinY, 0.0001),
@@ -207,6 +207,10 @@ export function setComparisonEnabled(enabled) {
 
     if (dom.splitComparisonOverlay) {
         dom.splitComparisonOverlay.classList.toggle('hidden', !state.comparisonEnabled);
+        dom.splitComparisonOverlay.setAttribute(
+            'aria-hidden',
+            String(!state.comparisonEnabled)
+        );
     }
 
     if (dom.splitCompareBtn) {

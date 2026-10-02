@@ -21,13 +21,15 @@ import {
 import {
     toggleLighting,
     setTimeOfDay,
-    toggleGrid
+    toggleGrid,
+    setRenderQuality
 } from '../viewer/lighting.js';
 
 // ---> ADD THIS IMPORT <---
 import {
     updateTerrainHeatmap,
-    setVerticalExaggeration
+    setVerticalExaggeration,
+    applyPresentationStyle
 } from '../viewer/terrain.js';
 
 import {
@@ -120,6 +122,15 @@ function handleVerticalExaggeration(event) {
     if (dom.verticalExaggerationValue) {
         dom.verticalExaggerationValue.textContent = `${value.toFixed(2)}×`;
     }
+}
+
+function handlePresentationStyle(event) {
+    if (isSplitComparisonEnabled()) setComparisonEnabled(false);
+    applyPresentationStyle(event.target.value);
+}
+
+function handleRenderQuality(event) {
+    setRenderQuality(event.target.value);
 }
 
 /*function handleHeatmapClick() {
@@ -356,6 +367,17 @@ export function initControlsUI() {
             'input',
             handleVerticalExaggeration
         );
+    }
+
+    if (dom.presentationStyleSelect) {
+        dom.presentationStyleSelect.addEventListener('change', handlePresentationStyle);
+        dom.presentationStyleSelect.value = state.presentationStyle;
+    }
+
+    if (dom.renderQualitySelect) {
+        dom.renderQualitySelect.addEventListener('change', handleRenderQuality);
+        dom.renderQualitySelect.value = state.renderQuality;
+        setRenderQuality(state.renderQuality);
     }
 
     // --------------------------------------------------------

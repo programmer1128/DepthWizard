@@ -907,6 +907,59 @@ input:checked + .slider:before {
 #comparisonPiP.minimized .pip-body { 
   display: none; 
 } 
+
+#comparisonPiP.minimized .pip-footer {
+  display: none;
+}
+
+.source-preview-launcher {
+  position: absolute;
+  left: 18px;
+  bottom: 64px;
+  z-index: 24;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid rgba(56, 189, 248, 0.42);
+  border-radius: 9px;
+  color: #dff7ff;
+  background: rgba(8, 20, 32, 0.9);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+}
+
+.source-preview-launcher:hover {
+  background: rgba(16, 43, 61, 0.96);
+  border-color: rgba(94, 216, 255, 0.75);
+}
+
+.source-preview-launcher.hidden {
+  display: none;
+}
+
+.source-preview-icon {
+  color: var(--accent-cyan);
+  font-size: 17px;
+}
+
+.viewer-select {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  color: var(--text-primary);
+  background: rgba(8, 13, 22, 0.72);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+
+#canvas-container {
+  background:
+    radial-gradient(ellipse at 50% 76%, rgba(153, 93, 58, 0.25) 0%, rgba(22, 43, 66, 0.18) 30%, transparent 58%),
+    linear-gradient(180deg, #050b18 0%, #0a1830 52%, #342921 100%);
+}
  
 .pip-header { 
   padding: 10px 14px; 
@@ -2972,9 +3025,13 @@ input[type="range"] {
 }
 
 #bottom-hud {
-  left: 18px;
-  right: 18px;
-  bottom: 18px;
+  left: calc(var(--dw-sidebar-w) + 18px) !important;
+  right: 18px !important;
+  transition: left 220ms cubic-bezier(.22, .61, .36, 1);
+}
+#workspace.sidebar-collapsed #bottom-hud,
+#sidebar.panel-collapsed + #viewer #bottom-hud {
+  left: calc(var(--dw-rail-w) + 18px) !important;
 }
 
 #bottom-hud .hud-pill:last-child {
@@ -3254,6 +3311,72 @@ button:disabled,
 
   #topScientificBadge {
     display: none;
+  }
+}
+
+/* ============================================================
+   WORKFLOW / SOURCE PREVIEW CORRECTIONS
+   ============================================================ */
+
+.section-badge:empty {
+  display: none !important;
+}
+
+.source-preview-launcher {
+  left: calc(var(--dw-sidebar-w) + 28px) !important;
+  bottom: 76px !important;
+  z-index: 32 !important;
+  min-width: 118px;
+  justify-content: center;
+}
+
+#comparisonPiP {
+  left: calc(var(--dw-sidebar-w) + 28px) !important;
+  right: auto !important;
+  bottom: 76px !important;
+  width: min(380px, calc(100% - 330px)) !important;
+  min-width: 290px;
+  z-index: 34 !important;
+}
+
+#sidebar.panel-collapsed + #viewer .source-preview-launcher,
+#sidebar.panel-collapsed + #viewer #comparisonPiP {
+  left: calc(var(--dw-rail-w) + 48px) !important;
+}
+
+#comparisonPiP .pip-body {
+  height: min(300px, 36vh);
+}
+
+#pipImage {
+  object-fit: contain !important;
+}
+
+.sidebar-toggle.layout-toggle {
+  border-color: rgba(105, 215, 255, 0.55) !important;
+  background: rgba(5, 15, 24, 0.98) !important;
+  box-shadow: 0 0 0 3px rgba(5, 15, 24, 0.8), 0 0 22px rgba(68, 200, 255, 0.22) !important;
+}
+
+.split-comparison-overlay:not(.hidden) .split-divider {
+  display: block !important;
+  z-index: 6;
+}
+
+@media (max-width: 900px) {
+  .source-preview-launcher {
+    left: calc(var(--dw-sidebar-w) + 22px) !important;
+  }
+
+  #comparisonPiP {
+    left: calc(var(--dw-sidebar-w) + 22px) !important;
+    width: min(350px, calc(100% - 80px)) !important;
+    min-width: 0;
+  }
+
+  #sidebar.panel-collapsed + #viewer .source-preview-launcher,
+  #sidebar.panel-collapsed + #viewer #comparisonPiP {
+    left: calc(var(--dw-rail-w) + 40px) !important;
   }
 }
 
@@ -4107,4 +4230,159 @@ button:disabled,
     width: 50px;
   }
 
+}
+
+/* ============================================================
+   BOTTOM VIEWER STATUS + NAVIGATION HELP
+   ============================================================ */
+
+#bottom-hud {
+  left: calc(var(--dw-sidebar-w) + 18px) !important;
+  right: 18px !important;
+  bottom: 18px !important;
+  display: flex !important;
+  align-items: flex-end !important;
+  justify-content: space-between !important;
+  pointer-events: none;
+  transition: left 220ms cubic-bezier(.22, .61, .36, 1);
+}
+
+/* Account for the icon rail when the main panel is collapsed. */
+#workspace.sidebar-collapsed #bottom-hud,
+#sidebar.panel-collapsed + #viewer #bottom-hud {
+  left: calc(var(--dw-rail-w) + 18px) !important;
+}
+
+.bottom-hud-left {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bottom-status-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  pointer-events: none;
+}
+
+/*
+ * These elements were previously positioned independently.
+ * They must become normal children of bottom-status-row.
+ */
+#bottom-hud .coordinates-readout,
+#bottom-hud .viewer-hud-status {
+  position: static !important;
+  inset: auto !important;
+  left: auto !important;
+  right: auto !important;
+  top: auto !important;
+  bottom: auto !important;
+  transform: none !important;
+  margin: 0 !important;
+  max-width: none !important;
+}
+
+#bottom-hud .coordinates-readout {
+  display: flex !important;
+  align-items: center;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  background: rgba(7, 11, 18, 0.84);
+  color: #9fb3c8;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  white-space: nowrap;
+  backdrop-filter: blur(10px);
+}
+
+#bottom-hud .viewer-hud-status {
+  display: flex !important;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  background: rgba(7, 11, 18, 0.84);
+  color: #d7e7f5;
+  white-space: nowrap;
+  backdrop-filter: blur(10px);
+}
+
+#bottom-hud .navigation-help {
+  pointer-events: auto;
+  white-space: nowrap;
+}
+
+#bottom-hud .workstation-label {
+  margin-left: auto;
+  pointer-events: auto;
+}
+
+@media (max-width: 850px) {
+  #bottom-hud .bottom-status-row {
+    flex-wrap: wrap;
+  }
+
+  #bottom-hud .workstation-label {
+    display: none;
+  }
+
+  #bottom-hud .navigation-help {
+    white-space: normal;
+  }
+}
+/* Compact 2D preview button — bottom-right HUD position */
+.source-preview-launcher {
+  left: auto !important;
+  right: 18px !important;
+  bottom: 62px !important;
+
+  min-width: 0 !important;
+  min-height: 28px !important;
+  height: 28px;
+
+  padding: 0 9px !important;
+  gap: 5px;
+
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 6px !important;
+
+  background: rgba(7, 11, 18, 0.84) !important;
+  color: #a9bbce !important;
+
+  box-shadow: none !important;
+  backdrop-filter: blur(8px);
+
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+
+  z-index: 32 !important;
+}
+
+/* Prevent older sidebar rules from moving it back to the left. */
+#workspace.sidebar-collapsed .source-preview-launcher,
+#sidebar.panel-collapsed + #viewer .source-preview-launcher {
+  left: auto !important;
+  right: 18px !important;
+}
+
+/* Smaller icon */
+.source-preview-launcher .source-preview-icon {
+  font-size: 11px !important;
+  color: #79bcd4 !important;
+}
+
+/* Quiet hover matching the other HUD controls */
+.source-preview-launcher:hover {
+  color: #e4f4ff !important;
+  background: rgba(17, 25, 36, 0.94) !important;
+  border-color: rgba(105, 215, 255, 0.28) !important;
+  transform: none !important;
 }
