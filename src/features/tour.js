@@ -40,11 +40,12 @@ export function startGuidedTour() {
 
     if (dom.guidedTourBtn) {
         dom.guidedTourBtn.classList.add('active');
-        dom.guidedTourBtn.textContent = 'Stop Guided Tour';
+        dom.guidedTourBtn.textContent = 'Exit 360° View';
     }
+    dom.judgeModeBtn?.classList.add('active');
 
     if (dom.tourStatus) {
-        dom.tourStatus.textContent = 'Guided tour active • 60 seconds';
+        dom.tourStatus.textContent = '360° view active • 60 seconds';
     }
 
     return true;
@@ -66,8 +67,9 @@ export function stopGuidedTour(restoreCamera = true) {
 
     if (dom.guidedTourBtn) {
         dom.guidedTourBtn.classList.remove('active');
-        dom.guidedTourBtn.textContent = 'Start 60s Guided Tour';
+        dom.guidedTourBtn.textContent = 'Start 360° View';
     }
+    dom.judgeModeBtn?.classList.remove('active');
 
     if (dom.tourStatus) {
         dom.tourStatus.textContent = 'Ready • orbit camera restored';
@@ -106,7 +108,7 @@ export function updateGuidedTour(deltaSeconds) {
 
     if (dom.tourStatus) {
         const remaining = Math.max(0, Math.ceil(TOUR_DURATION - state.tourElapsed));
-        dom.tourStatus.textContent = `Guided tour active • ${remaining}s remaining`;
+        dom.tourStatus.textContent = `360° view active • ${remaining}s remaining`;
     }
 }
 
@@ -114,11 +116,14 @@ export function initGuidedTour() {
     if (initialized) return;
     initialized = true;
 
-    dom.guidedTourBtn?.addEventListener('click', () => {
+    const toggleTour = () => {
         if (state.tourActive) {
             stopGuidedTour(true);
         } else if (!startGuidedTour()) {
             if (dom.tourStatus) dom.tourStatus.textContent = 'Load terrain before starting the tour.';
         }
-    });
+    };
+
+    dom.guidedTourBtn?.addEventListener('click', toggleTour);
+    dom.judgeModeBtn?.addEventListener('click', toggleTour);
 }

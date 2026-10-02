@@ -58,6 +58,9 @@ export const dom = {
     topScientificBadge:
         document.getElementById('topScientificBadge'),
 
+    judgeModeBtn:
+        document.getElementById('judgeModeBtn'),
+
     // --------------------------------------------------------
     // Empty viewer state
     // --------------------------------------------------------

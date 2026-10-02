@@ -75,7 +75,7 @@ function displayCoordinates(point) {
 
 export function clearInspector() {
     if (dom.inspectorContent) {
-        dom.inspectorContent.innerHTML = '<div class="empty-inspector">Double-click terrain to inspect</div>';
+        dom.inspectorContent.innerHTML = '<div class="empty-inspector">No point selected</div>';
     }
 
     if (dom.coordinates) {

@@ -46,7 +46,7 @@
 
     <div class="top-actions">
       <span id="topScientificBadge" class="scientific-badge unknown">AWAITING DATA</span>
-      <button class="icon-btn" id="helpBtn" title="Keyboard & Mouse Controls">?</button>
+      <button class="top-action-btn" id="judgeModeBtn" type="button" title="Start a 60-second 360° terrain view">360° View</button>
       <button class="icon-btn" id="fullscreenBtn" title="Toggle Fullscreen">⛶</button>
     </div>
   </header>
@@ -55,9 +55,43 @@
 
     <aside id="sidebar">
 
-      <section class="sidebar-section">
+      <nav id="toolRail" class="tool-rail" aria-label="Primary workspace tools">
+        <button class="rail-tool is-active" type="button" data-rail-target="workflow-data" title="Project overview" aria-label="Project overview">
+          <span class="rail-tool-icon" aria-hidden="true">⌂</span>
+          <span class="rail-tool-label">Project</span>
+        </button>
+        <button class="rail-tool" type="button" data-rail-target="workflow-input" title="Insert imagery" aria-label="Insert imagery">
+          <span class="rail-tool-icon" aria-hidden="true">⇧</span>
+          <span class="rail-tool-label">Insert</span>
+        </button>
+        <button class="rail-tool" type="button" data-rail-target="workflow-explore" title="Explore terrain" aria-label="Explore terrain">
+          <span class="rail-tool-icon" aria-hidden="true">◈</span>
+          <span class="rail-tool-label">Explore</span>
+        </button>
+        <button class="rail-tool" type="button" data-rail-target="workflow-analyze" title="Analyze terrain" aria-label="Analyze terrain">
+          <span class="rail-tool-icon" aria-hidden="true">⌁</span>
+          <span class="rail-tool-label">Analyze</span>
+        </button>
+        <button class="rail-tool" type="button" data-rail-target="workflow-validate" title="Validate terrain" aria-label="Validate terrain">
+          <span class="rail-tool-icon" aria-hidden="true">✓</span>
+          <span class="rail-tool-label">Validate</span>
+        </button>
+        <button class="rail-tool" type="button" data-rail-target="workflow-output" title="Output and export" aria-label="Output and export">
+          <span class="rail-tool-icon" aria-hidden="true">⇩</span>
+          <span class="rail-tool-label">Output</span>
+        </button>
+
+        <div class="rail-spacer"></div>
+        <button class="rail-tool rail-help" type="button" data-rail-action="help" title="Keyboard and mouse controls" aria-label="Keyboard and mouse controls">
+          <span class="rail-tool-icon" aria-hidden="true">?</span>
+          <span class="rail-tool-label">Help</span>
+        </button>
+      </nav>
+
+      <div id="sidebarPanel" class="sidebar-panel">
+      <section class="sidebar-section" id="workflow-data">
         <div class="section-header">
-          <span class="section-title">Mission Overview</span>
+          <span class="section-title">Data · Mission Overview</span>
           <span class="section-badge"></span>
         </div>
         <div class="panel-card project-card">
@@ -75,8 +109,8 @@
 
       <section class="sidebar-section">
         <div class="section-header">
-          <span class="section-title">Scientific Data Mode</span>
-          <span class="section-badge">FAIL-CLOSED</span>
+          <span class="section-title">Data Readiness</span>
+          <span class="section-badge">MODE GATE</span>
         </div>
         <div class="scientific-mode-card">
           <div class="scientific-mode-top">
@@ -88,10 +122,10 @@
         </div>
       </section>
 
-      <section class="sidebar-section">
+      <section class="sidebar-section" id="workflow-input">
         <div class="section-header">
-          <span class="section-title">Optical Imagery Input</span>
-          <span class="section-badge">2D Source</span>
+          <span class="section-title">Load Imagery</span>
+          <span class="section-badge">SOURCE</span>
         </div>
 
         <div class="image-type-toggle" id="imageTypeToggle">
@@ -123,7 +157,7 @@
 
         <button class="btn-primary" id="uploadBtn">
           <span>⚡</span>
-          <span>Generate 3D Map</span>
+          <span>Generate 3D Terrain</span>
         </button>
 
         <button class="btn-secondary" id="demoBtn" title="Load sample GLB terrain directly">
@@ -132,10 +166,10 @@
         </button>
       </section>
 
-      <section class="sidebar-section">
+      <section class="sidebar-section" id="workflow-explore">
         <div class="section-header">
-          <span class="section-title">Optical ↔ Elevation Split</span>
-          <span class="section-badge">SHADER</span>
+          <span class="section-title">Explore · Visual Layers</span>
+          <span class="section-badge">VIEW</span>
         </div>
 
         <div class="panel-card comparison-tool-card">
@@ -161,11 +195,11 @@
         </div>
       </section>
 
-      <section class="sidebar-section">
+      <section class="sidebar-section" id="workflow-validate">
 
         <div class="section-header">
             <span class="section-title">
-                2D vs 3D Comparison
+                Validate · Reference Comparison
             </span>
 
             <span class="section-badge">
@@ -180,7 +214,7 @@
             </p>
 
             <button id="compareBtn" class="primary-action-btn" type="button">
-              Compare Elevation
+              Open Validation
             </button>
             <div id="metricLockNote" class="metric-lock-note is-locked">
               Metric measurement and benchmark comparison are locked until a metric GeoTIFF is supplied.
@@ -191,9 +225,9 @@
     </section>
 
       <!-- CAMERA & NAVIGATION -->
-      <section class="sidebar-section">
+      <section class="sidebar-section" id="workflow-analyze">
         <div class="section-header">
-          <span class="section-title">Camera & Navigation</span>
+          <span class="section-title">Analyze · Camera & Navigation</span>
           <span class="section-badge" id="autoRotateBadge">AUTO OFF</span>
         </div>
 
@@ -216,7 +250,7 @@
       <!-- VISUAL CONTROLS: RESTORED -->
       <section class="sidebar-section">
         <div class="section-header">
-          <span class="section-title">Visual Controls</span>
+          <span class="section-title">Explore · Visual Controls</span>
           <span class="section-badge">LIGHTING</span>
         </div>
 
@@ -277,7 +311,7 @@
       <!-- INTERACTIVE ROUTE PLANNING -->
       <section class="sidebar-section">
         <div class="section-header">
-          <span class="section-title">Route Planning</span>
+          <span class="section-title">Analyze · Flight Path</span>
           <span class="section-badge" id="routeWaypointsBadge">0 Pts</span>
         </div>
 
@@ -336,8 +370,8 @@
 
       <section class="sidebar-section">
         <div class="section-header">
-          <span class="section-title">Hydrology & Disaster Analysis</span>
-          <span class="section-badge">SIMULATE</span>
+          <span class="section-title">Advanced · Hydrology</span>
+          <span class="section-badge">ADVANCED</span>
         </div>
 
         <div class="panel-card flood-card">
@@ -360,27 +394,27 @@
         </div>
       </section>
 
-      <section class="sidebar-section">
+      <section class="sidebar-section" id="workflow-output">
         <div class="section-header">
-          <span class="section-title">Guided Flight</span>
-          <span class="section-badge">60 SEC</span>
+          <span class="section-title">Output · 360° View</span>
+          <span class="section-badge">PRESENT</span>
         </div>
         <div class="panel-card tour-card">
           <div class="tour-line">
             <div>
-              <strong>Curated terrain flythrough</strong>
-              <p>Presentation flythrough • restores your camera after.</p>
+              <strong>60-second terrain flythrough</strong>
+              <p>Automatic 360° presentation view • restores your camera after.</p>
             </div>
           </div>
-          <button id="guidedTourBtn" class="btn-secondary" type="button">Start 60s Guided Tour</button>
+          <button id="guidedTourBtn" class="btn-secondary" type="button">Start 360° View</button>
           <div id="tourStatus" class="tour-status">Ready • orbit camera preserved</div>
         </div>
       </section>
 
       <section class="sidebar-section">
         <div class="section-header">
-          <span class="section-title">Exports & Evidence</span>
-          <span class="section-badge">OUTPUT</span>
+          <span class="section-title">Output · Exports & Evidence</span>
+          <span class="section-badge">EXPORT</span>
         </div>
         <div class="panel-card export-card">
           <div class="tool-intro">
@@ -414,6 +448,7 @@
           </div>
         </div>
       </section>
+      </div>
 
     </aside>
 
@@ -495,11 +530,14 @@
 
       <div id="inspectorPanel" class="inspector-panel">
         <div class="inspector-panel-head">
-          <span>REAL-TIME PROBE</span>
+          <span>POINT INSPECTOR</span>
           <span id="inspectorMode" class="mini-data-badge">RELATIVE</span>
         </div>
         <div id="inspectorValue" class="inspector-big">—</div>
         <div id="inspectorCoords" class="inspector-coords">Double-click terrain to inspect</div>
+        <div id="inspector-content" class="inspector-content">
+          <div class="empty-inspector">No point selected</div>
+        </div>
         <div id="inspectorNote" class="inspector-note">Probe values follow the current scientific data mode.</div>
       </div>
 
@@ -510,7 +548,7 @@
           <div class="empty-state-radar">
             <div class="empty-state-icon">📡</div>
           </div>
-          <h2 class="empty-state-title">Upload satellite imagery to generate 3D terrain...</h2>
+          <h2 class="empty-state-title">Load imagery to generate 3D terrain</h2>
           <p class="empty-state-desc">
             Single-view height estimation backend processes optical satellite textures into 3D elevation GLB meshes.
           </p>

@@ -3828,3 +3828,283 @@ button:disabled,
     font-size: 10px;
     opacity: 0.75;
 }
+
+/* ============================================================
+   WORKFLOW-FIRST UI PASS
+   Keeps existing feature IDs and behavior intact while making
+   the product read as a guided workstation instead of a catalogue.
+   ============================================================ */
+
+.top-action-btn {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(105, 215, 255, 0.25);
+  border-radius: 8px;
+  background: rgba(105, 215, 255, 0.08);
+  color: #c9f4ff;
+  font: 700 10px/1 var(--font-sans);
+  letter-spacing: .55px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background .18s ease, border-color .18s ease, color .18s ease, transform .18s ease;
+}
+
+.top-action-btn:hover,
+.top-action-btn.active {
+  background: rgba(105, 215, 255, 0.17);
+  border-color: rgba(105, 215, 255, 0.55);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+#sidebar .section-title {
+  max-width: 78%;
+}
+
+#sidebar .btn-primary {
+  letter-spacing: .3px;
+}
+
+#guidedTourBtn {
+  letter-spacing: .45px;
+  text-transform: uppercase;
+}
+
+.inspector-content {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(145, 173, 210, 0.1);
+}
+
+.inspector-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #72879c;
+  font: 8px/1.3 var(--font-mono);
+}
+
+.inspector-row strong {
+  color: #e3f5ff;
+  font-weight: 600;
+}
+
+.empty-inspector {
+  color: #6e8297;
+  font-size: 8px;
+  line-height: 1.4;
+}
+
+@media (max-width: 900px) {
+  .top-action-btn {
+    padding: 0 8px;
+    font-size: 9px;
+  }
+
+}
+
+@media (max-width: 600px) {
+  .top-action-btn {
+    display: none;
+  }
+
+}
+
+/* ============================================================
+   ICON RAIL + CONTEXT PANEL
+   The rail keeps the workspace quiet; the panel opens only when
+   the user chooses a tool family.
+   ============================================================ */
+
+:root {
+  --dw-rail-w: 72px;
+  --dw-panel-w: min(344px, 31vw);
+  --dw-sidebar-w: calc(var(--dw-rail-w) + var(--dw-panel-w));
+}
+
+#sidebar {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: stretch;
+  gap: 0 !important;
+  width: var(--dw-sidebar-w) !important;
+  min-width: var(--dw-sidebar-w) !important;
+  max-width: var(--dw-sidebar-w) !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  background: rgba(8, 13, 20, .96) !important;
+  transition: width 220ms cubic-bezier(.22,.61,.36,1);
+}
+
+#sidebar.panel-collapsed {
+  width: var(--dw-rail-w) !important;
+  min-width: var(--dw-rail-w) !important;
+  max-width: var(--dw-rail-w) !important;
+}
+
+#sidebar::after {
+  display: none !important;
+}
+
+.tool-rail {
+  width: var(--dw-rail-w);
+  min-width: var(--dw-rail-w);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px 14px;
+  background: linear-gradient(180deg, rgba(13, 21, 31, .98), rgba(7, 12, 19, .98));
+  border-right: 1px solid rgba(145, 173, 210, .13);
+  z-index: 2;
+}
+
+.rail-tool {
+  position: relative;
+  width: 56px;
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 3px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: #70869c;
+  cursor: pointer;
+  transition: color .18s ease, background .18s ease, border-color .18s ease, transform .18s ease;
+}
+
+.rail-tool:hover,
+.rail-tool.is-active {
+  color: #e9fbff;
+  background: rgba(105, 215, 255, .1);
+  border-color: rgba(105, 215, 255, .22);
+}
+
+.rail-tool.is-active::before {
+  content: '';
+  position: absolute;
+  left: -9px;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  border-radius: 2px;
+  background: #69d7ff;
+  box-shadow: 0 0 12px rgba(105, 215, 255, .45);
+}
+
+.rail-tool-icon {
+  display: block;
+  height: 19px;
+  color: currentColor;
+  font: 18px/19px var(--font-sans);
+}
+
+.rail-tool-label {
+  font: 700 7px/1 var(--font-sans);
+  letter-spacing: .75px;
+  text-transform: uppercase;
+}
+
+.rail-spacer {
+  flex: 1 1 auto;
+  min-height: 18px;
+}
+
+.sidebar-panel {
+  width: var(--dw-panel-w);
+  min-width: var(--dw-panel-w);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 14px 12px 42px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 160ms ease, transform 220ms cubic-bezier(.22,.61,.36,1);
+}
+
+#sidebar.panel-collapsed .sidebar-panel {
+  opacity: 0;
+  transform: translateX(-12px);
+  pointer-events: none;
+}
+
+#sidebarPanel > * {
+  flex: 0 0 auto;
+}
+
+#sidebarPanel .sidebar-section {
+  min-width: 0 !important;
+  width: 100%;
+}
+
+.sidebar-toggle.layout-toggle {
+  left: calc(var(--dw-sidebar-w) - 19px) !important;
+  z-index: 100 !important;
+}
+
+#sidebar.panel-collapsed + #viewer .sidebar-toggle.layout-toggle {
+  left: calc(var(--dw-rail-w) - 19px) !important;
+}
+
+#sidebar.panel-collapsed + #viewer .sidebar-toggle .layout-toggle-icon {
+  transform: translateX(1px);
+}
+
+@media (max-width: 900px) {
+  :root {
+    --dw-rail-w: 68px;
+    --dw-panel-w: min(322px, calc(100vw - var(--dw-rail-w)));
+    --dw-sidebar-w: calc(var(--dw-rail-w) + var(--dw-panel-w));
+  }
+
+  #sidebar {
+    width: var(--dw-sidebar-w) !important;
+    min-width: var(--dw-sidebar-w) !important;
+    max-width: var(--dw-sidebar-w) !important;
+    top: 56px !important;
+  }
+
+  #sidebar.panel-collapsed {
+    width: var(--dw-rail-w) !important;
+    min-width: var(--dw-rail-w) !important;
+    max-width: var(--dw-rail-w) !important;
+  }
+
+  .sidebar-toggle.layout-toggle {
+    left: calc(var(--dw-sidebar-w) - 19px) !important;
+  }
+
+  #sidebar.panel-collapsed + #viewer .sidebar-toggle.layout-toggle {
+    left: calc(var(--dw-rail-w) - 19px) !important;
+  }
+}
+
+@media (max-width: 600px) {
+  :root {
+    --dw-rail-w: 62px;
+    --dw-panel-w: calc(100vw - var(--dw-rail-w));
+    --dw-sidebar-w: 100vw;
+  }
+
+  .tool-rail {
+    padding-left: 5px;
+    padding-right: 5px;
+  }
+
+  .rail-tool {
+    width: 50px;
+  }
+
+}

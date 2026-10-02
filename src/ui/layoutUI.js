@@ -23,29 +23,30 @@ function writeBool(key, value) {
     }
 }
 
-function setSidebar(collapsed, persist = true) {
+function setSidebar(collapsed, persist = true, resetScroll = true) {
     const workspace = document.getElementById('workspace');
     const sidebar = document.getElementById('sidebar');
+    const panel = document.getElementById('sidebarPanel');
     const button = document.getElementById('sidebarToggleBtn');
     if (!workspace || !sidebar || !button) return;
 
     workspace.classList.toggle('sidebar-collapsed', collapsed);
-    sidebar.classList.toggle('is-collapsed', collapsed);
+    sidebar.classList.toggle('panel-collapsed', collapsed);
 
     button.setAttribute('aria-expanded', String(!collapsed));
-    button.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
-    button.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    button.setAttribute('aria-label', collapsed ? 'Show tool panel' : 'Hide tool panel');
+    button.title = collapsed ? 'Show tool panel' : 'Hide tool panel';
 
     const icon = button.querySelector('.layout-toggle-icon');
     if (icon) icon.textContent = collapsed ? '›' : '‹';
 
     if (persist) writeBool(SIDEBAR_KEY, collapsed);
 
-    // Reopening always brings the important upload / Generate 3D Map area
+    // Reopening always brings the important upload / Generate 3D Terrain area
     // back into view instead of reopening on an arbitrary old scroll offset.
-    if (!collapsed) {
+    if (!collapsed && panel && resetScroll) {
         window.requestAnimationFrame(() => {
-            sidebar.scrollTop = 0;
+            panel.scrollTop = 0;
         });
     }
 }
@@ -55,13 +56,49 @@ export function initLayoutUI() {
 
     if (sidebarButton) {
         sidebarButton.addEventListener('click', () => {
-            const workspace = document.getElementById('workspace');
-            const collapsed = Boolean(workspace?.classList.contains('sidebar-collapsed'));
+            const sidebar = document.getElementById('sidebar');
+            const collapsed = Boolean(sidebar?.classList.contains('panel-collapsed'));
             setSidebar(!collapsed);
         });
     }
 
     setSidebar(readBool(SIDEBAR_KEY, false), false);
+
+    const railButtons = Array.from(document.querySelectorAll('[data-rail-target]'));
+    const setRailActive = (targetId) => {
+        railButtons.forEach((button) => {
+            button.classList.toggle(
+                'is-active',
+                button.getAttribute('data-rail-target') === targetId
+            );
+        });
+    };
+
+    const scrollPanelTo = (target) => {
+        const panel = document.getElementById('sidebarPanel');
+        if (!panel || !target) return;
+
+        panel.scrollTo({
+            top: Math.max(0, target.offsetTop - 12),
+            behavior: 'smooth'
+        });
+    };
+
+    document.querySelectorAll('[data-rail-target]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const targetId = button.getAttribute('data-rail-target');
+            const target = targetId ? document.getElementById(targetId) : null;
+            if (!target) return;
+
+            setSidebar(false, true, false);
+            setRailActive(targetId);
+            scrollPanelTo(target);
+        });
+    });
+
+    document.querySelector('[data-rail-action="help"]')?.addEventListener('click', () => {
+        document.getElementById('help-panel')?.classList.toggle('show');
+    });
 
     document.addEventListener('keydown', (event) => {
         const target = event.target;
@@ -73,7 +110,7 @@ export function initLayoutUI() {
 
         if (event.key === '[') {
             event.preventDefault();
-            const collapsed = Boolean(document.getElementById('workspace')?.classList.contains('sidebar-collapsed'));
+            const collapsed = Boolean(document.getElementById('sidebar')?.classList.contains('panel-collapsed'));
             setSidebar(!collapsed);
         }
     });

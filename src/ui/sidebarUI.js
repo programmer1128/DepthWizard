@@ -6,12 +6,12 @@
 const STORAGE_KEY = 'depthwizard.sidebar.sections.v3';
 
 const DEFAULT_COLLAPSED = new Set([
-    'Mission Overview',
-    '2D vs 3D Comparison',
-    'Visual Controls',
-    'Hydrology & Disaster Analysis',
-    'Guided Flight',
-    'Exports & Evidence'
+    'Data · Mission Overview',
+    'Validate · Reference Comparison',
+    'Explore · Visual Controls',
+    'Advanced · Hydrology',
+    'Output · 360° View',
+    'Output · Exports & Evidence'
 ]);
 
 function loadState() {
@@ -50,7 +50,7 @@ export function initSidebarUI() {
         if (header.querySelector('.section-collapse-btn')) return;
 
         const title = header.querySelector('.section-title')?.textContent?.trim() || `section-${index}`;
-        const isCoreInput = title === 'Optical Imagery Input';
+        const isCoreInput = title === 'Load Imagery';
         // Keep the primary upload/generation section always visible and clean.
         if (isCoreInput) {
             return;
