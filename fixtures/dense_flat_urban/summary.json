@@ -1,0 +1,93 @@
+{
+  "accepted_buildings" : 5,
+  "buildings" : 
+  [
+    {
+      "area_m2" : 324.0,
+      "base_elevation_m" : 10.0,
+      "building_probability" : 0.98000001907348633,
+      "height_agl_m" : 63.0,
+      "id" : 1,
+      "lod2_blocks" : [],
+      "roof_elevation_m" : 73.0,
+      "warnings" : 
+      [
+        "Semantic blob forcibly snapped to Oriented Bounding Box."
+      ]
+    },
+    {
+      "area_m2" : 342.0,
+      "base_elevation_m" : 10.0,
+      "building_probability" : 0.99000000953674316,
+      "height_agl_m" : 94.5,
+      "id" : 2,
+      "lod2_blocks" : [],
+      "roof_elevation_m" : 104.5,
+      "warnings" : 
+      [
+        "Semantic blob forcibly snapped to Oriented Bounding Box."
+      ]
+    },
+    {
+      "area_m2" : 342.0,
+      "base_elevation_m" : 10.0,
+      "building_probability" : 0.97000002861022949,
+      "height_agl_m" : 40.5,
+      "id" : 3,
+      "lod2_blocks" : [],
+      "roof_elevation_m" : 50.5,
+      "warnings" : 
+      [
+        "Semantic blob forcibly snapped to Oriented Bounding Box."
+      ]
+    },
+    {
+      "area_m2" : 199.5,
+      "base_elevation_m" : 10.0,
+      "building_probability" : 0.99000000953674316,
+      "height_agl_m" : 78.75,
+      "id" : 4,
+      "lod2_blocks" : [],
+      "roof_elevation_m" : 88.75,
+      "warnings" : 
+      [
+        "Semantic blob forcibly snapped to Oriented Bounding Box."
+      ]
+    },
+    {
+      "area_m2" : 161.5,
+      "base_elevation_m" : 10.0,
+      "building_probability" : 0.99000000953674316,
+      "height_agl_m" : 112.5,
+      "id" : 5,
+      "lod2_blocks" : [],
+      "roof_elevation_m" : 122.5,
+      "warnings" : 
+      [
+        "Semantic blob forcibly snapped to Oriented Bounding Box."
+      ]
+    }
+  ],
+  "component_rejected" : 0,
+  "emitted_buildings" : 5,
+  "final_class_ids" : "0=UNKNOWN,1=GROUND,2=BUILDING,3=ROAD,4=VEGETATION,5=WATER",
+  "flat_roof_blocks" : 0,
+  "gable_roof_blocks" : 0,
+  "height_rejected" : 0,
+  "hip_roof_blocks" : 0,
+  "lod2_blocks" : 0,
+  "mesh_warnings" : [],
+  "presentation_mode" : "flat_urban",
+  "presentation_reason" : "Distributed high-confidence urban structures; flat presentation without skirts.",
+  "recovered_pixels" : 0,
+  "rejections" : [],
+  "render_height_scale" : 1.0,
+  "scientific_rasters_flattened" : false,
+  "semantic_candidates" : 5,
+  "strong_building_fraction" : 0.334228515625,
+  "supported_ground_relief_m" : 0.0,
+  "uuid" : "10000000-0000-0000-0000-000000000001",
+  "vectorization_rejected" : 0,
+  "vegetation_fraction" : 0.0,
+  "worker_logit_order" : "OTHER,GROUND,LOW_VEGETATION,BUILDING,WATER,ROAD"
+}

@@ -16,6 +16,7 @@
 #include "../SemanticContext/SemanticPostProcessor.h"
 #include "../SurfaceFusion/NdsmGroundBiasCorrector.h"
 #include "../SurfaceFusion/SurfaceFusionService.h"
+#include "../structures/HybridFeatureFlags.h"
 
 #include <cpl_vsi.h>
 #include <drogon/utils/Utilities.h>
@@ -481,6 +482,13 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          std::filesystem::remove_all(satWorkDir, cleanupError);
 
          MeshBuildConfig meshConfig;
+         const auto hybridFlags = depthwizard::HybridFeatureFlags::loadFromEnvironment();
+         meshConfig.presentationStyle = hybridFlags.presentationStyle;
+         LOG_INFO << "PipelineService: hybrid flags: presentation_style="
+                  << depthwizard::toString(hybridFlags.presentationStyle)
+                  << "; sam2=" << (hybridFlags.enableSam2 ? 1 : 0)
+                  << "; kibs=" << (hybridFlags.enableKibs ? 1 : 0)
+                  << "; hybrid_fusion=" << (hybridFlags.enableHybridFusion ? 1 : 0);
          const ScenePresentationDecision sceneDecision = ScenePresentationSelector::select(
              semantics, surface, buildings);
          auto presentation = sceneDecision.presentation;

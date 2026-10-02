@@ -1,0 +1,54 @@
+{
+  "accepted_buildings" : 2,
+  "buildings" : 
+  [
+    {
+      "area_m2" : 225.0,
+      "base_elevation_m" : 59.349998474121094,
+      "building_probability" : 0.94999998807907104,
+      "height_agl_m" : 36.0,
+      "id" : 1,
+      "lod2_blocks" : [],
+      "roof_elevation_m" : 95.349998474121094,
+      "warnings" : 
+      [
+        "Semantic blob forcibly snapped to Oriented Bounding Box."
+      ]
+    },
+    {
+      "area_m2" : 306.25,
+      "base_elevation_m" : 83.049995422363281,
+      "building_probability" : 0.95999997854232788,
+      "height_agl_m" : 49.5,
+      "id" : 2,
+      "lod2_blocks" : [],
+      "roof_elevation_m" : 132.54998779296875,
+      "warnings" : 
+      [
+        "Semantic blob forcibly snapped to Oriented Bounding Box."
+      ]
+    }
+  ],
+  "component_rejected" : 0,
+  "emitted_buildings" : 2,
+  "final_class_ids" : "0=UNKNOWN,1=GROUND,2=BUILDING,3=ROAD,4=VEGETATION,5=WATER",
+  "flat_roof_blocks" : 0,
+  "gable_roof_blocks" : 0,
+  "height_rejected" : 0,
+  "hip_roof_blocks" : 0,
+  "lod2_blocks" : 0,
+  "mesh_warnings" : [],
+  "presentation_mode" : "metric",
+  "presentation_reason" : "Urban evidence insufficient or localized; retaining terrain and skirts.",
+  "recovered_pixels" : 0,
+  "rejections" : [],
+  "render_height_scale" : 1.0,
+  "scientific_rasters_flattened" : false,
+  "semantic_candidates" : 2,
+  "strong_building_fraction" : 0.12969970703125,
+  "supported_ground_relief_m" : 0.0,
+  "uuid" : "40000000-0000-0000-0000-000000000004",
+  "vectorization_rejected" : 0,
+  "vegetation_fraction" : 0.0,
+  "worker_logit_order" : "OTHER,GROUND,LOW_VEGETATION,BUILDING,WATER,ROAD"
+}

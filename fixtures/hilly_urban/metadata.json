@@ -1,0 +1,17 @@
+{
+	"crs" : "EPSG:32618 (WGS 84 / UTM zone 18N)",
+	"description" : "Buildings built along a steep hillside slope spanning 35m to 85m elevation relief.",
+	"geo_transform" : 
+	[
+		500000.0,
+		0.5,
+		0.0,
+		2000000.0,
+		0.0,
+		-0.5
+	],
+	"gsd_m" : 0.5,
+	"height" : 128,
+	"name" : "Hilly Terrain Settlement",
+	"width" : 128
+}

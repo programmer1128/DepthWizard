@@ -428,3 +428,40 @@ configure_depthwizard_test(scene_presentation_selector_test)
 target_link_libraries(scene_presentation_selector_test PRIVATE GTest::gtest_main)
 gtest_discover_tests(scene_presentation_selector_test
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
+
+add_executable(hybrid_feature_flags_test HybridFeatureFlags_test.cc)
+configure_depthwizard_test(hybrid_feature_flags_test)
+target_link_libraries(hybrid_feature_flags_test PRIVATE GTest::gtest_main)
+gtest_discover_tests(hybrid_feature_flags_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
+
+add_executable(generate_baseline_fixtures
+    GenerateBaselineFixtures.cc
+    ../BuildingReconstruction/Sat2Lod2Importer.cc
+    ../BuildingReconstruction/BuildingMaskProcessor.cc
+    ../BuildingReconstruction/BuildingInstanceExtractor.cc
+    ../BuildingReconstruction/BuildingInstanceSplitter.cc
+    ../BuildingReconstruction/FootprintVectorizer.cc
+    ../BuildingReconstruction/FootprintGeometryRegularizer.cc
+    ../BuildingReconstruction/BuildingHeightEstimator.cc
+    ../BuildingReconstruction/BuildingFootprintDecomposer.cc
+    ../BuildingReconstruction/BuildingRoofModeler.cc
+    ../BuildingReconstruction/BuildingReconstructionService.cc
+    ../SurfaceFusion/SurfaceFusionService.cc
+    ../MeshMapping/SceneMeshService.cc
+    ../MeshMapping/ScenePresentationSelector.cc
+    ../MeshMapping/SceneAssembler.cc
+    ../MeshMapping/BuildingMesher.cc
+    ../MeshMapping/LocalFrameTransformers.cc
+    ../MeshMapping/TerrainMesher.cc
+    ../MeshMapping/TerrainSurfaceComposer.cc
+    ../MeshMapping/TerrainTextureComposer.cc
+    ../CompressionLib/DracoCompressor.cc
+    ../FileGenerators/GltfPackager.cc
+    ../FileGenerators/ReconstructionDiagnosticsWriter.cc
+    ../FileGenerators/TiffExporter.cc)
+configure_depthwizard_test(generate_baseline_fixtures)
+target_include_directories(generate_baseline_fixtures PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(generate_baseline_fixtures PRIVATE
+    ${DEPTHWIZARD_GDAL_TARGET} draco ${OpenCV_LIBS} OpenMP::OpenMP_CXX CGAL::CGAL Drogon::Drogon)
+
