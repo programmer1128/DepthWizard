@@ -6,6 +6,8 @@
 #include <optional>
 #include <vector>
 
+// calculates the vector direction of the sensor (azimuth and off-nadir angle) to determine how much a building leans in the image, and whether a specific wall is facing the camera or occluded by a neighbor.
+
 struct Displacement2D {
     double dx{0.0}; // Offset in X (Easting or Column)
     double dy{0.0}; // Offset in Y (Northing or Row)
@@ -35,8 +37,7 @@ public:
         double drowDh,
         const SpatialMetadata& metadata);
 
-    // Derives roofprint-to-footprint displacement in projected coordinates (Easting, Northing)
-    // using fitted metric height and sensor look direction
+    // Derives roofprint-to-footprint displacement in projected coordinates (Easting, Northing) using fitted metric height and sensor look direction
     Displacement2D computeGroundDisplacement(double metricHeight) const;
 
     // Derives roofprint-to-footprint displacement in image pixel coordinates (Sample, Line)
@@ -44,8 +45,7 @@ public:
         double metricHeight,
         const SpatialMetadata& metadata) const;
 
-    // Tests whether a wall segment from (x1, y1) to (x2, y2) in CCW footprint order
-    // faces the sensor (i.e. is front-facing and visible in the off-nadir optical view)
+    // Tests whether a wall segment from (x1, y1) to (x2, y2) in CCW footprint order faces the sensor (i.e. is front-facing and visible in the off-nadir optical view)
     bool isWallFacingSensor(double x1, double y1, double x2, double y2) const;
 
     // Tests whether a facade quad formed between footprint and roofprint vertices is visible in pixel space

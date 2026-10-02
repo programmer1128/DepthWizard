@@ -10,12 +10,13 @@
 #include <optional>
 #include <vector>
 
+// calculates where every 3D roof and wall vertex should sample its texture from the 2D optical image
+
 class ProjectiveTexturingEngine {
 public:
     ProjectiveTexturingEngine() = default;
 
-    // Determines projection mode: selects RPC projective mapping when valid RPC metadata exists;
-    // otherwise, selects Affine UV mapping as mandatory fallback.
+    // Determines projection mode: selects RPC projective mapping when valid RPC metadata exists; otherwise, selects Affine UV mapping as mandatory fallback.
     ProjectionMode determineProjectionMode(const std::optional<RpcCameraModel>& rpc) const;
 
     // Projects a 3D vertex into the source optical image to determine its exact source pixel and UV.
@@ -60,8 +61,7 @@ public:
         int height,
         double guardBandPixels) const;
 
-    // Anti-bleeding verification: strictly checks for overlap or encroachment between adjacent buildings
-    // to guarantee zero source-pixel bleeding between adjacent building roofs
+    // Anti-bleeding verification: strictly checks for overlap or encroachment between adjacent buildings to guarantee zero source-pixel bleeding between adjacent building roofs
     bool verifyAntiBleeding(
         const std::vector<PixelPoint>& candidateRoofprintPixels,
         uint32_t candidateBuildingId,
@@ -78,8 +78,7 @@ public:
         int width,
         int height) const;
 
-    // Recovers facades: detects visible vs hidden strips, rectifies visible strips, applies neutral/procedural
-    // materials to hidden/back-facing walls, and tags each with explicit provenance.
+    // Recovers facades: detects visible vs hidden strips, rectifies visible strips, applies neutral/procedural materials to hidden/back-facing walls, and tags each with explicit provenance.
     std::vector<FacadeStrip> recoverFacades(
         const BuildingInstance& bldg,
         const std::vector<BuildingInstance>& allBuildings,

@@ -558,3 +558,157 @@ TEST(ProjectiveTexturingTest, AntiBleeding_GracefulHandlingOfCollinearPolygons) 
     EXPECT_FALSE(tb1.isTexturedSuccessfully);
     EXPECT_EQ(tb1.roofProvenance, MaterialProvenance::REJECTED_BLEED_RISK);
 }
+
+
+// -----------------------------------------------------------------------------
+// Test Suite 8: Complex Geometry & Robustness Limits
+// -----------------------------------------------------------------------------
+
+TEST(ProjectiveTexturingTest, Bounds_ExactGuardBandThresholds) {
+    ProjectiveTexturingEngine engine;
+    
+    // Raster: 100x100, Guard Band: 2.0
+    // Valid range should be exactly [2.0, 97.0] inclusive.
+    
+    // Exact valid boundaries
+    EXPECT_TRUE(engine.checkStrictBounds(2.0, 2.0, 100, 100, 2.0));
+    EXPECT_TRUE(engine.checkStrictBounds(97.0, 97.0, 100, 100, 2.0));
+    
+    // Just outside by epsilon
+    EXPECT_FALSE(engine.checkStrictBounds(1.9999, 50.0, 100, 100, 2.0));
+    EXPECT_FALSE(engine.checkStrictBounds(50.0, 97.0001, 100, 100, 2.0));
+    
+    // Image edges (0 and 99) should be strictly rejected
+    EXPECT_FALSE(engine.checkStrictBounds(0.0, 50.0, 100, 100, 2.0));
+    EXPECT_FALSE(engine.checkStrictBounds(50.0, 99.0, 100, 100, 2.0));
+}
+
+TEST(ProjectiveTexturingTest, Displacement_RejectsNegativeMetricHeights) {
+    ProjectiveTexturingEngine engine;
+    SpatialMetadata meta = createMockMetadata();
+    SensorLookGeometry geom = SensorLookGeometry::fromAzimuthAndOffNadir(90.0, 45.0);
+    
+    // Physically impossible negative height above ground
+    Displacement2D disp = engine.deriveRoofDisplacement(
+        -10.0, meta, geom, std::nullopt, 0.0, 0.0, 0.0);
+        
+    // The engine must bypass calculations and return {0.0, 0.0}
+    EXPECT_DOUBLE_EQ(disp.dx, 0.0);
+    EXPECT_DOUBLE_EQ(disp.dy, 0.0);
+}
+
+TEST(ProjectiveTexturingTest, AntiBleeding_HandlesZeroLengthEdges) {
+    ProjectiveTexturingEngine engine;
+    ProjectiveTexturingConfig config;
+    config.strictAntiBleeding = true;
+
+    SpatialMetadata meta = createMockMetadata(1000, 1000, 0.0, 0.0, 1.0);
+    SensorLookGeometry geom = SensorLookGeometry::fromAzimuthAndOffNadir(0.0, 0.0);
+
+    BuildingInstance bldg1 = createSquareBuilding(1, 100.0, -100.0, 20.0, 30.0);
+    
+    // Duplicate a vertex to create a zero-length edge (degenerate geometry)
+    bldg1.projectedFootprint.outerRing.insert(
+        bldg1.projectedFootprint.outerRing.begin() + 1, 
+        bldg1.projectedFootprint.outerRing[1]);
+
+    BuildingInstance bldg2 = createSquareBuilding(2, 500.0, -500.0, 20.0, 30.0); // Safely far away
+
+    std::vector<BuildingInstance> allBuildings = {bldg1, bldg2};
+    TexturingDiagnostics diag;
+
+    // The cross-product and segment math must not divide by zero or NaN-out on the duplicate vertex
+    TexturedBuilding tb1 = engine.processBuilding(
+        bldg1, allBuildings, meta, std::nullopt, geom, config, diag);
+
+    // It should survive the geometry pass and texture successfully since no neighbor overlap occurs
+    EXPECT_TRUE(tb1.isTexturedSuccessfully);
+    EXPECT_EQ(tb1.roofProvenance, MaterialProvenance::SOURCE_PROJECTIVE_AFFINE);
+}
+
+TEST(ProjectiveTexturingTest, AntiBleeding_AllowsCollinearButDisjointPolygons) {
+    ProjectiveTexturingEngine engine;
+    ProjectiveTexturingConfig config;
+    config.strictAntiBleeding = true;
+    config.minAdjacentSeparationPixels = 1.0;
+
+    SpatialMetadata meta = createMockMetadata(1000, 1000, 0.0, 0.0, 1.0);
+    SensorLookGeometry geom = SensorLookGeometry::fromAzimuthAndOffNadir(0.0, 0.0);
+
+    // Two buildings on the same Y-axis, separated by 10 units in X.
+    // They are collinear but do not touch.
+    BuildingInstance bldg1 = createSquareBuilding(1, 100.0, -100.0, 10.0, 30.0);
+    BuildingInstance bldg2 = createSquareBuilding(2, 120.0, -100.0, 10.0, 30.0);
+
+    std::vector<BuildingInstance> allBuildings = {bldg1, bldg2};
+    TexturingDiagnostics diag;
+
+    TexturedBuilding tb1 = engine.processBuilding(
+        bldg1, allBuildings, meta, std::nullopt, geom, config, diag);
+
+    // The updated segmentsIntersect function must recognize they are disjoint and allow texturing
+    EXPECT_TRUE(tb1.isTexturedSuccessfully);
+    EXPECT_EQ(tb1.roofProvenance, MaterialProvenance::SOURCE_PROJECTIVE_AFFINE);
+}
+
+TEST(ProjectiveTexturingTest, AntiBleeding_ConcaveUshapeIntersection) {
+    ProjectiveTexturingEngine engine;
+    ProjectiveTexturingConfig config;
+    config.strictAntiBleeding = true;
+
+    SpatialMetadata meta = createMockMetadata(1000, 1000, 0.0, 0.0, 1.0);
+    SensorLookGeometry geom = SensorLookGeometry::fromAzimuthAndOffNadir(0.0, 0.0);
+
+    // Building 1: A U-shaped concave polygon
+    BuildingInstance uShape;
+    uShape.buildingId = 1;
+    uShape.representativeBaseElevation = 10.0;
+    uShape.roofElevation = 40.0;
+    uShape.heightAboveGround = 30.0;
+    uShape.projectedFootprint.outerRing = {
+        {100.0, -100.0}, {130.0, -100.0}, {130.0, -70.0}, {120.0, -70.0},
+        {120.0, -90.0},  {110.0, -90.0},  {110.0, -70.0}, {100.0, -70.0}
+    };
+
+    // Building 2: A small block sitting precisely inside the opening of the "U", overlapping the arms
+    BuildingInstance blocker = createSquareBuilding(2, 105.0, -85.0, 20.0, 30.0);
+
+    std::vector<BuildingInstance> allBuildings = {uShape, blocker};
+    TexturingDiagnostics diag;
+
+    TexturedBuilding tbU = engine.processBuilding(
+        uShape, allBuildings, meta, std::nullopt, geom, config, diag);
+
+    // The segment intersection must trace the concave arms and correctly flag the collision inside the U
+    EXPECT_FALSE(tbU.isTexturedSuccessfully);
+    EXPECT_EQ(tbU.roofProvenance, MaterialProvenance::REJECTED_BLEED_RISK);
+}
+
+TEST(ProjectiveTexturingTest, Robustness_SelfIntersectingBowtiePolygon) {
+    ProjectiveTexturingEngine engine;
+    ProjectiveTexturingConfig config;
+
+    SpatialMetadata meta = createMockMetadata(1000, 1000, 0.0, 0.0, 1.0);
+    SensorLookGeometry geom = SensorLookGeometry::fromAzimuthAndOffNadir(0.0, 0.0);
+
+    // A Bowtie polygon (self-intersecting)
+    BuildingInstance bowtie;
+    bowtie.buildingId = 1;
+    bowtie.representativeBaseElevation = 10.0;
+    bowtie.roofElevation = 40.0;
+    bowtie.heightAboveGround = 30.0;
+    bowtie.projectedFootprint.outerRing = {
+        {100.0, -100.0}, {120.0, -80.0}, {100.0, -80.0}, {120.0, -100.0}
+    };
+
+    std::vector<BuildingInstance> allBuildings = {bowtie};
+    TexturingDiagnostics diag;
+
+    // The primary goal is that processBuilding does not hang, infinite-loop, or crash
+    // when pointInPolygon ray-casting hits a self-intersecting boundary.
+    TexturedBuilding tb = engine.processBuilding(
+        bowtie, allBuildings, meta, std::nullopt, geom, config, diag);
+
+    // Test passes if it completes execution. (It will likely texture it, as it doesn't overlap a neighbor).
+    EXPECT_EQ(tb.buildingId, 1u);
+}

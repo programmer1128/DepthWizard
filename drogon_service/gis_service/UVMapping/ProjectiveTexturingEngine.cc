@@ -184,12 +184,34 @@ static bool segmentsIntersect(
     double p0x, double p0y, double p1x, double p1y,
     double q0x, double q0y, double q1x, double q1y) {
 
-    auto ccw = [](double ax, double ay, double bx, double by, double cx, double cy) {
-        return (cy - ay) * (bx - ax) > (by - ay) * (cx - ax);
+    auto crossProduct = [](double ax, double ay, double bx, double by, double cx, double cy) {
+        return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
     };
 
-    return (ccw(p0x, p0y, q0x, q0y, q1x, q1y) != ccw(p1x, p1y, q0x, q0y, q1x, q1y)) &&
-           (ccw(p0x, p0y, p1x, p1y, q0x, q0y) != ccw(p0x, p0y, p1x, p1y, q1x, q1y));
+    auto onSegment = [](double px, double py, double qx, double qy, double rx, double ry) {
+        return qx <= std::max(px, rx) && qx >= std::min(px, rx) &&
+               qy <= std::max(py, ry) && qy >= std::min(py, ry);
+    };
+
+    double cp1 = crossProduct(p0x, p0y, p1x, p1y, q0x, q0y);
+    double cp2 = crossProduct(p0x, p0y, p1x, p1y, q1x, q1y);
+    double cp3 = crossProduct(q0x, q0y, q1x, q1y, p0x, p0y);
+    double cp4 = crossProduct(q0x, q0y, q1x, q1y, p1x, p1y);
+
+    // Standard crossing intersection
+    if (((cp1 > 0 && cp2 < 0) || (cp1 < 0 && cp2 > 0)) &&
+        ((cp3 > 0 && cp4 < 0) || (cp3 < 0 && cp4 > 0))) {
+        return true;
+    }
+
+    // Collinear and touching/overlapping checks
+    const double eps = 1.0e-9;
+    if (std::abs(cp1) < eps && onSegment(p0x, p0y, q0x, q0y, p1x, p1y)) return true;
+    if (std::abs(cp2) < eps && onSegment(p0x, p0y, q1x, q1y, p1x, p1y)) return true;
+    if (std::abs(cp3) < eps && onSegment(q0x, q0y, p0x, p0y, q1x, q1y)) return true;
+    if (std::abs(cp4) < eps && onSegment(q0x, q0y, p1x, p1y, q1x, q1y)) return true;
+
+    return false;
 }
 
 static bool pointInPolygon(double px, double py, const std::vector<PixelPoint>& poly) {

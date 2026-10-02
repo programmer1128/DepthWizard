@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+// uses Rational Polynomial Coefficients (a standard satellite imagery format) to project 3D geographic coordinates (Longitude, Latitude, Height) exactly into 2D image pixels
+
 class RpcCameraModel {
 public:
     RpcCameraModel() = default;
