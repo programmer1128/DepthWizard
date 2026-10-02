@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../structures/SurfaceStructs.h"
+#include "../HeightService/BuildingQueryIndex.h"
 #include "ReconstructionDiagnosticsWriter.h"
 
 #include <condition_variable>
@@ -20,6 +21,8 @@ struct RasterExportStatus
     JobStatus dtm{JobStatus::QUEUED};
     JobStatus ndsm{JobStatus::QUEUED};
     JobStatus confidence{JobStatus::QUEUED};
+    // Building label raster and index JSON used by height queries.
+    JobStatus buildings{JobStatus::QUEUED};
     std::vector<std::string> errors;
     std::string diagnosticsState{"disabled"};
     std::string diagnosticsDirectory;
@@ -40,7 +43,8 @@ public:
     // Takes ownership of the surface matrices. Returns false when shutting down
     // or when the bounded queue is full; callers must not report TIFF success.
     bool enqueue(std::string jobId, GeoreferencedSurfaceBundle surface,
-                 std::optional<ReconstructionDiagnosticPayload> diagnostics = std::nullopt);
+                 std::optional<ReconstructionDiagnosticPayload> diagnostics = std::nullopt,
+                 std::optional<BuildingQueryIndex> buildingIndex = std::nullopt);
 
     std::optional<RasterExportStatus> getStatus(const std::string& jobId) const;
 
@@ -56,6 +60,7 @@ private:
         std::string jobId;
         GeoreferencedSurfaceBundle surface;
         std::optional<ReconstructionDiagnosticPayload> diagnostics;
+        std::optional<BuildingQueryIndex> buildingIndex;
     };
 
     void run();
@@ -64,6 +69,9 @@ private:
                    const std::string& product,
                    RasterGrid<float>& grid,
                    SpatialMetadata& metadata);
+    void exportBuildingIndex(const std::string& jobId,
+                             BuildingQueryIndex& index,
+                             SpatialMetadata& metadata);
     void updateProduct(const std::string& jobId,
                        const std::string& product,
                        JobStatus state,

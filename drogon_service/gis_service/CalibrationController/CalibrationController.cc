@@ -129,6 +129,7 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::getExportStatus(
     result["dtm"] = exportStateName(status->dtm);
     result["ndsm"] = exportStateName(status->ndsm);
     result["confidence"] = exportStateName(status->confidence);
+    result["buildings"] = exportStateName(status->buildings);
     result["diagnostics_status"] = status->diagnosticsState;
 
      if (status->dsm == JobStatus::READY)
@@ -150,6 +151,13 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::getExportStatus(
      {
          result["confidence_url"] = MinioClient::generatePresignedUrl(
             "terrain-assets", "confidence_" + uuid + ".tif");
+     }
+     if (status->buildings == JobStatus::READY)
+     {
+         result["buildings_url"] = MinioClient::generatePresignedUrl(
+            "terrain-assets", "buildings_" + uuid + ".tif");
+         result["buildings_index_url"] = MinioClient::generatePresignedUrl(
+            "terrain-assets", "buildings_" + uuid + ".json");
      }
 
      Json::Value errors(Json::arrayValue);

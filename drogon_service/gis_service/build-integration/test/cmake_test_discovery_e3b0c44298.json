@@ -1,20 +1,51 @@
 {
-  "tests": 2,
+  "tests": 7,
   "name": "AllTests",
   "testsuites": [
     {
-      "name": "Sat2Lod2ModalTransportTest",
-      "tests": 2,
+      "name": "HybridFeatureFlagsTest",
+      "tests": 3,
       "testsuite": [
         {
-          "name": "SendsOneMultipartContentTypeWithThreeNamedFiles",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/Sat2Lod2ModalTransport_test.cc",
-          "line": 79
+          "name": "DefaultsReproduceTheCurrentPipeline",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BaselineHarness_test.cc",
+          "line": 86
         },
         {
-          "name": "ReadsInlineBuildingDocument",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/Sat2Lod2ModalTransport_test.cc",
-          "line": 142
+          "name": "ParsesRequestsAndReportsThemAsUnimplemented",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BaselineHarness_test.cc",
+          "line": 103
+        },
+        {
+          "name": "InvalidValuesFallBackToDefaultsWithWarnings",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BaselineHarness_test.cc",
+          "line": 118
+        }
+      ]
+    },
+    {
+      "name": "BaselineInspectorTest",
+      "tests": 4,
+      "testsuite": [
+        {
+          "name": "DecodesDracoGlbWithBuildingIdsAndBackendCounts",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BaselineHarness_test.cc",
+          "line": 127
+        },
+        {
+          "name": "ReportsAreDeterministicAcrossRuns",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BaselineHarness_test.cc",
+          "line": 159
+        },
+        {
+          "name": "RasterDigestTracksValuesNotNaNPayloads",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BaselineHarness_test.cc",
+          "line": 166
+        },
+        {
+          "name": "NegativeZeroAndZeroDigestEqually",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BaselineHarness_test.cc",
+          "line": 195
         }
       ]
     }

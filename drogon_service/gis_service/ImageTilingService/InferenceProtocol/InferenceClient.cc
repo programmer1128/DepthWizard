@@ -2,7 +2,7 @@
 // packs the bytes, opens a TCP socket, streams the data
 // mathematically reverses the GAMUS scale to give us true meters
 
-#include "InferenceClient.h"
+#include "InferenceClient.h"                                                                                                            
 #include <sys/socket.h>   
 #include <arpa/inet.h>    
 #include <netinet/tcp.h>  
@@ -29,14 +29,12 @@ TileInferenceResult InferenceClient::inferMetricTile(std::shared_ptr<TileRequest
 {
      if (!request)
      {
-         throw std::invalid_argument(
-             "InferenceClient: TileRequest is null.");
+         throw std::invalid_argument("InferenceClient: TileRequest is null");
      }
 
      if (request->width <= 0 || request->height <= 0)
      {
-         throw std::invalid_argument(
-             "InferenceClient: Tile dimensions must be positive.");
+         throw std::invalid_argument("InferenceClient: Tile dimensions must be positive");
      }
 
      const size_t pixel_count =
@@ -47,7 +45,7 @@ TileInferenceResult InferenceClient::inferMetricTile(std::shared_ptr<TileRequest
      {
          throw std::invalid_argument(
              "InferenceClient: Preprocessing valid-mask size "
-             "does not match tile dimensions.");
+             "does not match tile dimensions");
      }
      // build the header (envelope)
      FrameHeader header;

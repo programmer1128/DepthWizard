@@ -160,6 +160,17 @@ endif ()
 
 include(CTest)
 
+# Baseline harness inspector (tools/baseline at the repository root). Kept out
+# of the server binary: tools/ is not globbed into the target above.
+add_executable(baseline_inspect
+               tools/BaselineInspectMain.cc
+               tools/BaselineInspector.cc
+               tools/TinyGltfImplementation.cc)
+target_include_directories(baseline_inspect PRIVATE
+                           ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${GDAL_INCLUDE_DIRS})
+target_link_libraries(baseline_inspect PRIVATE Drogon::Drogon draco ${GDAL_LIBRARIES})
+
 if(
     BUILD_TESTING
     AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/CMakeLists.txt"

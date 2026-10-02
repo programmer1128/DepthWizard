@@ -1,123 +1,121 @@
 #include "HeightQueryController.h"
 #include "../HeightService/HeightOrchestratorService.h"
+#include "../HeightService/HeightRasterStore.h"
+#include "../HeightService/ReferenceDemService.h"
+
+#include <trantor/utils/Logger.h>
+
+#include <optional>
 #include <stdexcept>
 #include <string>
 
-// for single height query
-drogon::Task<drogon::HttpResponsePtr> HeightQueryController::getSingleHeight(drogon::HttpRequestPtr req) 
+namespace
 {
-     auto jsonPtr = req->getJsonObject();
-     if (!jsonPtr) 
+// Errors carry a JSON "message", which the frontend shows on the card.
+drogon::HttpResponsePtr errorResponse(drogon::HttpStatusCode code, const std::string& message)
+{
+     Json::Value body(Json::objectValue);
+     body["status"] = "error";
+     body["message"] = message;
+     auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+     response->setStatusCode(code);
+     return response;
+}
+
+// One place maps service failures to HTTP: unavailable data is not a crash.
+template <typename Handler>
+drogon::Task<drogon::HttpResponsePtr> respond(Handler handler)
+{
+     try
      {
-         auto resp = drogon::HttpResponse::newHttpResponse();
-         resp->setStatusCode(drogon::k400BadRequest);
-         co_return resp;
-     }   
- 
-     try 
+         co_return drogon::HttpResponse::newHttpJsonResponse(co_await handler());
+     }
+     catch (const std::invalid_argument& error)
      {
-         Json::Value result = co_await HeightOrchestratorService::processSingleHeight(
-             (*jsonPtr)["uuid"].asString(),
-             (*jsonPtr)["x"].asFloat(),
-             (*jsonPtr)["y"].asFloat()
-         );
-         co_return drogon::HttpResponse::newHttpJsonResponse(result);
-     } 
-     catch (const std::exception& e) 
+         co_return errorResponse(drogon::k400BadRequest, error.what());
+     }
+     catch (const HeightDataUnavailable& error)
      {
-         auto resp = drogon::HttpResponse::newHttpResponse();
-         resp->setStatusCode(drogon::k500InternalServerError);
-         resp->setBody(e.what());
-         co_return resp;
+         co_return errorResponse(error.stillExporting ? drogon::k409Conflict : drogon::k404NotFound,
+                                 error.what());
+     }
+     catch (const ReferenceDemUnavailable& error)
+     {
+         co_return errorResponse(drogon::k502BadGateway, error.what());
+     }
+     catch (const std::exception& error)
+     {
+         LOG_ERROR << "HeightQueryController: " << error.what();
+         co_return errorResponse(drogon::k500InternalServerError, error.what());
      }
 }
 
-// for compare height setup
-drogon::Task<drogon::HttpResponsePtr> HeightQueryController::compareHeights(drogon::HttpRequestPtr req) 
+double requireNumber(const Json::Value& body, const char* field)
 {
-     std::string uuid, tag;
-     float x = 0.0f, y = 0.0f;
-    
-     const drogon::HttpFile* uploadedFilePtr = nullptr;
-     drogon::MultiPartParser fileParser; 
+     if (!body[field].isNumeric())
+         throw std::invalid_argument(std::string("'") + field + "' must be a number.");
+     return body[field].asDouble();
+}
 
-     try 
+std::string requireUuid(const std::string& uuid)
+{
+     if (uuid.empty())
+         throw std::invalid_argument("'uuid' is required.");
+     return uuid;
+}
+} // namespace
+
+drogon::Task<drogon::HttpResponsePtr> HeightQueryController::getSingleHeight(drogon::HttpRequestPtr req)
+{
+     co_return co_await respond([req]() -> drogon::Task<Json::Value>
      {
-         if (req->contentType() == drogon::CT_MULTIPART_FORM_DATA) 
-         {
-             
-             if (fileParser.parse(req) != 0 || fileParser.getParameters().empty()) 
-             {
-                 auto resp = drogon::HttpResponse::newHttpResponse();
-                 resp->setStatusCode(drogon::k400BadRequest);
-                 resp->setBody("Failed to parse multipart/form-data");
-                 co_return resp;
-             }
-            
-             auto params = fileParser.getParameters();
-             uuid = params["uuid"];
-             tag = params["tag"];
-            
-             //Safely parse floats and return 400 if malformed
-             try 
-             {
-                 x = std::stof(params["x"]);
-                 y = std::stof(params["y"]);
-             } 
-             catch (const std::invalid_argument& e) 
-             {
-                 auto resp = drogon::HttpResponse::newHttpResponse();
-                 resp->setStatusCode(drogon::k400BadRequest);
-                 resp->setBody("Invalid coordinate format. 'x' and 'y' must be valid numbers.");
-                 co_return resp;
-             } 
-             catch (const std::out_of_range& e) 
-             {
-                 auto resp = drogon::HttpResponse::newHttpResponse();
-                 resp->setStatusCode(drogon::k400BadRequest);
-                 resp->setBody("Coordinate values out of range.");
-                 co_return resp;
-             }
-            
-            auto& files = fileParser.getFiles();
-            if (!files.empty()) {
-                uploadedFilePtr = &files[0];
-            }
-        } else {
-            auto jsonPtr = req->getJsonObject();
-            if (!jsonPtr) {
-                auto resp = drogon::HttpResponse::newHttpResponse();
-                resp->setStatusCode(drogon::k400BadRequest);
-                resp->setBody("Invalid payload: Expected JSON or Multipart");
-                co_return resp;
-            }
-            
-             //Validate JSON types before accessing
-             if (!(*jsonPtr)["x"].isNumeric() || !(*jsonPtr)["y"].isNumeric()) 
-             {
-                 auto resp = drogon::HttpResponse::newHttpResponse();
-                 resp->setStatusCode(drogon::k400BadRequest);
-                 resp->setBody("Invalid JSON: 'x' and 'y' must be numeric.");
-                 co_return resp;
-             }
+         const auto body = req->getJsonObject();
+         if (!body)
+             throw std::invalid_argument("Expected a JSON body {uuid, x, y[, feature_id]}.");
+         std::optional<uint32_t> featureId;
+         if ((*body)["feature_id"].isNumeric() && (*body)["feature_id"].asDouble() >= 1.0)
+             featureId = (*body)["feature_id"].asUInt();
+         co_return co_await HeightOrchestratorService::processSingleHeight(
+             requireUuid((*body)["uuid"].asString()),
+             requireNumber(*body, "x"), requireNumber(*body, "y"), featureId);
+     });
+}
 
-             uuid = (*jsonPtr)["uuid"].asString();
-             tag = (*jsonPtr)["tag"].asString();
-             x = (*jsonPtr)["x"].asFloat();
-             y = (*jsonPtr)["y"].asFloat();
+drogon::Task<drogon::HttpResponsePtr> HeightQueryController::compareHeights(drogon::HttpRequestPtr req)
+{
+     co_return co_await respond([req]() -> drogon::Task<Json::Value>
+     {
+         // Multipart carries a user-supplied reference GeoTIFF (tag "upload").
+         if (req->contentType() == drogon::CT_MULTIPART_FORM_DATA)
+         {
+             drogon::MultiPartParser parser;
+             if (parser.parse(req) != 0)
+                 throw std::invalid_argument("Failed to parse multipart/form-data.");
+             auto parameters = parser.getParameters();
+             double x = 0.0, y = 0.0;
+             try
+             {
+                 x = std::stod(parameters["x"]);
+                 y = std::stod(parameters["y"]);
+             }
+             catch (const std::logic_error&)
+             {
+                 throw std::invalid_argument("'x' and 'y' must be numbers.");
+             }
+             const auto& files = parser.getFiles();
+             co_return co_await HeightOrchestratorService::processComparison(
+                 requireUuid(parameters["uuid"]),
+                 parameters["tag"].empty() ? "upload" : parameters["tag"], x, y,
+                 files.empty() ? nullptr : &files.front());
          }
 
-         // Handoff to Orchestrator
-         Json::Value result = co_await HeightOrchestratorService::processComparison(uuid, tag, x, y, uploadedFilePtr);
-         co_return drogon::HttpResponse::newHttpJsonResponse(result);
-
-     } 
-     catch (const std::exception& e) 
-     {
-         // This now only catches genuine internal server failures (500)
-         auto resp = drogon::HttpResponse::newHttpResponse();
-         resp->setStatusCode(drogon::k500InternalServerError);
-         resp->setBody(e.what());
-         co_return resp;
-     }
+         const auto body = req->getJsonObject();
+         if (!body)
+             throw std::invalid_argument("Expected a JSON body {uuid, tag, x, y}.");
+         const std::string tag = (*body)["tag"].isString() ? (*body)["tag"].asString()
+                                                           : "opentopography";
+         co_return co_await HeightOrchestratorService::processComparison(
+             requireUuid((*body)["uuid"].asString()), tag,
+             requireNumber(*body, "x"), requireNumber(*body, "y"), nullptr);
+     });
 }

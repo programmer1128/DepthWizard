@@ -1,0 +1,515 @@
+{
+	"artifacts" : 
+	[
+		{
+			"path" : "test/image_preprocessing_service_test"
+		}
+	],
+	"backtrace" : 2,
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"add_executable",
+			"add_depthwizard_grid_test",
+			"target_link_options",
+			"configure_depthwizard_test",
+			"target_link_libraries",
+			"set_target_properties",
+			"include",
+			"find_package",
+			"set_property",
+			"__find_dependency_common",
+			"find_dependency",
+			"target_compile_options",
+			"target_include_directories",
+			"target_compile_features"
+		],
+		"files" : 
+		[
+			"test/CMakeLists.txt",
+			"/usr/lib64/cmake/GTest/GTestTargets.cmake",
+			"/usr/lib64/cmake/GTest/GTestConfig.cmake",
+			"/usr/share/cmake/Modules/FindGTest.cmake",
+			"/usr/share/cmake/Modules/FindOpenMP.cmake",
+			"CMakeLists.txt",
+			"/usr/local/lib64/cmake/Drogon/DrogonTargets.cmake",
+			"/usr/local/lib64/cmake/Drogon/DrogonConfig.cmake",
+			"/usr/local/lib64/cmake/Trantor/TrantorTargets.cmake",
+			"/usr/local/lib64/cmake/Trantor/TrantorConfig.cmake",
+			"/usr/share/cmake/Modules/CMakeFindDependencyMacro.cmake",
+			"/usr/local/lib64/cmake/Drogon/FindUUID.cmake"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 0
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 221,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 149,
+				"parent" : 1
+			},
+			{
+				"command" : 3,
+				"file" : 0,
+				"line" : 155,
+				"parent" : 1
+			},
+			{
+				"command" : 2,
+				"file" : 0,
+				"line" : 48,
+				"parent" : 3
+			},
+			{
+				"command" : 4,
+				"file" : 0,
+				"line" : 157,
+				"parent" : 1
+			},
+			{
+				"command" : 4,
+				"file" : 0,
+				"line" : 227,
+				"parent" : 0
+			},
+			{
+				"command" : 7,
+				"file" : 0,
+				"line" : 3,
+				"parent" : 0
+			},
+			{
+				"file" : 3,
+				"parent" : 7
+			},
+			{
+				"command" : 7,
+				"file" : 3,
+				"line" : 345,
+				"parent" : 8
+			},
+			{
+				"file" : 2,
+				"parent" : 9
+			},
+			{
+				"command" : 6,
+				"file" : 2,
+				"line" : 46,
+				"parent" : 10
+			},
+			{
+				"file" : 1,
+				"parent" : 11
+			},
+			{
+				"command" : 5,
+				"file" : 1,
+				"line" : 81,
+				"parent" : 12
+			},
+			{
+				"file" : 5
+			},
+			{
+				"command" : 7,
+				"file" : 5,
+				"line" : 29,
+				"parent" : 14
+			},
+			{
+				"file" : 4,
+				"parent" : 15
+			},
+			{
+				"command" : 8,
+				"file" : 4,
+				"line" : 774,
+				"parent" : 16
+			},
+			{
+				"command" : 7,
+				"file" : 5,
+				"line" : 14,
+				"parent" : 14
+			},
+			{
+				"file" : 7,
+				"parent" : 18
+			},
+			{
+				"command" : 6,
+				"file" : 7,
+				"line" : 83,
+				"parent" : 19
+			},
+			{
+				"file" : 6,
+				"parent" : 20
+			},
+			{
+				"command" : 5,
+				"file" : 6,
+				"line" : 61,
+				"parent" : 21
+			},
+			{
+				"command" : 10,
+				"file" : 7,
+				"line" : 44,
+				"parent" : 19
+			},
+			{
+				"command" : 9,
+				"file" : 10,
+				"line" : 125,
+				"parent" : 23
+			},
+			{
+				"command" : 7,
+				"file" : 10,
+				"line" : 93,
+				"parent" : 24
+			},
+			{
+				"file" : 9,
+				"parent" : 25
+			},
+			{
+				"command" : 6,
+				"file" : 9,
+				"line" : 57,
+				"parent" : 26
+			},
+			{
+				"file" : 8,
+				"parent" : 27
+			},
+			{
+				"command" : 5,
+				"file" : 8,
+				"line" : 61,
+				"parent" : 28
+			},
+			{
+				"command" : 10,
+				"file" : 7,
+				"line" : 46,
+				"parent" : 19
+			},
+			{
+				"command" : 9,
+				"file" : 10,
+				"line" : 125,
+				"parent" : 30
+			},
+			{
+				"command" : 7,
+				"file" : 10,
+				"line" : 93,
+				"parent" : 31
+			},
+			{
+				"file" : 11,
+				"parent" : 32
+			},
+			{
+				"command" : 5,
+				"file" : 11,
+				"line" : 110,
+				"parent" : 33
+			},
+			{
+				"command" : 11,
+				"file" : 0,
+				"line" : 29,
+				"parent" : 3
+			},
+			{
+				"command" : 11,
+				"file" : 0,
+				"line" : 41,
+				"parent" : 3
+			},
+			{
+				"command" : 12,
+				"file" : 0,
+				"line" : 22,
+				"parent" : 3
+			},
+			{
+				"command" : 13,
+				"file" : 0,
+				"line" : 20,
+				"parent" : 3
+			}
+		]
+	},
+	"codemodelVersion" : 
+	{
+		"major" : 2,
+		"minor" : 10
+	},
+	"compileDependencies" : 
+	[
+		{
+			"backtrace" : 5,
+			"id" : "GTest::gtest_main::@36f028580bb02cc8272a"
+		},
+		{
+			"backtrace" : 5,
+			"id" : "OpenMP::OpenMP_CXX::@6890427a1f51a3e7e1df"
+		},
+		{
+			"backtrace" : 6,
+			"id" : "Drogon::Drogon::@6890427a1f51a3e7e1df"
+		},
+		{
+			"backtrace" : 6,
+			"id" : "GDAL::GDAL::@6890427a1f51a3e7e1df"
+		}
+	],
+	"compileGroups" : 
+	[
+		{
+			"compileCommandFragments" : 
+			[
+				{
+					"fragment" : "-g -std=c++23"
+				},
+				{
+					"backtrace" : 35,
+					"fragment" : "-Wall"
+				},
+				{
+					"backtrace" : 35,
+					"fragment" : "-Wextra"
+				},
+				{
+					"backtrace" : 35,
+					"fragment" : "-Wpedantic"
+				},
+				{
+					"backtrace" : 36,
+					"fragment" : "-fsanitize=address,undefined"
+				},
+				{
+					"backtrace" : 36,
+					"fragment" : "-fno-omit-frame-pointer"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-fopenmp"
+				}
+			],
+			"defines" : 
+			[
+				{
+					"backtrace" : 5,
+					"define" : "GTEST_LINKED_AS_SHARED_LIBRARY=1"
+				}
+			],
+			"includes" : 
+			[
+				{
+					"backtrace" : 37,
+					"path" : "/home/aritra/Desktop/DepthWizard/drogon_service/gis_service/test/.."
+				},
+				{
+					"backtrace" : 37,
+					"isSystem" : true,
+					"path" : "/usr/include/gdal"
+				}
+			],
+			"language" : "CXX",
+			"languageStandard" : 
+			{
+				"backtraces" : 
+				[
+					38,
+					5,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6,
+					6
+				],
+				"standard" : "23"
+			},
+			"sourceIndexes" : 
+			[
+				0,
+				1
+			]
+		}
+	],
+	"id" : "image_preprocessing_service_test::@36f028580bb02cc8272a",
+	"link" : 
+	{
+		"commandFragments" : 
+		[
+			{
+				"fragment" : "-g",
+				"role" : "flags"
+			},
+			{
+				"backtrace" : 4,
+				"fragment" : "-fsanitize=address,undefined",
+				"role" : "flags"
+			},
+			{
+				"backtrace" : 5,
+				"fragment" : "/usr/lib64/libgtest_main.so.1.17.0",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 6,
+				"fragment" : "/usr/local/lib64/libdrogon.a",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 6,
+				"fragment" : "/usr/lib64/libgdal.so",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 13,
+				"fragment" : "/usr/lib64/libgtest.so.1.17.0",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 17,
+				"fragment" : "/usr/lib/gcc/x86_64-redhat-linux/16/libgomp.so",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 17,
+				"fragment" : "/usr/lib64/libpthread.a",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 22,
+				"fragment" : "/usr/local/lib64/libtrantor.a",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 29,
+				"fragment" : "/usr/lib64/libssl.so",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 29,
+				"fragment" : "/usr/lib64/libcrypto.so",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 29,
+				"fragment" : "-lpthread",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 22,
+				"fragment" : "-ldl",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 22,
+				"fragment" : "/usr/lib64/libjsoncpp.so.1.9.6",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 34,
+				"fragment" : "/lib64/libuuid.so",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 22,
+				"fragment" : "/usr/lib64/libz.so",
+				"role" : "libraries"
+			}
+		],
+		"language" : "CXX"
+	},
+	"linkLibraries" : 
+	[
+		{
+			"backtrace" : 5,
+			"id" : "GTest::gtest_main::@36f028580bb02cc8272a"
+		},
+		{
+			"backtrace" : 5,
+			"id" : "OpenMP::OpenMP_CXX::@6890427a1f51a3e7e1df"
+		},
+		{
+			"backtrace" : 6,
+			"id" : "Drogon::Drogon::@6890427a1f51a3e7e1df"
+		},
+		{
+			"backtrace" : 6,
+			"id" : "GDAL::GDAL::@6890427a1f51a3e7e1df"
+		}
+	],
+	"name" : "image_preprocessing_service_test",
+	"nameOnDisk" : "image_preprocessing_service_test",
+	"paths" : 
+	{
+		"build" : "test",
+		"source" : "test"
+	},
+	"sourceGroups" : 
+	[
+		{
+			"name" : "Source Files",
+			"sourceIndexes" : 
+			[
+				0,
+				1
+			]
+		}
+	],
+	"sources" : 
+	[
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "test/ImagePreprocessingService_test.cc",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "ImagePreprocessing/ImagePreprocessingService.cc",
+			"sourceGroupIndex" : 0
+		}
+	],
+	"type" : "EXECUTABLE"
+}

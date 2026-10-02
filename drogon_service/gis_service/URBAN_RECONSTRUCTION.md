@@ -145,6 +145,18 @@ refinement is disabled (`osm_name='none'`): only image and model evidence is use
 - Native buildings covering at most 10% SAT2LoD2 area are kept, since SAT2LoD2
   drops small segments whose rectangle fit fails.
 
+A large-block render with no SAT2LoD2 detail means this fallback ran; the
+backend log says why (`SAT2LoD2 unavailable: ...`, `building_source=native`).
+
+Long jobs on Modal: every Modal web request is cut at 150 s, including time
+queued for a container, and answered with a 303 to a result URL. The backend
+follows these redirects until `DEPTHWIZARD_SAT2LOD2_TIMEOUT_S`. It also sends
+`GET /api/v1/health` the moment an upload arrives, so a cold container starts
+while ingestion and inference run. The Modal app runs on CPU (the backend's
+label means SAT2LoD2 never uses a GPU; `SAT2LOD2_GPU` opts back in), which
+avoids queueing for GPU capacity. Drogon's `idle_connection_timeout` also drops
+requests that are still processing, so `config.json` sets it to 1200 s.
+
 If the service is down, fails or exceeds `DEPTHWIZARD_SAT2LOD2_TIMEOUT_S`
 (default 900 s), native reconstruction is used. `DEPTHWIZARD_SAT2LOD2=0`
 disables the call and `DEPTHWIZARD_SAT2LOD2_URL` changes its address. Set
@@ -274,6 +286,41 @@ Files are:
 - `summary.json`: accepted/emitted counts, stage rejections, per-building
   heights and absolute base/roof elevations, confidence and mesh warnings;
   automatic presentation reason, fractions and supported ground relief.
+
+## Height queries and reference comparison
+
+The backend listens on port 8081 (`main.cc`). After a job, the background worker
+uploads `heights_<uuid>.tif` (absolute DSM), `dtm_`, `ndsm_`, and a building index:
+`buildings_<uuid>.tif` (building ID per pixel) and `buildings_<uuid>.json`
+(per-building heights). `GET /api/v1/processor/exports/<uuid>` reports each
+product; queries made before they are uploaded return 409 with a retry message.
+
+`POST /api/height/single {uuid, x, y[, feature_id]}`: `x, y` are metres east
+and south of the scene's north-west corner (north-up rasters), which is what
+the viewer sends. `feature_id` is the clicked roof or wall's `_FEATURE_ID_0`;
+without it, the label raster resolves the pixel.
+- `kind: "building"`: `building_height_meters` is that building's height above
+  ground: the robust nDSM estimate, *without* `heightScaleMultiplier`, so the
+  3D model is drawn `render_height_scale` times taller. Roof and base
+  elevations are absolute.
+- `kind: "terrain"`: `elevation_meters` is the absolute DSM at the point, with
+  `ground_elevation_meters` (DTM) and `height_above_ground_meters` (nDSM).
+
+`POST /api/height/compare {uuid, tag, x, y}` compares the whole generated DSM
+with a reference, following the Python validation script: OpenTopography Copernicus GLO-30
+(`tag: "opentopography"`; `OPENTOPOGRAPHY_API_KEY` overrides the default key),
+CartoDEM (`"bhuvan"`) or an uploaded GeoTIFF (multipart, `"upload"`). The
+reference is warped bilinearly onto the DSM grid and a 10-pixel border is
+dropped. Errors above 50 m are counted (`anomaly_pixels_count`) and excluded
+from the headline RMSE, MAE, Pearson, median and within-±2 m percentage; the
+`raw` block reports the same metrics over every valid pixel. No values are
+capped or offset. `diff_map_base64` is a PNG (blue = model lower, red = higher,
+saturating at `diff_map_range_meters`). Results are cached per scene and tag.
+
+Treat this comparison as a consistency check, not ground-truth accuracy. The
+terrain base is itself a 30 m global DEM (AWS Terrain Tiles), so agreement with
+COP30 mostly measures the two DEMs' agreement; the model's own contribution is
+the nDSM. Report accuracy against independent LiDAR where available.
 
 ## Semantic-model validation still required
 

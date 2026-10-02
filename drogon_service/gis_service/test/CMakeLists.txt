@@ -341,6 +341,14 @@ add_building_reconstruction_test(
 target_link_libraries(building_reconstruction_service_test PRIVATE CGAL::CGAL ${DEPTHWIZARD_GDAL_TARGET})
 
 add_building_reconstruction_test(
+    height_query_test
+    HeightQuery_test.cc
+    ../HeightService/DemAccuracy.cc
+    ../HeightService/BuildingQueryIndex.cc
+)
+target_link_libraries(height_query_test PRIVATE Drogon::Drogon opencv_imgcodecs)
+
+add_building_reconstruction_test(
     sat2lod2_importer_test
     Sat2Lod2Importer_test.cc
     ../BuildingReconstruction/Sat2Lod2Importer.cc
@@ -424,6 +432,38 @@ target_include_directories(urban_scene_integration_test PRIVATE ${OpenCV_INCLUDE
 target_link_libraries(urban_scene_integration_test PRIVATE
     GTest::gtest_main ${DEPTHWIZARD_GDAL_TARGET} draco ${OpenCV_LIBS} OpenMP::OpenMP_CXX CGAL::CGAL)
 gtest_discover_tests(urban_scene_integration_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
+
+# Phase 0 baseline harness: feature flags and the GLB/raster inspector, on a
+# GLB produced by the real reconstruction and packaging path.
+add_executable(baseline_harness_test
+    BaselineHarness_test.cc
+    ../tools/BaselineInspector.cc
+    ../utils/FeatureFlags.cc
+    ../BuildingReconstruction/BuildingMaskProcessor.cc
+    ../BuildingReconstruction/BuildingInstanceExtractor.cc
+    ../BuildingReconstruction/BuildingInstanceSplitter.cc
+    ../BuildingReconstruction/FootprintVectorizer.cc
+    ../BuildingReconstruction/FootprintGeometryRegularizer.cc
+    ../BuildingReconstruction/BuildingHeightEstimator.cc
+    ../BuildingReconstruction/BuildingFootprintDecomposer.cc
+    ../BuildingReconstruction/BuildingRoofModeler.cc
+    ../BuildingReconstruction/BuildingReconstructionService.cc
+    ../MeshMapping/SceneMeshService.cc
+    ../MeshMapping/SceneAssembler.cc
+    ../MeshMapping/BuildingMesher.cc
+    ../MeshMapping/LocalFrameTransformers.cc
+    ../MeshMapping/TerrainMesher.cc
+    ../MeshMapping/TerrainSurfaceComposer.cc
+    ../MeshMapping/TerrainTextureComposer.cc
+    ../CompressionLib/DracoCompressor.cc
+    ../FileGenerators/GltfPackager.cc)
+configure_depthwizard_test(baseline_harness_test)
+target_include_directories(baseline_harness_test PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(baseline_harness_test PRIVATE
+    GTest::gtest_main Drogon::Drogon ${DEPTHWIZARD_GDAL_TARGET} draco ${OpenCV_LIBS}
+    OpenMP::OpenMP_CXX CGAL::CGAL)
+gtest_discover_tests(baseline_harness_test
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
 
 add_executable(reconstruction_diagnostics_test ReconstructionDiagnostics_test.cc

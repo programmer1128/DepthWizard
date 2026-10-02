@@ -5,24 +5,27 @@
 
 #include <trantor/utils/Logger.h>
 
-#include <stdexcept>
-#include <utility>
+#include <algorithm>
 #include <cstdlib>
+#include <stdexcept>
+#include <string>
+#include <utility>
 
 JobStatus RasterExportStatus::overall() const
 {
-    if (dsm == JobStatus::FAILED || dtm == JobStatus::FAILED ||
-        ndsm == JobStatus::FAILED || confidence == JobStatus::FAILED)
+    const JobStatus products[] = {dsm, dtm, ndsm, confidence, buildings};
+    const auto any = [&](JobStatus state)
+    { return std::find(std::begin(products), std::end(products), state) != std::end(products); };
+    const auto all = [&](JobStatus state)
+    { return std::all_of(std::begin(products), std::end(products),
+                         [state](JobStatus product) { return product == state; }); };
+
+    if (any(JobStatus::FAILED))
         return JobStatus::FAILED;
-
-    if (dsm == JobStatus::READY && dtm == JobStatus::READY &&
-        ndsm == JobStatus::READY && confidence == JobStatus::READY)
+    if (all(JobStatus::READY))
         return JobStatus::READY;
-
-    if (dsm != JobStatus::QUEUED || dtm != JobStatus::QUEUED ||
-        ndsm != JobStatus::QUEUED || confidence != JobStatus::QUEUED)
+    if (!all(JobStatus::QUEUED))
         return JobStatus::PROCESSING;
-
     return JobStatus::QUEUED;
 }
 
@@ -39,7 +42,8 @@ BackgroundTiffExportService::~BackgroundTiffExportService()
 
 bool BackgroundTiffExportService::enqueue(
     std::string jobId, GeoreferencedSurfaceBundle surface,
-    std::optional<ReconstructionDiagnosticPayload> diagnostics)
+    std::optional<ReconstructionDiagnosticPayload> diagnostics,
+    std::optional<BuildingQueryIndex> buildingIndex)
 {
     std::lock_guard lock(mutex_);
 
@@ -53,7 +57,8 @@ bool BackgroundTiffExportService::enqueue(
 
     statusByJob_.emplace(jobId, RasterExportStatus{});
     if (diagnostics) statusByJob_.at(jobId).diagnosticsState = "queued";
-    jobs_.push_back(ExportJob{std::move(jobId), std::move(surface), std::move(diagnostics)});
+    jobs_.push_back(ExportJob{std::move(jobId), std::move(surface), std::move(diagnostics),
+                              std::move(buildingIndex)});
     available_.notify_one();
     return true;
 }
@@ -135,6 +140,10 @@ void BackgroundTiffExportService::processJob(ExportJob& job)
     exportOne(job.jobId, "dtm", job.surface.dtm, metadata);
     exportOne(job.jobId, "ndsm", job.surface.ndsm, metadata);
     exportOne(job.jobId, "confidence", job.surface.surfaceConfidence, metadata);
+    if (job.buildingIndex)
+        exportBuildingIndex(job.jobId, *job.buildingIndex, metadata);
+    else
+        updateProduct(job.jobId, "buildings", JobStatus::FAILED, "no building index supplied");
 
     LOG_INFO << "BackgroundTiffExportService: finished UUID " << job.jobId;
 }
@@ -178,6 +187,41 @@ void BackgroundTiffExportService::exportOne(
     }
 }
 
+void BackgroundTiffExportService::exportBuildingIndex(
+    const std::string& jobId,
+    BuildingQueryIndex& index,
+    SpatialMetadata& metadata)
+{
+    updateProduct(jobId, "buildings", JobStatus::PROCESSING);
+    try
+    {
+        if (!index.labels.isValid() || index.labels.width != metadata.width ||
+            index.labels.height != metadata.height)
+            throw std::runtime_error("building labels do not match spatial metadata");
+        const std::vector<uint8_t> labels = TiffExporter::exportTiffToBuffer(
+            jobId + "_buildings", index.labels.data, metadata.width, metadata.height,
+            metadata.geoTransform.data(), metadata.projectionRef.c_str());
+        if (labels.empty())
+            throw std::runtime_error("GeoTIFF encoding failed");
+        if (!MinioClient::uploadBuffer("terrain-assets", "buildings_" + jobId + ".tif",
+                                       labels, "image/tiff"))
+            throw std::runtime_error("MinIO upload failed");
+
+        const std::string json = index.recordsToJson().toStyledString();
+        if (!MinioClient::uploadBuffer("terrain-assets", "buildings_" + jobId + ".json",
+                                       std::vector<uint8_t>(json.begin(), json.end()),
+                                       "application/json"))
+            throw std::runtime_error("MinIO upload failed");
+        updateProduct(jobId, "buildings", JobStatus::READY);
+    }
+    catch (const std::exception& error)
+    {
+        updateProduct(jobId, "buildings", JobStatus::FAILED, error.what());
+        LOG_ERROR << "BackgroundTiffExportService: building index for " << jobId
+                  << " failed: " << error.what();
+    }
+}
+
 void BackgroundTiffExportService::updateProduct(
     const std::string& jobId,
     const std::string& product,
@@ -193,6 +237,8 @@ void BackgroundTiffExportService::updateProduct(
         status.dtm = state;
     else if (product == "ndsm")
         status.ndsm = state;
+    else if (product == "buildings")
+        status.buildings = state;
     else
         status.confidence = state;
 

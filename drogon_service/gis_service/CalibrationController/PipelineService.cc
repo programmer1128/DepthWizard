@@ -5,6 +5,8 @@
 #include "Sat2Lod2ModalTransport.h"
 #include "../DataHandlers/MiniIOClient.h"
 #include "../FileGenerators/BackgroundTiffExportService.h"
+#include "../HeightService/BuildingQueryIndex.h"
+#include "../utils/FeatureFlags.h"
 #include "../ImagePreprocessing/ImagePreprocessingService.h"
 #include "../ImagePreprocessing/RasterIngestService.h"
 #include "../ImageTilingService/TilingService.h"
@@ -259,6 +261,29 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
 {
      const std::string jobId = drogon::utils::getUuid();
 
+     // Hybrid-rendering flags are defined but not yet acted on (Phase 0):
+     // log them per job so every baseline records the configuration it ran.
+     const HybridFeatureFlags featureFlags = HybridFeatureFlags::fromEnvironment();
+     LOG_INFO << "PipelineService: " << jobId << " feature flags: " << featureFlags.summary();
+     for (const std::string& warning : featureFlags.warnings)
+         LOG_WARN << "PipelineService: " << warning;
+     for (const std::string& request : featureFlags.unimplementedRequests())
+         LOG_WARN << "PipelineService: " << request << " is not implemented yet; ignored.";
+
+     // Start a SAT2LoD2 container now: a cold Modal start overlaps with
+     // ingestion, preprocessing and model inference instead of adding to them.
+     std::optional<Sat2Lod2Endpoint> satEndpoint;
+     try
+     {
+         satEndpoint = Sat2Lod2ModalTransport::endpointFromEnvironment();
+         if (satEndpoint->enabled && !satEndpoint->local)
+             Sat2Lod2ModalTransport::wakeUp(satEndpoint->url);
+     }
+     catch (const std::exception& error)
+     {
+         LOG_WARN << "PipelineService: SAT2LoD2 disabled: " << error.what();
+     }
+
      try
      {
          // 1. Ingest the GeoTIFF. The optical bytes guide reconstruction;
@@ -328,26 +353,12 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          std::optional<Json::Value> satBuildingsDocument;
          const std::filesystem::path satWorkDir =
              std::filesystem::temp_directory_path() / ("lod2_" + jobId);
-         const char* satSetting = std::getenv("DEPTHWIZARD_SAT2LOD2");
-         if (!satSetting || std::string(satSetting) != "0")
+         if (satEndpoint && satEndpoint->enabled)
          {
              try
              {
-                 const char* urlSetting = std::getenv("DEPTHWIZARD_SAT2LOD2_URL");
-                 const std::string satUrl = urlSetting && *urlSetting
-                     ? urlSetting
-                     : "https://programmer1128--sat2lod2-reconstruction-sat2lod2engine-app.modal.run";
-                 const char* transportSetting =
-                     std::getenv("DEPTHWIZARD_SAT2LOD2_TRANSPORT");
-                 if (transportSetting && *transportSetting &&
-                     std::string(transportSetting) != "local" &&
-                     std::string(transportSetting) != "modal")
-                     throw std::runtime_error(
-                         "DEPTHWIZARD_SAT2LOD2_TRANSPORT must be local or modal");
-                 const bool localTransport = transportSetting && *transportSetting
-                     ? std::string(transportSetting) == "local"
-                     : satUrl.starts_with("http://127.0.0.1:") ||
-                       satUrl.starts_with("http://localhost:");
+                 const std::string& satUrl = satEndpoint->url;
+                 const bool localTransport = satEndpoint->local;
                  std::filesystem::create_directories(satWorkDir);
                  const std::string dsmPath = (satWorkDir / "ndsm.tif").string();
                  const std::string orthoPath =
@@ -396,7 +407,6 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
 
                  const char* timeoutSetting = std::getenv("DEPTHWIZARD_SAT2LOD2_TIMEOUT_S");
                  const double timeoutSeconds = timeoutSetting ? std::atof(timeoutSetting) : 900.0;
-                 auto httpClient = drogon::HttpClient::newHttpClient(satUrl);
                  drogon::HttpRequestPtr req;
                  if (localTransport)
                  {
@@ -414,8 +424,8 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
                          dsmPath, orthoPath, labelPath);
                  LOG_INFO << "PipelineService: awaiting SAT2LoD2 "
                           << (localTransport ? "local" : "Modal") << " reconstruction";
-                 auto pyResponse = co_await httpClient->sendRequestCoro(
-                     req, timeoutSeconds > 0.0 ? timeoutSeconds : 900.0);
+                 auto pyResponse = co_await Sat2Lod2ModalTransport::send(
+                     satUrl, req, timeoutSeconds > 0.0 ? timeoutSeconds : 900.0);
                  if (localTransport)
                  {
                      if (!pyResponse || pyResponse->statusCode() != 200 ||
@@ -543,6 +553,12 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          // 8. Upload the finished GLB before replying to the frontend.
          std::string glbUrl = uploadGlb(jobId, glb);
 
+         // Height queries answer per building, keyed by the IDs the GLB
+         // carries in _FEATURE_ID_0. Build before diagnostics take them.
+         BuildingQueryIndex buildingIndex = BuildingQueryIndex::build(
+             buildings, metadata, config.heightScaleMultiplier,
+             usingSat2Lod2 ? "sat2lod2" : "native");
+
          std::optional<ReconstructionDiagnosticPayload> diagnostics;
          if (captureDiagnostics)
          {
@@ -573,7 +589,8 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          // 9. Give the raster matrices to the background worker. Its queue
          //    owns them after this move; no request-local references survive.
          if (!BackgroundTiffExportService::instance().enqueue(
-                jobId, std::move(surface), std::move(diagnostics)))
+                jobId, std::move(surface), std::move(diagnostics),
+                std::move(buildingIndex)))
          {
              throw std::runtime_error(
                 "PipelineService: background GeoTIFF export queue is full or stopped");
