@@ -1,6 +1,4 @@
 #include "HybridRoofGraphImporter.h"
-#include "BuildingHeightEstimator.h"
-#include "FootprintGeometryRegularizer.h"
 
 #include <json/reader.h>
 #include <json/writer.h>
@@ -8,11 +6,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
-#include <limits>
+#include <iterator>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <unordered_set>
+#include <utility>
 
 namespace depthwizard
 {
@@ -20,95 +21,198 @@ namespace depthwizard
 namespace
 {
 
-constexpr const char* kExpectedSchema = "depthwizard.roofgraph.v1";
+constexpr std::uintmax_t kMaxDocumentBytes = 64ULL << 20;
+// Rings with less area than this (square pixels) are degenerate.
+constexpr double kMinRingArea = 1.0e-9;
 
+enum class RingRole
+{
+    Outer,
+    Hole
+};
+
+// ---------------------------------------------------------------------------
+// Ring geometry. ml_services/common/geometry.py implements the same tests with
+// the same arithmetic, so both sides accept and reject the same rings.
+// ---------------------------------------------------------------------------
+
+bool samePoint(const PixelPoint& a, const PixelPoint& b)
+{
+    return a.column == b.column && a.row == b.row;
+}
+
+// Shoelace area on (column, row) values. Positive for outer rings and negative
+// for holes in this contract; with rows growing downwards a positive ring
+// appears clockwise on screen.
 double signedArea(const std::vector<PixelPoint>& ring)
 {
-    if (ring.size() < 3) return 0.0;
     double twiceArea = 0.0;
-    const std::size_t n = ring.size();
-    for (std::size_t i = 0; i < n; ++i)
+    for (std::size_t index = 0; index < ring.size(); ++index)
     {
-        const auto& curr = ring[i];
-        const auto& next = ring[(i + 1) % n];
-        twiceArea += curr.column * next.row - next.column * curr.row;
+        const PixelPoint& current = ring[index];
+        const PixelPoint& next = ring[(index + 1) % ring.size()];
+        twiceArea += current.column * next.row - next.column * current.row;
     }
     return 0.5 * twiceArea;
 }
 
-double projectedRingArea(const std::vector<ProjectedPoint>& ring)
+int orientation(const PixelPoint& a, const PixelPoint& b, const PixelPoint& c)
 {
-    if (ring.size() < 3) return 0.0;
-    double twiceArea = 0.0;
-    const std::size_t n = ring.size();
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        const auto& curr = ring[i];
-        const auto& next = ring[(i + 1) % n];
-        twiceArea += curr.easting * next.northing - next.easting * curr.northing;
-    }
-    return 0.5 * twiceArea;
+    const double value = (b.column - a.column) * (c.row - a.row) -
+                         (b.row - a.row) * (c.column - a.column);
+    return (value > 0.0) - (value < 0.0);
 }
 
-void removeRedundantVertices(std::vector<PixelPoint>& ring)
+// p is collinear with a-b; true when it lies on the closed segment.
+bool onSegment(const PixelPoint& a, const PixelPoint& b, const PixelPoint& p)
 {
-    bool changed = true;
-    while (changed && ring.size() > 3)
+    return std::min(a.column, b.column) <= p.column && p.column <= std::max(a.column, b.column) &&
+           std::min(a.row, b.row) <= p.row && p.row <= std::max(a.row, b.row);
+}
+
+// Closed segments: touching at an endpoint or overlapping counts.
+bool segmentsIntersect(const PixelPoint& p1, const PixelPoint& p2,
+                       const PixelPoint& p3, const PixelPoint& p4)
+{
+    const int d1 = orientation(p3, p4, p1);
+    const int d2 = orientation(p3, p4, p2);
+    const int d3 = orientation(p1, p2, p3);
+    const int d4 = orientation(p1, p2, p4);
+    if (d1 * d2 < 0 && d3 * d4 < 0) return true;
+    return (d1 == 0 && onSegment(p3, p4, p1)) || (d2 == 0 && onSegment(p3, p4, p2)) ||
+           (d3 == 0 && onSegment(p1, p2, p3)) || (d4 == 0 && onSegment(p1, p2, p4));
+}
+
+struct Edge
+{
+    PixelPoint a;
+    PixelPoint b;
+    std::size_t index;
+    int ring;
+    double minColumn;
+    double maxColumn;
+    double minRow;
+    double maxRow;
+};
+
+void appendEdges(const std::vector<PixelPoint>& ring, int ringTag, std::vector<Edge>& edges)
+{
+    for (std::size_t index = 0; index < ring.size(); ++index)
     {
-        changed = false;
-        const std::size_t n = ring.size();
-        for (std::size_t index = 0; index < n; ++index)
+        const PixelPoint& a = ring[index];
+        const PixelPoint& b = ring[(index + 1) % ring.size()];
+        edges.push_back(Edge{a, b, index, ringTag,
+                             std::min(a.column, b.column), std::max(a.column, b.column),
+                             std::min(a.row, b.row), std::max(a.row, b.row)});
+    }
+}
+
+// Calls visit(e, f) for every pair of edges whose bounding boxes overlap,
+// sweeping in column order. Stops and returns true when visit returns true.
+template <typename Visit>
+bool anyOverlappingPair(std::vector<Edge>& edges, Visit visit)
+{
+    std::sort(edges.begin(), edges.end(),
+              [](const Edge& left, const Edge& right) { return left.minColumn < right.minColumn; });
+    for (std::size_t i = 0; i < edges.size(); ++i)
+    {
+        for (std::size_t j = i + 1; j < edges.size() && edges[j].minColumn <= edges[i].maxColumn; ++j)
         {
-            const PixelPoint& previous = ring[(index + n - 1) % n];
-            const PixelPoint& current = ring[index];
-            const PixelPoint& next = ring[(index + 1) % n];
-            const double inX = current.column - previous.column;
-            const double inY = current.row - previous.row;
-            const double outX = next.column - current.column;
-            const double outY = next.row - current.row;
-            const double inLength = std::hypot(inX, inY);
-            const double outLength = std::hypot(outX, outY);
-            const bool duplicate = inLength < 1.0e-6;
-            const bool collinear = inLength > 0.0 && outLength > 0.0 &&
-                std::abs(inX * outY - inY * outX) / (inLength * outLength) < 0.02 &&
-                inX * outX + inY * outY > 0.0;
-            if (duplicate || collinear)
-            {
-                ring.erase(ring.begin() + static_cast<std::ptrdiff_t>(index));
-                changed = true;
-                break;
-            }
+            if (edges[i].maxRow < edges[j].minRow || edges[j].maxRow < edges[i].minRow) continue;
+            if (visit(edges[i], edges[j])) return true;
         }
     }
+    return false;
 }
 
-bool repairRingWithOgr(std::vector<PixelPoint>& ring)
+// A simple ring: non-adjacent edges never touch and adjacent edges never fold
+// back onto each other. Expects no repeated consecutive vertices.
+bool isSimple(const std::vector<PixelPoint>& ring)
 {
-    removeRedundantVertices(ring);
-    if (ring.size() < 3) return false;
+    const std::size_t count = ring.size();
+    std::vector<Edge> edges;
+    appendEdges(ring, 0, edges);
+    return !anyOverlappingPair(edges, [count](const Edge& e, const Edge& f)
+    {
+        const std::size_t gap = e.index > f.index ? e.index - f.index : f.index - e.index;
+        if (gap == 1 || gap == count - 1)
+        {
+            const Edge& first = (e.index + 1) % count == f.index ? e : f;
+            const Edge& second = &first == &e ? f : e;
+            const double dot = (first.b.column - first.a.column) * (second.b.column - second.a.column) +
+                               (first.b.row - first.a.row) * (second.b.row - second.a.row);
+            return orientation(first.a, first.b, second.b) == 0 && dot < 0.0;
+        }
+        return segmentsIntersect(e.a, e.b, f.a, f.b);
+    });
+}
 
-    OGRLinearRing linearRing;
+bool boundariesTouch(const std::vector<PixelPoint>& first, const std::vector<PixelPoint>& second)
+{
+    std::vector<Edge> edges;
+    appendEdges(first, 0, edges);
+    appendEdges(second, 1, edges);
+    return anyOverlappingPair(edges, [](const Edge& e, const Edge& f)
+    {
+        return e.ring != f.ring && segmentsIntersect(e.a, e.b, f.a, f.b);
+    });
+}
+
+// Even-odd test for a point known not to lie on the ring.
+bool pointInside(const std::vector<PixelPoint>& ring, const PixelPoint& point)
+{
+    bool inside = false;
+    for (std::size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++)
+    {
+        const PixelPoint& a = ring[i];
+        const PixelPoint& b = ring[j];
+        if ((a.row > point.row) != (b.row > point.row))
+        {
+            const double crossing = (b.column - a.column) * (point.row - a.row) / (b.row - a.row) + a.column;
+            if (point.column < crossing) inside = !inside;
+        }
+    }
+    return inside;
+}
+
+// Checked before simplicity so that a flat ring is reported as degenerate
+// while a bow-tie, whose signed area can also be zero, is a self-intersection.
+bool allCollinear(const std::vector<PixelPoint>& ring)
+{
+    for (std::size_t index = 2; index < ring.size(); ++index)
+        if (orientation(ring[0], ring[1], ring[index]) != 0) return false;
+    return true;
+}
+
+std::vector<PixelPoint> withoutConsecutiveRepeats(const std::vector<PixelPoint>& ring)
+{
+    std::vector<PixelPoint> unique;
     for (const PixelPoint& point : ring)
-        linearRing.addPoint(point.column, point.row);
+        if (unique.empty() || !samePoint(unique.back(), point)) unique.push_back(point);
+    while (unique.size() > 1 && samePoint(unique.front(), unique.back())) unique.pop_back();
+    return unique;
+}
+
+// Replaces a non-simple ring by the exterior of the largest valid part.
+bool repairWithOgr(std::vector<PixelPoint>& ring)
+{
+    OGRLinearRing linearRing;
+    for (const PixelPoint& point : ring) linearRing.addPoint(point.column, point.row);
     linearRing.closeRings();
     OGRPolygon polygon;
     polygon.addRing(&linearRing);
-    if (polygon.IsValid()) return true;
 
     std::unique_ptr<OGRGeometry, decltype(&OGRGeometryFactory::destroyGeometry)>
         repaired(polygon.Buffer(0.0), OGRGeometryFactory::destroyGeometry);
     if (!repaired) return false;
 
     const OGRPolygon* largest = nullptr;
-    double largestArea = 0.0;
     const auto consider = [&](const OGRGeometry* geometry)
     {
         const auto* part = dynamic_cast<const OGRPolygon*>(geometry);
-        if (part != nullptr && part->get_Area() > largestArea)
-        {
+        if (part != nullptr && part->getExteriorRing() != nullptr &&
+            (largest == nullptr || part->get_Area() > largest->get_Area()))
             largest = part;
-            largestArea = part->get_Area();
-        }
     };
     if (const auto* collection = dynamic_cast<const OGRGeometryCollection*>(repaired.get()))
     {
@@ -119,835 +223,813 @@ bool repairRingWithOgr(std::vector<PixelPoint>& ring)
     {
         consider(repaired.get());
     }
-    if (largest == nullptr || largest->getExteriorRing() == nullptr) return false;
+    if (largest == nullptr) return false;
 
     const OGRLinearRing* exterior = largest->getExteriorRing();
     ring.clear();
-    for (int index = 0; index + 1 < exterior->getNumPoints(); ++index)
+    for (int index = 0; index < exterior->getNumPoints(); ++index)
         ring.push_back(PixelPoint{exterior->getX(index), exterior->getY(index)});
-    removeRedundantVertices(ring);
-    return ring.size() >= 3;
+    ring = withoutConsecutiveRepeats(ring);
+    return ring.size() >= 3 && std::abs(signedArea(ring)) > kMinRingArea && isSimple(ring);
 }
 
-bool readRing(
-    const Json::Value& value,
-    int rasterWidth,
-    int rasterHeight,
-    bool shiftFromCentre,
-    bool strictValidation,
-    std::vector<PixelPoint>& ring,
-    std::vector<std::string>& errors,
-    std::vector<std::string>& warnings,
-    const std::string& context)
+std::string number(double value)
 {
-    ring.clear();
-    if (!value.isArray())
+    std::ostringstream stream;
+    stream.precision(17);
+    stream << value;
+    return stream.str();
+}
+
+std::string pointText(double column, double row)
+{
+    return "(" + number(column) + ", " + number(row) + ")";
+}
+
+// ---------------------------------------------------------------------------
+// Document reader
+// ---------------------------------------------------------------------------
+
+class Reader
+{
+public:
+    Reader(RoofGraphValidationMode mode, HybridRoofGraphImportResult& result)
+        : repair_(mode == RoofGraphValidationMode::Repair), result_(result)
     {
-        errors.push_back(context + " must be a JSON array of points.");
-        return false;
     }
 
-    const double maxWidth = static_cast<double>(rasterWidth);
-    const double maxHeight = static_cast<double>(rasterHeight);
-
-    for (Json::ArrayIndex i = 0; i < value.size(); ++i)
+    void read(const Json::Value& root)
     {
-        const auto& pointVal = value[i];
-        if (!pointVal.isArray() || pointVal.size() != 2 ||
-            !pointVal[0].isNumeric() || !pointVal[1].isNumeric())
-        {
-            errors.push_back(context + " point at index " + std::to_string(i) + " is not a valid 2D numeric point [column, row].");
-            return false;
-        }
+        if (!readHeader(root)) return;
+        if (root.isMember("metadata")) readMetadata(root["metadata"]);
 
-        double col = pointVal[0].asDouble();
-        double row = pointVal[1].asDouble();
-
-        if (!std::isfinite(col) || !std::isfinite(row))
+        std::unordered_set<std::string> buildingIds;
+        std::unordered_set<std::string> sectionIds;
+        const Json::Value& buildings = root["buildings"];
+        for (Json::ArrayIndex index = 0; index < buildings.size(); ++index)
         {
-            errors.push_back(context + " point at index " + std::to_string(i) + " has non-finite coordinates.");
-            return false;
-        }
-
-        if (shiftFromCentre)
-        {
-            col += 0.5;
-            row += 0.5;
-        }
-
-        if (col < 0.0 || col > maxWidth || row < 0.0 || row > maxHeight)
-        {
-            if (strictValidation)
+            BuildingProposal building;
+            if (readBuilding(buildings[index], index, buildingIds, sectionIds, building))
             {
-                errors.push_back(context + " point (" + std::to_string(col) + ", " + std::to_string(row) +
-                                 ") is outside raster bounds [0, " + std::to_string(maxWidth) + "] x [0, " +
-                                 std::to_string(maxHeight) + "].");
-                return false;
-            }
-            else
-            {
-                warnings.push_back(context + " point (" + std::to_string(col) + ", " + std::to_string(row) +
-                                   ") was clamped to raster bounds.");
-                col = std::clamp(col, 0.0, maxWidth);
-                row = std::clamp(row, 0.0, maxHeight);
+                result_.sectionCount += building.roofSections.size();
+                result_.document.buildings.push_back(std::move(building));
             }
         }
-
-        ring.push_back(PixelPoint{col, row});
+        result_.buildingCount = result_.document.buildings.size();
     }
 
-    // Check for disallowed implicit closing vertex
-    if (ring.size() >= 2)
+private:
+    // Document-level problems fail the import in both modes.
+    void fail(const std::string& code, const std::string& message)
     {
-        const auto& first = ring.front();
-        const auto& last = ring.back();
-        if (std::abs(first.column - last.column) < 1.0e-6 &&
-            std::abs(first.row - last.row) < 1.0e-6)
-        {
-            if (strictValidation)
-            {
-                errors.push_back(context + " has duplicate closing vertex; depthwizard.roofgraph.v1 serialized rings must be open (no closing vertex).");
-                return false;
-            }
-            else
-            {
-                warnings.push_back(context + " stripped redundant closing vertex.");
-                ring.pop_back();
-            }
-        }
+        result_.errors.push_back(code + ": " + message + ".");
     }
 
-    if (ring.size() < 3)
+    // An element breaks the contract. Strict mode records an error; repair
+    // mode records what the caller does about it.
+    void violation(const std::string& code, const std::string& message, const std::string& action)
     {
-        errors.push_back(context + " has fewer than 3 unique vertices (got " + std::to_string(ring.size()) + ").");
-        return false;
-    }
-
-    // Validate geometry via OGR
-    OGRLinearRing ogrRing;
-    for (const auto& pt : ring)
-        ogrRing.addPoint(pt.column, pt.row);
-    ogrRing.closeRings();
-    OGRPolygon ogrPoly;
-    ogrPoly.addRing(&ogrRing);
-
-    if (!ogrPoly.IsValid())
-    {
-        if (strictValidation)
-        {
-            errors.push_back(context + " is self-intersecting or topologically invalid.");
-            return false;
-        }
+        if (repair_)
+            result_.warnings.push_back(code + ": " + message + "; " + action + ".");
         else
+            result_.errors.push_back(code + ": " + message + ".");
+    }
+
+    void note(const std::string& code, const std::string& message)
+    {
+        result_.warnings.push_back(code + ": " + message + ".");
+    }
+
+    bool readHeader(const Json::Value& root)
+    {
+        if (!root.isObject())
         {
-            warnings.push_back(context + " was self-intersecting; repaired via Buffer(0.0).");
-            if (!repairRingWithOgr(ring))
+            fail("document_type", "the document must be a JSON object");
+            return false;
+        }
+        if (!root["schema"].isString() || root["schema"].asString() != kRoofGraphSchema)
+            fail("schema", std::string("'schema' must be \"") + kRoofGraphSchema + "\"");
+        for (const char* key : {"raster_width", "raster_height"})
+            if (!root[key].isInt() || root[key].asInt() <= 0)
+                fail("raster_size", std::string("'") + key + "' must be a positive integer");
+        if (!root["coordinate_convention"].isString() ||
+            root["coordinate_convention"].asString() != kRoofGraphCoordinateConvention)
+        {
+            fail("coordinate_convention",
+                 std::string("'coordinate_convention' must be \"") + kRoofGraphCoordinateConvention +
+                 "\"; producers convert other conventions to pixel edges before serializing");
+        }
+        if (!root["buildings"].isArray())
+            fail("buildings", "'buildings' must be an array");
+        if (!result_.errors.empty()) return false;
+
+        result_.document.rasterWidth = root["raster_width"].asInt();
+        result_.document.rasterHeight = root["raster_height"].asInt();
+        return true;
+    }
+
+    void readMetadata(const Json::Value& value)
+    {
+        if (value.isNull()) return;
+        if (!value.isObject())
+        {
+            violation("metadata", "'metadata' must be an object", "ignored it");
+            return;
+        }
+        RoofGraphSceneMetadata& metadata = result_.document.metadata;
+        metadata.sceneId = readOptionalString(value, "scene_id", "metadata");
+        metadata.crs = readOptionalString(value, "crs", "metadata");
+
+        if (value.isMember("geo_transform") && !value["geo_transform"].isNull())
+        {
+            const Json::Value& transform = value["geo_transform"];
+            std::array<double, 6> coefficients{};
+            bool valid = transform.isArray() && transform.size() == 6;
+            for (Json::ArrayIndex index = 0; valid && index < 6; ++index)
             {
-                errors.push_back(context + " repair failed; could not produce simple polygon.");
-                return false;
+                valid = transform[index].isNumeric() && std::isfinite(transform[index].asDouble());
+                if (valid) coefficients[index] = transform[index].asDouble();
             }
+            if (valid && coefficients[1] * coefficients[5] - coefficients[2] * coefficients[4] == 0.0)
+                valid = false;
+            if (valid)
+                metadata.geoTransform = coefficients;
+            else
+                violation("metadata", "metadata 'geo_transform' must be 6 finite numbers with a non-zero determinant",
+                          "ignored it");
+        }
+        if (value.isMember("gsd") && !value["gsd"].isNull())
+        {
+            const Json::Value& gsd = value["gsd"];
+            if (gsd.isNumeric() && std::isfinite(gsd.asDouble()) && gsd.asDouble() > 0.0)
+                metadata.gsd = gsd.asDouble();
+            else
+                violation("metadata", "metadata 'gsd' must be a finite number greater than 0", "ignored it");
         }
     }
 
-    return true;
+    std::optional<std::string> readOptionalString(const Json::Value& object, const char* key,
+                                                  const std::string& context)
+    {
+        if (!object.isMember(key) || object[key].isNull()) return std::nullopt;
+        if (object[key].isString()) return object[key].asString();
+        violation("field_type", context + " '" + key + "' must be a string", "ignored it");
+        return std::nullopt;
+    }
+
+    std::string readString(const Json::Value& object, const char* key, const std::string& fallback,
+                           const std::string& context)
+    {
+        if (!object.isMember(key)) return fallback;
+        if (object[key].isString()) return object[key].asString();
+        violation("field_type", context + " '" + key + "' must be a string", "used '" + fallback + "'");
+        return fallback;
+    }
+
+    // Absent (or null when nullable) gives nullopt.
+    std::optional<double> readScore(const Json::Value& object, const char* key, bool nullable,
+                                    const std::string& context)
+    {
+        if (!object.isMember(key) || (nullable && object[key].isNull())) return std::nullopt;
+        const Json::Value& value = object[key];
+        const std::string name = context + " score '" + key + "'";
+        if (!value.isNumeric())
+        {
+            violation("field_type", name + " must be a number" + (nullable ? " or null" : ""), "ignored it");
+            return std::nullopt;
+        }
+        double score = value.asDouble();
+        if (!std::isfinite(score))
+        {
+            violation("non_finite", name + " is not finite", "ignored it");
+            return std::nullopt;
+        }
+        if (score < 0.0 || score > 1.0)
+        {
+            violation("score_range", name + " = " + number(score) + " is outside [0, 1]", "clamped it");
+            score = std::clamp(score, 0.0, 1.0);
+        }
+        return score;
+    }
+
+    // Reads, validates and canonicalizes one ring. On failure the caller
+    // applies `consequence` (e.g. drops the building), which repair mode reports.
+    bool readRing(const Json::Value& value, RingRole role, const std::string& context,
+                  const std::string& consequence, std::vector<PixelPoint>& ring)
+    {
+        ring.clear();
+        if (!value.isArray())
+        {
+            violation("ring_type", context + " must be an array of [column, row] points", consequence);
+            return false;
+        }
+        if (value.size() > kRoofGraphMaxRingVertices)
+        {
+            violation("too_many_vertices", context + " has " + std::to_string(value.size()) +
+                      " vertices; the limit is " + std::to_string(kRoofGraphMaxRingVertices), consequence);
+            return false;
+        }
+
+        const double width = result_.document.rasterWidth;
+        const double height = result_.document.rasterHeight;
+        bool clamped = false;
+        for (Json::ArrayIndex index = 0; index < value.size(); ++index)
+        {
+            const Json::Value& point = value[index];
+            if (!point.isArray() || point.size() != 2 || !point[0].isNumeric() || !point[1].isNumeric())
+            {
+                violation("ring_type", context + " point " + std::to_string(index) +
+                          " is not a [column, row] pair of numbers", consequence);
+                return false;
+            }
+            double column = point[0].asDouble();
+            double row = point[1].asDouble();
+            if (!std::isfinite(column) || !std::isfinite(row))
+            {
+                violation("non_finite", context + " point " + std::to_string(index) + " is not finite",
+                          consequence);
+                return false;
+            }
+            if (column < 0.0 || column > width || row < 0.0 || row > height)
+            {
+                if (!repair_)
+                {
+                    violation("out_of_bounds", context + " point " + pointText(column, row) +
+                              " is outside [0, " + number(width) + "] x [0, " + number(height) + "]", "");
+                    return false;
+                }
+                column = std::clamp(column, 0.0, width);
+                row = std::clamp(row, 0.0, height);
+                clamped = true;
+            }
+            ring.push_back(PixelPoint{column, row});
+        }
+        if (clamped)
+            violation("out_of_bounds", context + " has points outside the raster", "clamped them to the raster");
+
+        if (ring.size() >= 2 && samePoint(ring.front(), ring.back()))
+        {
+            violation("closing_vertex", context + " repeats its first vertex at the end; rings must be open",
+                      "removed the closing vertex");
+            if (!repair_) return false;
+            ring.pop_back();
+        }
+        const std::vector<PixelPoint> unique = withoutConsecutiveRepeats(ring);
+        if (unique.size() != ring.size())
+        {
+            violation("repeated_vertex", context + " repeats consecutive vertices", "removed the repeats");
+            if (!repair_) return false;
+            ring = unique;
+        }
+
+        std::set<std::pair<double, double>> distinct;
+        for (const PixelPoint& point : ring) distinct.emplace(point.column, point.row);
+        if (distinct.size() < 3)
+        {
+            violation("too_few_vertices", context + " has " + std::to_string(distinct.size()) +
+                      " distinct vertices; at least 3 are required", consequence);
+            return false;
+        }
+        if (allCollinear(ring))
+        {
+            violation("degenerate_ring", context + " has zero area", consequence);
+            return false;
+        }
+        if (!isSimple(ring))
+        {
+            violation("self_intersection", context + " is not simple (its edges cross or touch)",
+                      "replaced it by its largest valid part");
+            if (!repair_) return false;
+            if (!repairWithOgr(ring))
+            {
+                note("self_intersection", context + " could not be repaired; " + consequence);
+                return false;
+            }
+        }
+
+        if (std::abs(signedArea(ring)) <= kMinRingArea)
+        {
+            violation("degenerate_ring", context + " has zero area", consequence);
+            return false;
+        }
+
+        const bool positive = signedArea(ring) > 0.0;
+        if (positive != (role == RingRole::Outer))
+        {
+            std::reverse(ring.begin(), ring.end());
+            note("winding", context + " was reversed to the contract winding (" +
+                 (role == RingRole::Outer ? "positive" : "negative") + " image-space area)");
+        }
+        return true;
+    }
+
+    // Holes must lie strictly inside the outer ring and be disjoint.
+    std::vector<std::vector<PixelPoint>> readHoles(const Json::Value& object,
+                                                   const std::vector<PixelPoint>& outer,
+                                                   const std::string& context)
+    {
+        std::vector<std::vector<PixelPoint>> holes;
+        if (!object.isMember("holes")) return holes;
+        const Json::Value& values = object["holes"];
+        if (!values.isArray())
+        {
+            violation("field_type", context + " 'holes' must be an array of rings", "ignored it");
+            return holes;
+        }
+        for (Json::ArrayIndex index = 0; index < values.size(); ++index)
+        {
+            const std::string holeContext = context + " hole " + std::to_string(index);
+            std::vector<PixelPoint> hole;
+            if (!readRing(values[index], RingRole::Hole, holeContext, "dropped the hole", hole)) continue;
+
+            bool valid = !boundariesTouch(outer, hole) && pointInside(outer, hole.front());
+            for (const auto& other : holes)
+            {
+                valid = valid && !boundariesTouch(other, hole) &&
+                        !pointInside(other, hole.front()) && !pointInside(hole, other.front());
+            }
+            if (!valid)
+            {
+                violation("invalid_hole", holeContext +
+                          " must lie strictly inside its outer ring without touching it or another hole",
+                          "dropped the hole");
+                continue;
+            }
+            holes.push_back(std::move(hole));
+        }
+        return holes;
+    }
+
+    bool readCorner(const Json::Value& value, const std::string& context, RoofGraphCornerHint& corner)
+    {
+        const Json::Value& xy = value["xy"];
+        if (!value.isObject() || !xy.isArray() || xy.size() != 2 || !xy[0].isNumeric() || !xy[1].isNumeric())
+        {
+            violation("field_type", context + " must be an object with 'xy': [column, row]", "dropped the corner");
+            return false;
+        }
+        const double column = xy[0].asDouble();
+        const double row = xy[1].asDouble();
+        if (!std::isfinite(column) || !std::isfinite(row))
+        {
+            violation("non_finite", context + " 'xy' is not finite", "dropped the corner");
+            return false;
+        }
+        if (column < 0.0 || column > result_.document.rasterWidth ||
+            row < 0.0 || row > result_.document.rasterHeight)
+        {
+            violation("out_of_bounds", context + " 'xy' " + pointText(column, row) + " is outside the raster",
+                      "dropped the corner");
+            return false;
+        }
+        corner.xy = PixelPoint{column, row};
+
+        if (value.isMember("height_class_m") && !value["height_class_m"].isNull())
+        {
+            const Json::Value& hint = value["height_class_m"];
+            if (!hint.isNumeric())
+                violation("height_hint", context + " 'height_class_m' must be a number or null", "ignored the hint");
+            else if (!std::isfinite(hint.asDouble()))
+                violation("non_finite", context + " 'height_class_m' is not finite", "ignored the hint");
+            else if (hint.asDouble() < 0.0)
+                violation("height_hint", context + " 'height_class_m' must not be negative", "ignored the hint");
+            else
+                corner.heightClassHintMetres = hint.asDouble();
+        }
+        corner.score = readScore(value, "score", false, context).value_or(0.0);
+        corner.cornerType = readString(value, "corner_type", "unknown", context);
+        return true;
+    }
+
+    bool readSection(const Json::Value& value, const std::string& context,
+                     std::unordered_set<std::string>& sectionIds, RoofSectionProposal& section)
+    {
+        if (!value.isObject())
+        {
+            violation("field_type", context + " must be an object", "dropped the section");
+            return false;
+        }
+        if (!value["id"].isString() || value["id"].asString().empty())
+        {
+            violation("missing_id", context + " needs a non-empty string 'id'", "dropped the section");
+            return false;
+        }
+        section.id = value["id"].asString();
+        const std::string sectionContext = context + " '" + section.id + "'";
+        if (sectionIds.count(section.id) != 0)
+        {
+            violation("duplicate_id", "section id '" + section.id + "' is used more than once in the document",
+                      "dropped the repeat");
+            return false;
+        }
+
+        if (!value.isMember("polygon"))
+        {
+            violation("ring_type", sectionContext + " 'polygon' is required", "dropped the section");
+            return false;
+        }
+        if (!readRing(value["polygon"], RingRole::Outer, sectionContext + " polygon", "dropped the section",
+                      section.polygon))
+            return false;
+        sectionIds.insert(section.id);
+
+        section.holes = readHoles(value, section.polygon, sectionContext);
+        if (value.isMember("corners"))
+        {
+            const Json::Value& corners = value["corners"];
+            if (!corners.isArray())
+            {
+                violation("field_type", sectionContext + " 'corners' must be an array", "ignored it");
+            }
+            else
+            {
+                for (Json::ArrayIndex index = 0; index < corners.size(); ++index)
+                {
+                    RoofGraphCornerHint corner;
+                    if (readCorner(corners[index], sectionContext + " corner " + std::to_string(index), corner))
+                        section.corners.push_back(std::move(corner));
+                }
+            }
+        }
+        section.typeHint = readString(value, "type_hint", "unknown", sectionContext);
+        if (value.isMember("adjacent_sections"))
+        {
+            const Json::Value& adjacent = value["adjacent_sections"];
+            if (!adjacent.isArray())
+            {
+                violation("field_type", sectionContext + " 'adjacent_sections' must be an array of ids", "ignored it");
+            }
+            else
+            {
+                for (const Json::Value& id : adjacent)
+                {
+                    if (id.isString() && !id.asString().empty())
+                        section.adjacentSections.push_back(id.asString());
+                    else
+                        violation("field_type", sectionContext + " 'adjacent_sections' entries must be non-empty strings",
+                                  "dropped the entry");
+                }
+            }
+        }
+        section.score = readScore(value, "score", false, sectionContext).value_or(0.0);
+        return true;
+    }
+
+    // Adjacency may only name other sections of the same building, once each.
+    void validateAdjacency(BuildingProposal& building, const std::string& context)
+    {
+        std::unordered_set<std::string> ids;
+        for (const RoofSectionProposal& section : building.roofSections) ids.insert(section.id);
+        for (RoofSectionProposal& section : building.roofSections)
+        {
+            std::vector<std::string> kept;
+            for (const std::string& id : section.adjacentSections)
+            {
+                std::string problem;
+                if (id == section.id)
+                    problem = "lists itself as adjacent";
+                else if (ids.count(id) == 0)
+                    problem = "references '" + id + "', which is not a section of this building";
+                else if (std::find(kept.begin(), kept.end(), id) != kept.end())
+                    problem = "lists '" + id + "' more than once";
+                if (problem.empty())
+                    kept.push_back(id);
+                else
+                    violation("adjacency", context + " section '" + section.id + "' " + problem, "dropped the entry");
+            }
+            section.adjacentSections = std::move(kept);
+        }
+    }
+
+    void readProvenance(const Json::Value& values, const std::string& context, BuildingProposal& building)
+    {
+        if (!values.isArray())
+        {
+            violation("field_type", context + " 'provenance' must be an array of objects", "ignored it");
+            return;
+        }
+        for (Json::ArrayIndex index = 0; index < values.size(); ++index)
+        {
+            const Json::Value& value = values[index];
+            const std::string entryContext = context + " provenance " + std::to_string(index);
+            if (!value.isObject() || !value["stage"].isString() || value["stage"].asString().empty() ||
+                !value["source"].isString() || value["source"].asString().empty())
+            {
+                violation("provenance", entryContext + " must be an object with non-empty 'stage' and 'source'",
+                          "dropped the entry");
+                continue;
+            }
+            RoofGraphProvenance entry;
+            entry.stage = value["stage"].asString();
+            entry.source = value["source"].asString();
+            entry.timestamp = readOptionalString(value, "timestamp", entryContext);
+            if (value.isMember("details")) entry.details = value["details"];
+            building.provenance.push_back(std::move(entry));
+        }
+    }
+
+    bool readBuilding(const Json::Value& value, Json::ArrayIndex index,
+                      std::unordered_set<std::string>& buildingIds,
+                      std::unordered_set<std::string>& sectionIds,
+                      BuildingProposal& building)
+    {
+        const std::string position = "building " + std::to_string(index);
+        if (!value.isObject())
+        {
+            violation("field_type", position + " must be an object", "dropped the building");
+            return false;
+        }
+        if (!value["id"].isString() || value["id"].asString().empty())
+        {
+            violation("missing_id", position + " needs a non-empty string 'id'", "dropped the building");
+            return false;
+        }
+        building.id = value["id"].asString();
+        const std::string context = "building '" + building.id + "'";
+        if (!buildingIds.insert(building.id).second)
+        {
+            violation("duplicate_id", "building id '" + building.id + "' is used more than once",
+                      "dropped the repeat");
+            return false;
+        }
+
+        if (!value.isMember("footprint_proposal"))
+        {
+            violation("ring_type", context + " 'footprint_proposal' is required", "dropped the building");
+            return false;
+        }
+        if (!readRing(value["footprint_proposal"], RingRole::Outer, context + " footprint_proposal",
+                      "dropped the building", building.footprintProposal.outerRing))
+            return false;
+        building.footprintProposal.holes = readHoles(value, building.footprintProposal.outerRing, context);
+
+        const Json::Value& roofprint = value["roofprint_proposal"];
+        if (!roofprint.isNull() && !(roofprint.isArray() && roofprint.empty()))
+        {
+            std::vector<PixelPoint> ring;
+            if (readRing(roofprint, RingRole::Outer, context + " roofprint_proposal", "ignored the roofprint", ring))
+                building.roofprintProposal = std::move(ring);
+        }
+
+        if (value.isMember("scores"))
+        {
+            const Json::Value& scores = value["scores"];
+            if (!scores.isObject())
+            {
+                violation("field_type", context + " 'scores' must be an object", "used default scores");
+            }
+            else
+            {
+                building.scores.semantic = readScore(scores, "semantic", false, context).value_or(0.0);
+                building.scores.ndsm = readScore(scores, "ndsm", false, context).value_or(0.0);
+                building.scores.sam2 = readScore(scores, "sam2", true, context);
+                building.scores.kibs = readScore(scores, "kibs", true, context);
+                building.scores.combined = readScore(scores, "combined", true, context);
+            }
+        }
+
+        if (value.isMember("roof_sections"))
+        {
+            const Json::Value& sections = value["roof_sections"];
+            if (!sections.isArray())
+            {
+                violation("field_type", context + " 'roof_sections' must be an array", "ignored it");
+            }
+            else
+            {
+                for (Json::ArrayIndex sectionIndex = 0; sectionIndex < sections.size(); ++sectionIndex)
+                {
+                    RoofSectionProposal section;
+                    if (readSection(sections[sectionIndex], context + " section " + std::to_string(sectionIndex),
+                                    sectionIds, section))
+                        building.roofSections.push_back(std::move(section));
+                }
+            }
+        }
+        validateAdjacency(building, context);
+
+        if (value.isMember("provenance")) readProvenance(value["provenance"], context, building);
+        return true;
+    }
+
+    bool repair_;
+    HybridRoofGraphImportResult& result_;
+};
+
+Json::Value ringJson(const std::vector<PixelPoint>& ring)
+{
+    Json::Value points(Json::arrayValue);
+    for (const PixelPoint& point : ring)
+    {
+        Json::Value pair(Json::arrayValue);
+        pair.append(point.column);
+        pair.append(point.row);
+        points.append(pair);
+    }
+    return points;
+}
+
+Json::Value ringsJson(const std::vector<std::vector<PixelPoint>>& rings)
+{
+    Json::Value values(Json::arrayValue);
+    for (const auto& ring : rings) values.append(ringJson(ring));
+    return values;
+}
+
+HybridRoofGraphImportResult failure(const std::string& code, const std::string& message)
+{
+    HybridRoofGraphImportResult result;
+    result.errors.push_back(code + ": " + message + ".");
+    return result;
 }
 
 } // namespace
 
-ProjectedPoint HybridRoofGraphImporter::toProjected(
-    const PixelPoint& pixel, const SpatialMetadata& metadata)
-{
-    const auto& gt = metadata.geoTransform;
-    // Canonical pixel-edge coordinate convention: no silent +0.5 is added!
-    return ProjectedPoint{
-        gt[0] + pixel.column * gt[1] + pixel.row * gt[2],
-        gt[3] + pixel.column * gt[4] + pixel.row * gt[5]
-    };
-}
-
-FootprintPolygon<ProjectedPoint> HybridRoofGraphImporter::projectPolygon(
-    const FootprintPolygon<PixelPoint>& pixelPoly,
-    const SpatialMetadata& metadata)
-{
-    FootprintPolygon<ProjectedPoint> projected;
-
-    const auto projectRing = [&](const std::vector<PixelPoint>& pRing, bool wantCCW)
-    {
-        std::vector<ProjectedPoint> proj;
-        proj.reserve(pRing.size());
-        for (const auto& pt : pRing)
-            proj.push_back(toProjected(pt, metadata));
-
-        const double area = projectedRingArea(proj);
-        const bool isCCW = (area > 0.0);
-        if (isCCW != wantCCW)
-            std::reverse(proj.begin(), proj.end());
-        return proj;
-    };
-
-    projected.outerRing = projectRing(pixelPoly.outerRing, true);
-    for (const auto& hole : pixelPoly.holes)
-        projected.holes.push_back(projectRing(hole, false));
-
-    return projected;
-}
-
 HybridRoofGraphImportResult HybridRoofGraphImporter::parse(
     const Json::Value& document,
-    bool strictValidation)
+    RoofGraphValidationMode mode)
 {
     HybridRoofGraphImportResult result;
-    if (!document.isObject())
+    try
     {
-        result.errors.push_back("Root JSON document must be an object.");
-        return result;
+        Reader(mode, result).read(document);
     }
-
-    // 1. Schema check
-    if (!document.isMember("schema") || !document["schema"].isString() ||
-        document["schema"].asString() != kExpectedSchema)
+    catch (const std::exception& error)
     {
-        result.errors.push_back("Missing or invalid schema identifier. Expected '" +
-                                std::string(kExpectedSchema) + "'.");
-        return result;
+        result = failure("internal", std::string("unexpected parser failure: ") + error.what());
     }
-    result.document.schema = document["schema"].asString();
-
-    // 2. Raster dimensions
-    if (!document.isMember("raster_width") || !document["raster_width"].isInt() ||
-        document["raster_width"].asInt() <= 0)
-    {
-        result.errors.push_back("raster_width must be a positive integer.");
-        return result;
-    }
-    if (!document.isMember("raster_height") || !document["raster_height"].isInt() ||
-        document["raster_height"].asInt() <= 0)
-    {
-        result.errors.push_back("raster_height must be a positive integer.");
-        return result;
-    }
-    result.document.rasterWidth = document["raster_width"].asInt();
-    result.document.rasterHeight = document["raster_height"].asInt();
-
-    // 3. Coordinate convention
-    bool shiftFromCentre = false;
-    if (document.isMember("coordinate_convention") && document["coordinate_convention"].isString())
-    {
-        const std::string convStr = document["coordinate_convention"].asString();
-        const auto parsedConv = parseCoordinateConvention(convStr);
-        if (!parsedConv.has_value())
-        {
-            result.errors.push_back("Unknown coordinate_convention: '" + convStr +
-                                    "'. Expected 'pixel_edge_column_row' or 'pixel_centre_column_row'.");
-            return result;
-        }
-        result.document.coordinateConvention = *parsedConv;
-        if (*parsedConv == RoofGraphCoordinateConvention::PIXEL_CENTRE_COLUMN_ROW)
-        {
-            shiftFromCentre = true;
-            result.warnings.push_back("Document declared 'pixel_centre_column_row'; converted coordinates to canonical pixel edges with +0.5 shift.");
-        }
-    }
-    else
-    {
-        result.document.coordinateConvention = RoofGraphCoordinateConvention::PIXEL_EDGE_COLUMN_ROW;
-    }
-
-    // 4. Optional metadata
-    if (document.isMember("metadata") && document["metadata"].isObject())
-    {
-        const auto& metaVal = document["metadata"];
-        if (metaVal.isMember("scene_id") && metaVal["scene_id"].isString())
-            result.document.metadata.sceneId = metaVal["scene_id"].asString();
-        if (metaVal.isMember("crs") && metaVal["crs"].isString())
-            result.document.metadata.crs = metaVal["crs"].asString();
-        if (metaVal.isMember("gsd") && metaVal["gsd"].isNumeric())
-            result.document.metadata.gsd = metaVal["gsd"].asDouble();
-        if (metaVal.isMember("geo_transform") && metaVal["geo_transform"].isArray() &&
-            metaVal["geo_transform"].size() == 6)
-        {
-            result.document.metadata.hasGeoTransform = true;
-            for (int k = 0; k < 6; ++k)
-                result.document.metadata.geoTransform[k] = metaVal["geo_transform"][k].asDouble();
-        }
-    }
-
-    // 5. Buildings
-    if (!document.isMember("buildings") || !document["buildings"].isArray())
-    {
-        result.errors.push_back("Document missing required 'buildings' array.");
-        return result;
-    }
-
-    std::unordered_set<std::string> seenBuildingIds;
-    const auto& buildingsVal = document["buildings"];
-
-    for (Json::ArrayIndex bIdx = 0; bIdx < buildingsVal.size(); ++bIdx)
-    {
-        const auto& bVal = buildingsVal[bIdx];
-        if (!bVal.isObject())
-        {
-            result.errors.push_back("buildings[" + std::to_string(bIdx) + "] is not an object.");
-            continue;
-        }
-
-        // Building ID
-        if (!bVal.isMember("id") || !bVal["id"].isString() || bVal["id"].asString().empty())
-        {
-            result.errors.push_back("buildings[" + std::to_string(bIdx) + "] missing or empty 'id'.");
-            continue;
-        }
-        const std::string buildingId = bVal["id"].asString();
-        if (seenBuildingIds.find(buildingId) != seenBuildingIds.end())
-        {
-            result.errors.push_back("Duplicate building ID detected: '" + buildingId + "'.");
-            continue;
-        }
-        seenBuildingIds.insert(buildingId);
-
-        BuildingProposal proposal;
-        proposal.id = buildingId;
-
-        // Footprint proposal
-        const std::string fpCtx = "Building '" + buildingId + "' footprint_proposal";
-        if (!bVal.isMember("footprint_proposal"))
-        {
-            result.errors.push_back(fpCtx + " is missing.");
-            continue;
-        }
-        if (!readRing(bVal["footprint_proposal"], result.document.rasterWidth,
-                      result.document.rasterHeight, shiftFromCentre, strictValidation,
-                      proposal.footprintProposal.outerRing, result.errors, result.warnings, fpCtx))
-        {
-            continue;
-        }
-        // Normalize outer ring to CCW in (c, r) space
-        if (signedArea(proposal.footprintProposal.outerRing) < 0.0)
-        {
-            std::reverse(proposal.footprintProposal.outerRing.begin(),
-                         proposal.footprintProposal.outerRing.end());
-            result.warnings.push_back(fpCtx + " normalized to Counter-Clockwise winding.");
-        }
-
-        // Holes
-        if (bVal.isMember("holes") && bVal["holes"].isArray())
-        {
-            for (Json::ArrayIndex hIdx = 0; hIdx < bVal["holes"].size(); ++hIdx)
-            {
-                std::vector<PixelPoint> holeRing;
-                const std::string hCtx = "Building '" + buildingId + "' hole[" + std::to_string(hIdx) + "]";
-                if (readRing(bVal["holes"][hIdx], result.document.rasterWidth,
-                             result.document.rasterHeight, shiftFromCentre, strictValidation,
-                             holeRing, result.errors, result.warnings, hCtx))
-                {
-                    // Normalize hole to CW in (c, r) space
-                    if (signedArea(holeRing) > 0.0)
-                    {
-                        std::reverse(holeRing.begin(), holeRing.end());
-                        result.warnings.push_back(hCtx + " normalized to Clockwise winding.");
-                    }
-                    proposal.footprintProposal.holes.push_back(holeRing);
-                }
-            }
-        }
-
-        // Roofprint proposal
-        if (bVal.isMember("roofprint_proposal") && bVal["roofprint_proposal"].isArray() &&
-            bVal["roofprint_proposal"].size() >= 3)
-        {
-            const std::string rpCtx = "Building '" + buildingId + "' roofprint_proposal";
-            readRing(bVal["roofprint_proposal"], result.document.rasterWidth,
-                     result.document.rasterHeight, shiftFromCentre, strictValidation,
-                     proposal.roofprintProposal.outerRing, result.errors, result.warnings, rpCtx);
-            if (signedArea(proposal.roofprintProposal.outerRing) < 0.0)
-                std::reverse(proposal.roofprintProposal.outerRing.begin(),
-                             proposal.roofprintProposal.outerRing.end());
-            proposal.roofprintProposal.holes = proposal.footprintProposal.holes;
-        }
-        else
-        {
-            // Default roofprint matches footprint
-            proposal.roofprintProposal = proposal.footprintProposal;
-        }
-
-        // Confidence Scores
-        if (bVal.isMember("scores") && bVal["scores"].isObject())
-        {
-            const auto& sVal = bVal["scores"];
-            const auto readScore = [&](const char* key, float defVal) -> float
-            {
-                if (sVal.isMember(key) && sVal[key].isNumeric())
-                {
-                    float v = static_cast<float>(sVal[key].asDouble());
-                    if (v < 0.0f || v > 1.0f)
-                    {
-                        if (strictValidation)
-                            result.errors.push_back("Building '" + buildingId + "' score '" + key +
-                                                    "' out of range [0, 1]: " + std::to_string(v));
-                        else
-                        {
-                            result.warnings.push_back("Building '" + buildingId + "' score '" + key +
-                                                      "' clamped to [0, 1].");
-                            v = std::clamp(v, 0.0f, 1.0f);
-                        }
-                    }
-                    return v;
-                }
-                return defVal;
-            };
-
-            proposal.scores.semantic = readScore("semantic", 0.0f);
-            proposal.scores.ndsm = readScore("ndsm", 0.0f);
-            proposal.scores.sam2 = readScore("sam2", 0.0f);
-            proposal.scores.kibs = readScore("kibs", 0.0f);
-            if (sVal.isMember("combined") && sVal["combined"].isNumeric())
-                proposal.scores.combined = readScore("combined", 0.0f);
-        }
-
-        // Roof Sections
-        std::unordered_set<std::string> seenSectionIds;
-        if (bVal.isMember("roof_sections") && bVal["roof_sections"].isArray())
-        {
-            for (Json::ArrayIndex sIdx = 0; sIdx < bVal["roof_sections"].size(); ++sIdx)
-            {
-                const auto& sVal = bVal["roof_sections"][sIdx];
-                if (!sVal.isObject()) continue;
-
-                if (!sVal.isMember("id") || !sVal["id"].isString() || sVal["id"].asString().empty())
-                {
-                    result.errors.push_back("Building '" + buildingId + "' roof_sections[" +
-                                            std::to_string(sIdx) + "] missing or empty 'id'.");
-                    continue;
-                }
-                const std::string sectionId = sVal["id"].asString();
-                if (seenSectionIds.find(sectionId) != seenSectionIds.end())
-                {
-                    result.errors.push_back("Duplicate roof section ID '" + sectionId +
-                                            "' in building '" + buildingId + "'.");
-                    continue;
-                }
-                seenSectionIds.insert(sectionId);
-
-                RoofSectionProposal section;
-                section.id = sectionId;
-
-                const std::string sCtx = "Building '" + buildingId + "' section '" + sectionId + "'";
-                if (!sVal.isMember("polygon") ||
-                    !readRing(sVal["polygon"], result.document.rasterWidth, result.document.rasterHeight,
-                              shiftFromCentre, strictValidation, section.polygon, result.errors,
-                              result.warnings, sCtx + " polygon"))
-                {
-                    continue;
-                }
-                if (signedArea(section.polygon) < 0.0)
-                    std::reverse(section.polygon.begin(), section.polygon.end());
-
-                // Section Holes
-                if (sVal.isMember("holes") && sVal["holes"].isArray())
-                {
-                    for (Json::ArrayIndex shIdx = 0; shIdx < sVal["holes"].size(); ++shIdx)
-                    {
-                        std::vector<PixelPoint> sHole;
-                        const std::string shCtx = sCtx + " hole[" + std::to_string(shIdx) + "]";
-                        if (readRing(sVal["holes"][shIdx], result.document.rasterWidth,
-                                     result.document.rasterHeight, shiftFromCentre, strictValidation,
-                                     sHole, result.errors, result.warnings, shCtx))
-                        {
-                            if (signedArea(sHole) > 0.0)
-                                std::reverse(sHole.begin(), sHole.end());
-                            section.holes.push_back(sHole);
-                        }
-                    }
-                }
-
-                if (sVal.isMember("type_hint") && sVal["type_hint"].isString())
-                    section.typeHint = sVal["type_hint"].asString();
-
-                if (sVal.isMember("score") && sVal["score"].isNumeric())
-                {
-                    float sc = static_cast<float>(sVal["score"].asDouble());
-                    section.score = std::clamp(sc, 0.0f, 1.0f);
-                }
-
-                // Adjacent sections
-                if (sVal.isMember("adjacent_sections") && sVal["adjacent_sections"].isArray())
-                {
-                    for (Json::ArrayIndex aIdx = 0; aIdx < sVal["adjacent_sections"].size(); ++aIdx)
-                    {
-                        if (sVal["adjacent_sections"][aIdx].isString())
-                            section.adjacentSections.push_back(sVal["adjacent_sections"][aIdx].asString());
-                    }
-                }
-
-                // Corners
-                if (sVal.isMember("corners") && sVal["corners"].isArray())
-                {
-                    for (Json::ArrayIndex cIdx = 0; cIdx < sVal["corners"].size(); ++cIdx)
-                    {
-                        const auto& cVal = sVal["corners"][cIdx];
-                        if (!cVal.isObject() || !cVal.isMember("xy") || !cVal["xy"].isArray() ||
-                            cVal["xy"].size() != 2 || !cVal["xy"][0].isNumeric() || !cVal["xy"][1].isNumeric())
-                            continue;
-
-                        RoofGraphCornerHint corner;
-                        double cx = cVal["xy"][0].asDouble();
-                        double cy = cVal["xy"][1].asDouble();
-                        if (shiftFromCentre)
-                        {
-                            cx += 0.5;
-                            cy += 0.5;
-                        }
-                        corner.xy = PixelPoint{cx, cy};
-
-                        if (cVal.isMember("height_class_m") && cVal["height_class_m"].isNumeric())
-                            corner.heightClassM = static_cast<float>(cVal["height_class_m"].asDouble());
-                        if (cVal.isMember("score") && cVal["score"].isNumeric())
-                            corner.score = std::clamp(static_cast<float>(cVal["score"].asDouble()), 0.0f, 1.0f);
-                        if (cVal.isMember("corner_type") && cVal["corner_type"].isString())
-                            corner.cornerType = cVal["corner_type"].asString();
-
-                        section.corners.push_back(corner);
-                    }
-                }
-
-                proposal.roofSections.push_back(std::move(section));
-            }
-        }
-
-        // Validate adjacent sections reference valid IDs
-        for (const auto& sec : proposal.roofSections)
-        {
-            for (const auto& adj : sec.adjacentSections)
-            {
-                if (seenSectionIds.find(adj) == seenSectionIds.end())
-                {
-                    result.warnings.push_back("Section '" + sec.id + "' references adjacent section '" +
-                                              adj + "' which is not present in building '" + buildingId + "'.");
-                }
-            }
-        }
-
-        // Provenance
-        if (bVal.isMember("provenance") && bVal["provenance"].isArray())
-        {
-            for (Json::ArrayIndex pIdx = 0; pIdx < bVal["provenance"].size(); ++pIdx)
-            {
-                const auto& pVal = bVal["provenance"][pIdx];
-                RoofGraphProvenance prov;
-                if (pVal.isObject())
-                {
-                    if (pVal.isMember("stage") && pVal["stage"].isString())
-                        prov.stage = pVal["stage"].asString();
-                    if (pVal.isMember("source") && pVal["source"].isString())
-                        prov.source = pVal["source"].asString();
-                    if (pVal.isMember("timestamp") && pVal["timestamp"].isString())
-                        prov.timestamp = pVal["timestamp"].asString();
-                    if (pVal.isMember("details"))
-                    {
-                        Json::FastWriter writer;
-                        prov.detailsJson = writer.write(pVal["details"]);
-                    }
-                }
-                else if (pVal.isString())
-                {
-                    prov.stage = "note";
-                    prov.source = pVal.asString();
-                }
-                proposal.provenance.push_back(std::move(prov));
-            }
-        }
-
-        result.sectionCount += proposal.roofSections.size();
-        result.document.buildings.push_back(std::move(proposal));
-    }
-
-    result.buildingCount = result.document.buildings.size();
     result.success = result.errors.empty();
+    if (!result.success)
+    {
+        result.document.buildings.clear();
+        result.buildingCount = 0;
+        result.sectionCount = 0;
+    }
     return result;
 }
 
 HybridRoofGraphImportResult HybridRoofGraphImporter::parseJson(
-    const std::string& jsonString,
-    bool strictValidation)
+    const std::string& json,
+    RoofGraphValidationMode mode)
 {
-    Json::Value root;
+    if (json.size() > kMaxDocumentBytes)
+        return failure("document_too_large", "the document exceeds " + std::to_string(kMaxDocumentBytes) + " bytes");
+
+    // Strict mode: no comments, NaN/Infinity tokens, duplicate keys or trailing data.
     Json::CharReaderBuilder builder;
-    std::string errs;
-    std::istringstream stream(jsonString);
-
-    if (!Json::parseFromStream(builder, stream, &root, &errs))
-    {
-        HybridRoofGraphImportResult result;
-        result.errors.push_back("Failed to parse JSON string: " + errs);
-        result.success = false;
-        return result;
-    }
-
-    return parse(root, strictValidation);
+    Json::CharReaderBuilder::strictMode(&builder.settings_);
+    const std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
+    Json::Value root;
+    std::string errors;
+    if (!reader->parse(json.data(), json.data() + json.size(), &root, &errors))
+        return failure("json_syntax", "invalid JSON: " + errors);
+    return parse(root, mode);
 }
 
 HybridRoofGraphImportResult HybridRoofGraphImporter::parseFile(
     const std::string& path,
-    bool strictValidation)
+    RoofGraphValidationMode mode)
 {
-    std::ifstream file(path);
-    if (!file.is_open())
-    {
-        HybridRoofGraphImportResult result;
-        result.errors.push_back("Failed to open file: " + path);
-        result.success = false;
-        return result;
-    }
-
-    Json::Value root;
-    Json::CharReaderBuilder builder;
-    std::string errs;
-
-    if (!Json::parseFromStream(builder, file, &root, &errs))
-    {
-        HybridRoofGraphImportResult result;
-        result.errors.push_back("Failed to parse JSON file " + path + ": " + errs);
-        result.success = false;
-        return result;
-    }
-
-    return parse(root, strictValidation);
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file) return failure("io", "cannot open " + path);
+    const std::streamoff size = file.tellg();
+    if (size < 0) return failure("io", "cannot read " + path);
+    if (static_cast<std::uintmax_t>(size) > kMaxDocumentBytes)
+        return failure("document_too_large", path + " exceeds " + std::to_string(kMaxDocumentBytes) + " bytes");
+    file.seekg(0);
+    std::string contents(static_cast<std::size_t>(size), '\0');
+    if (!file.read(contents.data(), size)) return failure("io", "cannot read " + path);
+    return parseJson(contents, mode);
 }
 
 Json::Value HybridRoofGraphImporter::toJson(const RoofGraphDocument& document)
 {
     Json::Value root(Json::objectValue);
-    root["schema"] = document.schema.empty() ? kExpectedSchema : document.schema;
+    root["schema"] = kRoofGraphSchema;
     root["raster_width"] = document.rasterWidth;
     root["raster_height"] = document.rasterHeight;
-    root["coordinate_convention"] = toString(document.coordinateConvention);
+    root["coordinate_convention"] = kRoofGraphCoordinateConvention;
 
-    if (!document.metadata.sceneId.empty() || !document.metadata.crs.empty() || document.metadata.hasGeoTransform)
+    const RoofGraphSceneMetadata& metadata = document.metadata;
+    if (!metadata.empty())
     {
-        Json::Value meta(Json::objectValue);
-        if (!document.metadata.sceneId.empty())
-            meta["scene_id"] = document.metadata.sceneId;
-        if (!document.metadata.crs.empty())
-            meta["crs"] = document.metadata.crs;
-        if (document.metadata.hasGeoTransform)
+        Json::Value value(Json::objectValue);
+        if (metadata.sceneId) value["scene_id"] = *metadata.sceneId;
+        if (metadata.crs) value["crs"] = *metadata.crs;
+        if (metadata.geoTransform)
         {
-            Json::Value gt(Json::arrayValue);
-            for (int k = 0; k < 6; ++k)
-                gt.append(document.metadata.geoTransform[k]);
-            meta["geo_transform"] = gt;
+            Json::Value transform(Json::arrayValue);
+            for (double coefficient : *metadata.geoTransform) transform.append(coefficient);
+            value["geo_transform"] = transform;
         }
-        meta["gsd"] = document.metadata.gsd;
-        root["metadata"] = meta;
+        if (metadata.gsd) value["gsd"] = *metadata.gsd;
+        root["metadata"] = value;
     }
 
     Json::Value buildings(Json::arrayValue);
-    for (const auto& b : document.buildings)
+    for (const BuildingProposal& building : document.buildings)
     {
-        Json::Value bVal(Json::objectValue);
-        bVal["id"] = b.id;
+        Json::Value value(Json::objectValue);
+        value["id"] = building.id;
+        value["footprint_proposal"] = ringJson(building.footprintProposal.outerRing);
+        if (building.roofprintProposal) value["roofprint_proposal"] = ringJson(*building.roofprintProposal);
+        value["holes"] = ringsJson(building.footprintProposal.holes);
 
-        // Footprint outer ring (OPEN, no duplicate closing vertex)
-        Json::Value fp(Json::arrayValue);
-        for (const auto& pt : b.footprintProposal.outerRing)
-        {
-            Json::Value p(Json::arrayValue);
-            p.append(pt.column);
-            p.append(pt.row);
-            fp.append(p);
-        }
-        bVal["footprint_proposal"] = fp;
-
-        // Roofprint outer ring
-        Json::Value rp(Json::arrayValue);
-        for (const auto& pt : b.roofprintProposal.outerRing)
-        {
-            Json::Value p(Json::arrayValue);
-            p.append(pt.column);
-            p.append(pt.row);
-            rp.append(p);
-        }
-        bVal["roofprint_proposal"] = rp;
-
-        // Holes
-        Json::Value holes(Json::arrayValue);
-        for (const auto& h : b.footprintProposal.holes)
-        {
-            Json::Value holeRing(Json::arrayValue);
-            for (const auto& pt : h)
-            {
-                Json::Value p(Json::arrayValue);
-                p.append(pt.column);
-                p.append(pt.row);
-                holeRing.append(p);
-            }
-            holes.append(holeRing);
-        }
-        bVal["holes"] = holes;
-
-        // Scores
         Json::Value scores(Json::objectValue);
-        scores["semantic"] = b.scores.semantic;
-        scores["ndsm"] = b.scores.ndsm;
-        scores["sam2"] = b.scores.sam2;
-        scores["kibs"] = b.scores.kibs;
-        if (b.scores.combined.has_value())
-            scores["combined"] = *b.scores.combined;
-        bVal["scores"] = scores;
+        scores["semantic"] = building.scores.semantic;
+        scores["ndsm"] = building.scores.ndsm;
+        if (building.scores.sam2) scores["sam2"] = *building.scores.sam2;
+        if (building.scores.kibs) scores["kibs"] = *building.scores.kibs;
+        if (building.scores.combined) scores["combined"] = *building.scores.combined;
+        value["scores"] = scores;
 
-        // Roof sections
         Json::Value sections(Json::arrayValue);
-        for (const auto& s : b.roofSections)
+        for (const RoofSectionProposal& section : building.roofSections)
         {
-            Json::Value sVal(Json::objectValue);
-            sVal["id"] = s.id;
-
-            Json::Value poly(Json::arrayValue);
-            for (const auto& pt : s.polygon)
-            {
-                Json::Value p(Json::arrayValue);
-                p.append(pt.column);
-                p.append(pt.row);
-                poly.append(p);
-            }
-            sVal["polygon"] = poly;
-
-            Json::Value sHoles(Json::arrayValue);
-            for (const auto& h : s.holes)
-            {
-                Json::Value hRing(Json::arrayValue);
-                for (const auto& pt : h)
-                {
-                    Json::Value p(Json::arrayValue);
-                    p.append(pt.column);
-                    p.append(pt.row);
-                    hRing.append(p);
-                }
-                sHoles.append(hRing);
-            }
-            sVal["holes"] = sHoles;
-
-            sVal["type_hint"] = s.typeHint;
-            sVal["score"] = s.score;
-
-            Json::Value adj(Json::arrayValue);
-            for (const auto& a : s.adjacentSections)
-                adj.append(a);
-            sVal["adjacent_sections"] = adj;
-
+            Json::Value sectionValue(Json::objectValue);
+            sectionValue["id"] = section.id;
+            sectionValue["polygon"] = ringJson(section.polygon);
+            sectionValue["holes"] = ringsJson(section.holes);
             Json::Value corners(Json::arrayValue);
-            for (const auto& c : s.corners)
+            for (const RoofGraphCornerHint& corner : section.corners)
             {
-                Json::Value cVal(Json::objectValue);
+                Json::Value cornerValue(Json::objectValue);
                 Json::Value xy(Json::arrayValue);
-                xy.append(c.xy.column);
-                xy.append(c.xy.row);
-                cVal["xy"] = xy;
-                if (c.heightClassM.has_value())
-                    cVal["height_class_m"] = *c.heightClassM;
-                else
-                    cVal["height_class_m"] = Json::nullValue;
-                cVal["score"] = c.score;
-                cVal["corner_type"] = c.cornerType;
-                corners.append(cVal);
+                xy.append(corner.xy.column);
+                xy.append(corner.xy.row);
+                cornerValue["xy"] = xy;
+                if (corner.heightClassHintMetres) cornerValue["height_class_m"] = *corner.heightClassHintMetres;
+                cornerValue["score"] = corner.score;
+                cornerValue["corner_type"] = corner.cornerType;
+                corners.append(cornerValue);
             }
-            sVal["corners"] = corners;
-
-            sections.append(sVal);
+            sectionValue["corners"] = corners;
+            sectionValue["type_hint"] = section.typeHint;
+            Json::Value adjacent(Json::arrayValue);
+            for (const std::string& id : section.adjacentSections) adjacent.append(id);
+            sectionValue["adjacent_sections"] = adjacent;
+            sectionValue["score"] = section.score;
+            sections.append(sectionValue);
         }
-        bVal["roof_sections"] = sections;
+        value["roof_sections"] = sections;
 
-        // Provenance
-        Json::Value prov(Json::arrayValue);
-        for (const auto& pr : b.provenance)
+        Json::Value provenance(Json::arrayValue);
+        for (const RoofGraphProvenance& entry : building.provenance)
         {
-            Json::Value pVal(Json::objectValue);
-            pVal["stage"] = pr.stage;
-            pVal["source"] = pr.source;
-            if (!pr.timestamp.empty())
-                pVal["timestamp"] = pr.timestamp;
-            if (!pr.detailsJson.empty())
-            {
-                Json::CharReaderBuilder rbuilder;
-                std::istringstream pStream(pr.detailsJson);
-                Json::Value detailsObj;
-                std::string errs;
-                if (Json::parseFromStream(rbuilder, pStream, &detailsObj, &errs))
-                    pVal["details"] = detailsObj;
-                else
-                    pVal["details"] = pr.detailsJson;
-            }
-            prov.append(pVal);
+            Json::Value entryValue(Json::objectValue);
+            entryValue["stage"] = entry.stage;
+            entryValue["source"] = entry.source;
+            if (entry.timestamp) entryValue["timestamp"] = *entry.timestamp;
+            if (!entry.details.isNull()) entryValue["details"] = entry.details;
+            provenance.append(entryValue);
         }
-        bVal["provenance"] = prov;
-
-        buildings.append(bVal);
+        value["provenance"] = provenance;
+        buildings.append(value);
     }
     root["buildings"] = buildings;
-
     return root;
 }
 
 std::string HybridRoofGraphImporter::toJsonString(const RoofGraphDocument& document, bool pretty)
 {
-    const Json::Value val = toJson(document);
-    if (pretty)
-    {
-        Json::StreamWriterBuilder writer;
-        writer["indentation"] = "  ";
-        return Json::writeString(writer, val);
-    }
-    else
-    {
-        Json::FastWriter writer;
-        return writer.write(val);
-    }
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = pretty ? "  " : "";
+    writer["emitUTF8"] = true;
+    return Json::writeString(writer, toJson(document));
 }
 
-BuildingCollection HybridRoofGraphImporter::toBuildingCollection(
-    const RoofGraphDocument& document,
-    const SemanticScene& semantics,
-    const GeoreferencedSurfaceBundle& surface,
-    const SpatialMetadata& metadata,
-    const BuildingReconstructionConfig& config,
-    const RasterGrid<float>& reconstructionNdsm,
-    std::vector<std::string>& warnings)
+ProjectedPoint HybridRoofGraphImporter::toProjected(const PixelPoint& pixel, const SpatialMetadata& metadata)
 {
-    BuildingCollection collection;
-    uint32_t nextId = 1;
+    const auto& gt = metadata.geoTransform;
+    return ProjectedPoint{
+        gt[0] + pixel.column * gt[1] + pixel.row * gt[2],
+        gt[3] + pixel.column * gt[4] + pixel.row * gt[5]};
+}
 
-    for (const auto& b : document.buildings)
+FootprintPolygon<ProjectedPoint> HybridRoofGraphImporter::projectPolygon(
+    const FootprintPolygon<PixelPoint>& pixelPolygon,
+    const SpatialMetadata& metadata)
+{
+    const auto projectRing = [&](const std::vector<PixelPoint>& ring, bool counterClockwise)
     {
-        if (b.footprintProposal.outerRing.size() < 3)
-            continue;
-
-        BuildingInstance instance;
-        instance.buildingId = nextId++;
-        instance.pixelFootprint = b.footprintProposal;
-        instance.projectedFootprint = projectPolygon(b.footprintProposal, metadata);
-
-        // Estimate base elevation and height strictly from DTM and GAMUS nDSM
-        const BuildingHeightEstimate estimate = BuildingHeightEstimator::estimate(
-            instance.pixelFootprint, surface, semantics, metadata, config, &reconstructionNdsm);
-
-        if (estimate.success)
+        std::vector<ProjectedPoint> projected;
+        projected.reserve(ring.size());
+        double twiceArea = 0.0;
+        for (const PixelPoint& point : ring) projected.push_back(toProjected(point, metadata));
+        for (std::size_t index = 0; index < projected.size(); ++index)
         {
-            instance.representativeBaseElevation = estimate.representativeBaseElevation;
-            instance.heightAboveGround = estimate.heightAboveGround;
-            instance.roofElevation = estimate.roofElevation;
-            instance.baseElevationPerVertex = estimate.baseElevationPerOuterVertex;
+            const ProjectedPoint& current = projected[index];
+            const ProjectedPoint& next = projected[(index + 1) % projected.size()];
+            twiceArea += current.easting * next.northing - next.easting * current.northing;
         }
-        else
-        {
-            warnings.push_back("Building '" + b.id + "': " + estimate.errorMessage);
-        }
+        if ((twiceArea > 0.0) != counterClockwise) std::reverse(projected.begin(), projected.end());
+        return projected;
+    };
 
-        instance.footprintAreaSquareMetres = static_cast<float>(
-            std::abs(projectedRingArea(instance.projectedFootprint.outerRing)));
-
-        collection.buildings.push_back(std::move(instance));
-    }
-
-    return collection;
+    FootprintPolygon<ProjectedPoint> projected;
+    projected.outerRing = projectRing(pixelPolygon.outerRing, true);
+    for (const auto& hole : pixelPolygon.holes) projected.holes.push_back(projectRing(hole, false));
+    return projected;
 }
 
 } // namespace depthwizard

@@ -1,21 +1,33 @@
 """DepthWizard ML services common contracts and geometry."""
 
 from .contracts import (
-    CoordinateConvention,
-    RoofGraphScores,
-    CornerHint,
-    RoofSection,
-    ProvenanceEntry,
+    COORDINATE_CONVENTION,
+    SCHEMA_ID,
     BuildingProposal,
+    CornerHint,
+    ProvenanceEntry,
+    RoofGraphContractError,
     RoofGraphDocument,
+    RoofGraphMetadata,
+    RoofGraphRepairWarning,
+    RoofGraphScores,
+    RoofSection,
+    parse_roofgraph,
+    parse_roofgraph_json,
 )
 
 __all__ = [
-    "CoordinateConvention",
-    "RoofGraphScores",
-    "CornerHint",
-    "RoofSection",
-    "ProvenanceEntry",
+    "COORDINATE_CONVENTION",
+    "SCHEMA_ID",
     "BuildingProposal",
+    "CornerHint",
+    "ProvenanceEntry",
+    "RoofGraphContractError",
     "RoofGraphDocument",
+    "RoofGraphMetadata",
+    "RoofGraphRepairWarning",
+    "RoofGraphScores",
+    "RoofSection",
+    "parse_roofgraph",
+    "parse_roofgraph_json",
 ]

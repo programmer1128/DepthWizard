@@ -1,51 +1,40 @@
 {
-  "tests": 7,
+  "tests": 6,
   "name": "AllTests",
   "testsuites": [
     {
       "name": "HybridFeatureFlagsTest",
-      "tests": 3,
+      "tests": 6,
       "testsuite": [
         {
-          "name": "DefaultsReproduceTheCurrentPipeline",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BaselineHarness_test.cc",
-          "line": 86
+          "name": "DefaultsAreAllDisabledAndScientific",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/HybridFeatureFlags_test.cc",
+          "line": 55
         },
         {
-          "name": "ParsesRequestsAndReportsThemAsUnimplemented",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BaselineHarness_test.cc",
-          "line": 103
+          "name": "ParsesPresentationStyles",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/HybridFeatureFlags_test.cc",
+          "line": 73
         },
         {
-          "name": "InvalidValuesFallBackToDefaultsWithWarnings",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BaselineHarness_test.cc",
-          "line": 118
-        }
-      ]
-    },
-    {
-      "name": "BaselineInspectorTest",
-      "tests": 4,
-      "testsuite": [
-        {
-          "name": "DecodesDracoGlbWithBuildingIdsAndBackendCounts",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BaselineHarness_test.cc",
-          "line": 127
+          "name": "ParsesSam2Flags",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/HybridFeatureFlags_test.cc",
+          "line": 100
         },
         {
-          "name": "ReportsAreDeterministicAcrossRuns",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BaselineHarness_test.cc",
-          "line": 159
+          "name": "ParsesKibsFlags",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/HybridFeatureFlags_test.cc",
+          "line": 124
         },
         {
-          "name": "RasterDigestTracksValuesNotNaNPayloads",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BaselineHarness_test.cc",
-          "line": 166
+          "name": "ParsesHybridFusionFlags",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/HybridFeatureFlags_test.cc",
+          "line": 143
         },
         {
-          "name": "NegativeZeroAndZeroDigestEqually",
-          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/BaselineHarness_test.cc",
-          "line": 195
+          "name": "FlagsOffPreservesByteIdenticalOutput",
+          "file": "\/home\/aritra\/Desktop\/DepthWizard\/drogon_service\/gis_service\/test\/HybridFeatureFlags_test.cc",
+          "line": 162
         }
       ]
     }

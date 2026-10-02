@@ -361,10 +361,10 @@ add_building_reconstruction_test(
     hybrid_roofgraph_importer_test
     HybridRoofGraphImporter_test.cc
     ../BuildingReconstruction/HybridRoofGraphImporter.cc
-    ../BuildingReconstruction/BuildingHeightEstimator.cc
-    ../BuildingReconstruction/FootprintGeometryRegularizer.cc
 )
-target_link_libraries(hybrid_roofgraph_importer_test PRIVATE Drogon::Drogon CGAL::CGAL ${DEPTHWIZARD_GDAL_TARGET})
+target_link_libraries(hybrid_roofgraph_importer_test PRIVATE Drogon::Drogon ${DEPTHWIZARD_GDAL_TARGET})
+target_compile_definitions(hybrid_roofgraph_importer_test PRIVATE
+    DEPTHWIZARD_CONTRACTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../contracts")
 
 
 add_executable(

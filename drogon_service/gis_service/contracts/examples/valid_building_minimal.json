@@ -1,44 +1,89 @@
 {
   "schema": "depthwizard.roofgraph.v1",
+  "coordinate_convention": "pixel_edge_column_row",
   "raster_width": 512,
   "raster_height": 512,
-  "coordinate_convention": "pixel_edge_column_row",
   "buildings": [
     {
       "id": "building-1",
       "footprint_proposal": [
-        [10.0, 10.0],
-        [50.0, 10.0],
-        [50.0, 40.0],
-        [10.0, 40.0]
-      ],
-      "roofprint_proposal": [
-        [10.0, 10.0],
-        [50.0, 10.0],
-        [50.0, 40.0],
-        [10.0, 40.0]
+        [
+          10.0,
+          10.0
+        ],
+        [
+          50.0,
+          10.0
+        ],
+        [
+          50.0,
+          40.0
+        ],
+        [
+          10.0,
+          40.0
+        ]
       ],
       "holes": [],
       "scores": {
         "semantic": 0.95,
-        "ndsm": 0.88,
-        "sam2": 0.92,
-        "kibs": 0.0
+        "ndsm": 0.88
       },
       "roof_sections": [
         {
           "id": "b1-s0",
           "polygon": [
-            [10.0, 10.0],
-            [50.0, 10.0],
-            [50.0, 40.0],
-            [10.0, 40.0]
+            [
+              10.0,
+              10.0
+            ],
+            [
+              50.0,
+              10.0
+            ],
+            [
+              50.0,
+              40.0
+            ],
+            [
+              10.0,
+              40.0
+            ]
           ],
+          "holes": [],
           "corners": [
-            {"xy": [10.0, 10.0], "height_class_m": null, "score": 0.9},
-            {"xy": [50.0, 10.0], "height_class_m": null, "score": 0.9},
-            {"xy": [50.0, 40.0], "height_class_m": null, "score": 0.9},
-            {"xy": [10.0, 40.0], "height_class_m": null, "score": 0.9}
+            {
+              "xy": [
+                10.0,
+                10.0
+              ],
+              "score": 0.9,
+              "corner_type": "unknown"
+            },
+            {
+              "xy": [
+                50.0,
+                10.0
+              ],
+              "score": 0.9,
+              "corner_type": "unknown"
+            },
+            {
+              "xy": [
+                50.0,
+                40.0
+              ],
+              "score": 0.9,
+              "corner_type": "unknown"
+            },
+            {
+              "xy": [
+                10.0,
+                40.0
+              ],
+              "score": 0.9,
+              "corner_type": "unknown"
+            }
           ],
           "type_hint": "flat",
           "adjacent_sections": [],

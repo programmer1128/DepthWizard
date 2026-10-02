@@ -3,8 +3,10 @@
 #include "../structures/CommonTypes.h"
 #include "../structures/GeographicStructs.h"
 
+#include <json/value.h>
+
 #include <array>
-#include <cstdint>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <vector>
@@ -12,76 +14,77 @@
 namespace depthwizard
 {
 
-enum class RoofGraphCoordinateConvention : uint8_t
+// depthwizard.roofgraph.v1: proposal geometry exchanged between the backend
+// and the SAM2/KIBS services. See contracts/README.md for the full rules.
+//
+// Coordinates are (column, row) in pixel-edge units: (0, 0) is the top-left
+// corner of the raster and (W, H) the bottom-right corner. The contract has
+// exactly one convention and nothing is ever shifted by half a pixel.
+//
+// Nothing in this document is a metric height. Heights come only from the
+// corrected nDSM; heightClassHintMetres is an optional advisory prior.
+inline constexpr const char* kRoofGraphSchema = "depthwizard.roofgraph.v1";
+inline constexpr const char* kRoofGraphCoordinateConvention = "pixel_edge_column_row";
+inline constexpr std::size_t kRoofGraphMaxRingVertices = 10000;
+
+// Strict rejects any violation. Repair fixes what can be fixed without
+// inventing data (clamping, winding, dropping an invalid element) and reports
+// every change as a warning; document-level violations still fail.
+enum class RoofGraphValidationMode
 {
-    PIXEL_EDGE_COLUMN_ROW,
-    PIXEL_CENTRE_COLUMN_ROW
+    Strict,
+    Repair
 };
-
-inline std::string toString(RoofGraphCoordinateConvention conv)
-{
-    switch (conv)
-    {
-        case RoofGraphCoordinateConvention::PIXEL_EDGE_COLUMN_ROW:
-            return "pixel_edge_column_row";
-        case RoofGraphCoordinateConvention::PIXEL_CENTRE_COLUMN_ROW:
-            return "pixel_centre_column_row";
-    }
-    return "pixel_edge_column_row";
-}
-
-inline std::optional<RoofGraphCoordinateConvention> parseCoordinateConvention(const std::string& str)
-{
-    if (str == "pixel_edge_column_row")
-        return RoofGraphCoordinateConvention::PIXEL_EDGE_COLUMN_ROW;
-    if (str == "pixel_centre_column_row")
-        return RoofGraphCoordinateConvention::PIXEL_CENTRE_COLUMN_ROW;
-    return std::nullopt;
-}
 
 struct RoofGraphScores
 {
-    float semantic{0.0f};
-    float ndsm{0.0f};
-    float sam2{0.0f};
-    float kibs{0.0f};
-    std::optional<float> combined;
+    double semantic{0.0};
+    double ndsm{0.0};
+    // Absent when the expert did not run; 0.0 means it ran and scored zero.
+    std::optional<double> sam2;
+    std::optional<double> kibs;
+    std::optional<double> combined;
 };
 
 struct RoofGraphCornerHint
 {
     PixelPoint xy;
-    // Advisory discrete height class from KIBS prior in metres (non-authoritative;
-    // GAMUS nDSM remains the sole metric height authority).
-    std::optional<float> heightClassM;
-    float score{0.0f};
+    // KIBS discrete height class, serialized as "height_class_m". Advisory
+    // only: no backend code may use it as a building or roof height.
+    std::optional<double> heightClassHintMetres;
+    double score{0.0};
     std::string cornerType{"unknown"};
 };
 
 struct RoofSectionProposal
 {
     std::string id;
-    std::vector<PixelPoint> polygon; // Open outer ring, CCW in coordinate space
-    std::vector<std::vector<PixelPoint>> holes; // Open inner rings, CW
+    std::vector<PixelPoint> polygon;            // Open ring, positive image-space area
+    std::vector<std::vector<PixelPoint>> holes; // Open rings, negative image-space area
     std::vector<RoofGraphCornerHint> corners;
     std::string typeHint{"unknown"};
-    std::vector<std::string> adjacentSections;
-    float score{0.0f};
+    std::vector<std::string> adjacentSections;  // IDs of sections in the same building
+    double score{0.0};
 };
 
 struct RoofGraphProvenance
 {
     std::string stage;
     std::string source;
-    std::string timestamp;
-    std::string detailsJson;
+    std::optional<std::string> timestamp;
+    Json::Value details; // null when absent
 };
 
 struct BuildingProposal
 {
     std::string id;
-    FootprintPolygon<PixelPoint> footprintProposal; // Ground contact footprint
-    FootprintPolygon<PixelPoint> roofprintProposal; // Roof boundary proposal
+    // Ground footprint with its courtyard holes. Rings follow the contract's
+    // image-space winding (outer positive, holes negative), which is the
+    // reverse of FootprintPolygon<PixelPoint> for north-up rasters; use
+    // HybridRoofGraphImporter::projectPolygon to obtain projected rings.
+    FootprintPolygon<PixelPoint> footprintProposal;
+    // Visible roof outline; absent when the producer did not propose one.
+    std::optional<std::vector<PixelPoint>> roofprintProposal;
     RoofGraphScores scores;
     std::vector<RoofSectionProposal> roofSections;
     std::vector<RoofGraphProvenance> provenance;
@@ -89,19 +92,18 @@ struct BuildingProposal
 
 struct RoofGraphSceneMetadata
 {
-    std::string sceneId;
-    std::string crs;
-    std::array<double, 6> geoTransform{0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
-    bool hasGeoTransform{false};
-    double gsd{1.0};
+    std::optional<std::string> sceneId;
+    std::optional<std::string> crs;
+    std::optional<std::array<double, 6>> geoTransform;
+    std::optional<double> gsd;
+
+    bool empty() const { return !sceneId && !crs && !geoTransform && !gsd; }
 };
 
 struct RoofGraphDocument
 {
-    std::string schema{"depthwizard.roofgraph.v1"};
     int rasterWidth{0};
     int rasterHeight{0};
-    RoofGraphCoordinateConvention coordinateConvention{RoofGraphCoordinateConvention::PIXEL_EDGE_COLUMN_ROW};
     RoofGraphSceneMetadata metadata;
     std::vector<BuildingProposal> buildings;
 };
@@ -110,6 +112,7 @@ struct HybridRoofGraphImportResult
 {
     RoofGraphDocument document;
     bool success{false};
+    // Every message starts with a stable code, e.g. "out_of_bounds: ...".
     std::vector<std::string> errors;
     std::vector<std::string> warnings;
     std::size_t buildingCount{0};

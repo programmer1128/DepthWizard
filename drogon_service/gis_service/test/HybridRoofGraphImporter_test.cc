@@ -4,9 +4,14 @@
 #include <gtest/gtest.h>
 #include <json/json.h>
 
+#include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
+#include <limits>
+#include <sstream>
 #include <string>
+#include <vector>
 
 using namespace depthwizard;
 using namespace depthwizard::test;
@@ -14,33 +19,53 @@ using namespace depthwizard::test;
 namespace
 {
 
-std::string findExamplesDir()
+const std::filesystem::path kExamples = std::filesystem::path(DEPTHWIZARD_CONTRACTS_DIR) / "examples";
+
+Json::Value loadJson(const std::filesystem::path& path)
 {
-    const std::vector<std::string> candidates = {
-        "contracts/examples/",
-        "../contracts/examples/",
-        "../../contracts/examples/",
-        "../../../contracts/examples/",
-        "drogon_service/gis_service/contracts/examples/",
-        "/home/satadru345/DepthWizard/drogon_service/gis_service/contracts/examples/"
-    };
-    for (const auto& c : candidates)
+    std::ifstream file(path);
+    Json::Value root;
+    Json::CharReaderBuilder builder;
+    std::string errors;
+    EXPECT_TRUE(Json::parseFromStream(builder, file, &root, &errors)) << path << ": " << errors;
+    return root;
+}
+
+std::vector<std::filesystem::path> fixtures(const std::string& prefix)
+{
+    std::vector<std::filesystem::path> paths;
+    for (const auto& entry : std::filesystem::directory_iterator(kExamples))
     {
-        std::ifstream test(c + "valid_building_minimal.json");
-        if (test.good()) return c;
+        const std::string name = entry.path().filename().string();
+        if (name.rfind(prefix, 0) == 0 && entry.path().extension() == ".json") paths.push_back(entry.path());
     }
-    return "contracts/examples/";
+    std::sort(paths.begin(), paths.end());
+    return paths;
 }
 
-Json::Value point(double col, double row)
+bool hasMessage(const std::vector<std::string>& messages, const std::string& code)
 {
-    Json::Value p(Json::arrayValue);
-    p.append(col);
-    p.append(row);
-    return p;
+    return std::any_of(messages.begin(), messages.end(),
+                       [&](const std::string& message) { return message.rfind(code + ":", 0) == 0; });
 }
 
-Json::Value rectRing(double left, double top, double right, double bottom)
+std::string joined(const std::vector<std::string>& messages)
+{
+    std::string text;
+    for (const auto& message : messages) text += "\n  " + message;
+    return text;
+}
+
+Json::Value point(double column, double row)
+{
+    Json::Value value(Json::arrayValue);
+    value.append(column);
+    value.append(row);
+    return value;
+}
+
+// Positive image-space area: the contract's outer-ring winding.
+Json::Value rect(double left, double top, double right, double bottom)
 {
     Json::Value ring(Json::arrayValue);
     ring.append(point(left, top));
@@ -50,263 +75,463 @@ Json::Value rectRing(double left, double top, double right, double bottom)
     return ring;
 }
 
-Json::Value minimalDocument(int width = 512, int height = 512,
-                            const std::string& conv = "pixel_edge_column_row")
+// Negative image-space area: the contract's hole winding.
+Json::Value holeRect(double left, double top, double right, double bottom)
 {
-    Json::Value doc(Json::objectValue);
-    doc["schema"] = "depthwizard.roofgraph.v1";
-    doc["raster_width"] = width;
-    doc["raster_height"] = height;
-    doc["coordinate_convention"] = conv;
+    Json::Value ring(Json::arrayValue);
+    ring.append(point(left, top));
+    ring.append(point(left, bottom));
+    ring.append(point(right, bottom));
+    ring.append(point(right, top));
+    return ring;
+}
+
+Json::Value document(int width = 100, int height = 100)
+{
+    Json::Value root(Json::objectValue);
+    root["schema"] = "depthwizard.roofgraph.v1";
+    root["raster_width"] = width;
+    root["raster_height"] = height;
+    root["coordinate_convention"] = "pixel_edge_column_row";
 
     Json::Value building(Json::objectValue);
-    building["id"] = "test-building-1";
-    building["footprint_proposal"] = rectRing(10.0, 10.0, 40.0, 30.0);
-    building["roofprint_proposal"] = rectRing(10.0, 10.0, 40.0, 30.0);
-    building["holes"] = Json::Value(Json::arrayValue);
-
-    Json::Value scores(Json::objectValue);
-    scores["semantic"] = 0.95;
-    scores["ndsm"] = 0.88;
-    scores["sam2"] = 0.91;
-    scores["kibs"] = 0.0;
-    building["scores"] = scores;
-
-    building["roof_sections"] = Json::Value(Json::arrayValue);
-    building["provenance"] = Json::Value(Json::arrayValue);
-
-    doc["buildings"] = Json::Value(Json::arrayValue);
-    doc["buildings"].append(building);
-
-    return doc;
+    building["id"] = "b";
+    building["footprint_proposal"] = rect(10, 10, 50, 40);
+    Json::Value section(Json::objectValue);
+    section["id"] = "b-0";
+    section["polygon"] = rect(10, 10, 50, 40);
+    Json::Value corner(Json::objectValue);
+    corner["xy"] = point(10, 10);
+    section["corners"].append(corner);
+    building["roof_sections"].append(section);
+    root["buildings"].append(building);
+    return root;
 }
+
+Json::Value& firstBuilding(Json::Value& root) { return root["buildings"][0]; }
+Json::Value& firstSection(Json::Value& root) { return root["buildings"][0]["roof_sections"][0]; }
+Json::Value& firstCorner(Json::Value& root) { return firstSection(root)["corners"][0]; }
 
 } // namespace
 
-TEST(HybridRoofGraphImporterTest, ParsesValidMinimalFixture)
+TEST(HybridRoofGraphImporterTest, ParsesMinimalFixture)
 {
-    const std::string path = findExamplesDir() + "valid_building_minimal.json";
-    const auto result = HybridRoofGraphImporter::parseFile(path, true);
-
-    ASSERT_TRUE(result.success) << "Errors: " << (result.errors.empty() ? "" : result.errors[0]);
-    EXPECT_EQ(result.document.schema, "depthwizard.roofgraph.v1");
+    const auto result = HybridRoofGraphImporter::parseFile((kExamples / "valid_building_minimal.json").string());
+    ASSERT_TRUE(result.success) << joined(result.errors);
+    EXPECT_TRUE(result.warnings.empty()) << joined(result.warnings);
     EXPECT_EQ(result.document.rasterWidth, 512);
     EXPECT_EQ(result.document.rasterHeight, 512);
-    EXPECT_EQ(result.document.coordinateConvention, RoofGraphCoordinateConvention::PIXEL_EDGE_COLUMN_ROW);
+    EXPECT_TRUE(result.document.metadata.empty());
     ASSERT_EQ(result.document.buildings.size(), 1U);
 
-    const auto& b = result.document.buildings[0];
-    EXPECT_EQ(b.id, "building-1");
-    EXPECT_EQ(b.footprintProposal.outerRing.size(), 4U);
-    EXPECT_FLOAT_EQ(b.scores.semantic, 0.95f);
-    EXPECT_FLOAT_EQ(b.scores.ndsm, 0.88f);
-    EXPECT_FLOAT_EQ(b.scores.sam2, 0.92f);
-    ASSERT_EQ(b.roofSections.size(), 1U);
-    EXPECT_EQ(b.roofSections[0].typeHint, "flat");
-    EXPECT_EQ(b.roofSections[0].corners.size(), 4U);
+    const BuildingProposal& building = result.document.buildings[0];
+    EXPECT_EQ(building.id, "building-1");
+    ASSERT_EQ(building.footprintProposal.outerRing.size(), 4U);
+    EXPECT_DOUBLE_EQ(building.footprintProposal.outerRing[0].column, 10.0);
+    EXPECT_DOUBLE_EQ(building.footprintProposal.outerRing[0].row, 10.0);
+    EXPECT_FALSE(building.roofprintProposal.has_value());
+    EXPECT_DOUBLE_EQ(building.scores.semantic, 0.95);
+    EXPECT_DOUBLE_EQ(building.scores.ndsm, 0.88);
+    EXPECT_FALSE(building.scores.sam2.has_value());
+    EXPECT_FALSE(building.scores.kibs.has_value());
+    ASSERT_EQ(building.roofSections.size(), 1U);
+    EXPECT_EQ(building.roofSections[0].typeHint, "flat");
+    ASSERT_EQ(building.roofSections[0].corners.size(), 4U);
+    EXPECT_FALSE(building.roofSections[0].corners[0].heightClassHintMetres.has_value());
+    ASSERT_EQ(building.provenance.size(), 1U);
+    EXPECT_EQ(building.provenance[0].timestamp, "2026-10-02T10:00:00Z");
+    EXPECT_EQ(result.buildingCount, 1U);
+    EXPECT_EQ(result.sectionCount, 1U);
 }
 
-TEST(HybridRoofGraphImporterTest, ParsesValidComplexFixtureWithHolesAndSections)
+TEST(HybridRoofGraphImporterTest, ParsesComplexFixture)
 {
-    const std::string path = findExamplesDir() + "valid_building_complex.json";
-    const auto result = HybridRoofGraphImporter::parseFile(path, true);
+    const auto result = HybridRoofGraphImporter::parseFile((kExamples / "valid_building_complex.json").string());
+    ASSERT_TRUE(result.success) << joined(result.errors);
+    EXPECT_TRUE(result.warnings.empty()) << joined(result.warnings);
 
-    ASSERT_TRUE(result.success) << "Errors: " << (result.errors.empty() ? "" : result.errors[0]);
-    EXPECT_EQ(result.document.rasterWidth, 1024);
-    EXPECT_EQ(result.document.rasterHeight, 1024);
+    const RoofGraphSceneMetadata& metadata = result.document.metadata;
+    EXPECT_EQ(metadata.crs, "EPSG:32632");
+    ASSERT_TRUE(metadata.geoTransform.has_value());
+    EXPECT_DOUBLE_EQ((*metadata.geoTransform)[5], -0.5);
+    EXPECT_EQ(metadata.gsd, 0.5);
     ASSERT_EQ(result.document.buildings.size(), 2U);
 
-    // Building 1: Courtyard building
-    const auto& b1 = result.document.buildings[0];
-    EXPECT_EQ(b1.id, "candidate-courtyard-101");
-    EXPECT_EQ(b1.footprintProposal.outerRing.size(), 4U);
-    ASSERT_EQ(b1.footprintProposal.holes.size(), 1U);
-    EXPECT_EQ(b1.footprintProposal.holes[0].size(), 4U);
-    ASSERT_EQ(b1.roofSections.size(), 1U);
-    EXPECT_EQ(b1.roofSections[0].holes.size(), 1U);
-    ASSERT_EQ(b1.roofSections[0].corners.size(), 4U);
-    EXPECT_TRUE(b1.roofSections[0].corners[0].heightClassM.has_value());
-    EXPECT_FLOAT_EQ(*b1.roofSections[0].corners[0].heightClassM, 12.0f);
+    const BuildingProposal& courtyard = result.document.buildings[0];
+    ASSERT_EQ(courtyard.footprintProposal.holes.size(), 1U);
+    ASSERT_TRUE(courtyard.roofprintProposal.has_value());
+    EXPECT_DOUBLE_EQ((*courtyard.roofprintProposal)[0].row, 98.0);
+    ASSERT_EQ(courtyard.roofSections.size(), 1U);
+    EXPECT_EQ(courtyard.roofSections[0].holes.size(), 1U);
+    EXPECT_EQ(courtyard.roofSections[0].corners[0].heightClassHintMetres, 12.0);
+    ASSERT_EQ(courtyard.provenance.size(), 2U);
+    EXPECT_DOUBLE_EQ(courtyard.provenance[1].details["iou_prediction"].asDouble(), 0.96);
 
-    // Building 2: Gable building with two adjacent sections
-    const auto& b2 = result.document.buildings[1];
-    EXPECT_EQ(b2.id, "candidate-gable-102");
-    ASSERT_EQ(b2.roofSections.size(), 2U);
-    EXPECT_EQ(b2.roofSections[0].id, "102-north-pitch");
-    EXPECT_EQ(b2.roofSections[1].id, "102-south-pitch");
-    EXPECT_EQ(b2.roofSections[0].adjacentSections, std::vector<std::string>{"102-south-pitch"});
-    EXPECT_EQ(b2.roofSections[1].adjacentSections, std::vector<std::string>{"102-north-pitch"});
-    EXPECT_EQ(b2.provenance.size(), 2U);
+    const BuildingProposal& gable = result.document.buildings[1];
+    EXPECT_FALSE(gable.scores.sam2.has_value());
+    EXPECT_EQ(gable.scores.kibs, 0.88);
+    ASSERT_EQ(gable.roofSections.size(), 2U);
+    EXPECT_EQ(gable.roofSections[0].adjacentSections, std::vector<std::string>{"102-south-pitch"});
+    EXPECT_EQ(gable.roofSections[1].adjacentSections, std::vector<std::string>{"102-north-pitch"});
+    EXPECT_EQ(gable.roofSections[1].corners[3].heightClassHintMetres, std::nullopt);
 }
 
-TEST(HybridRoofGraphImporterTest, RoundTripSerializationPreservesStructureAndValues)
+// Valid fixtures are stored in canonical form, including the one written by
+// the Python models, so parse + serialize must give back the same JSON value.
+TEST(HybridRoofGraphImporterTest, EveryValidFixtureReserializesToItsCanonicalForm)
 {
-    const std::string path = findExamplesDir() + "valid_building_complex.json";
-    const auto initial = HybridRoofGraphImporter::parseFile(path, true);
-    ASSERT_TRUE(initial.success);
-
-    // Serialize to JSON string
-    const std::string jsonStr = HybridRoofGraphImporter::toJsonString(initial.document);
-
-    // Parse back from serialized JSON
-    const auto roundTripped = HybridRoofGraphImporter::parseJson(jsonStr, true);
-    ASSERT_TRUE(roundTripped.success) << "Errors: " << (roundTripped.errors.empty() ? "" : roundTripped.errors[0]);
-
-    EXPECT_EQ(roundTripped.document.schema, initial.document.schema);
-    EXPECT_EQ(roundTripped.document.rasterWidth, initial.document.rasterWidth);
-    EXPECT_EQ(roundTripped.document.rasterHeight, initial.document.rasterHeight);
-    EXPECT_EQ(roundTripped.document.coordinateConvention, initial.document.coordinateConvention);
-    ASSERT_EQ(roundTripped.document.buildings.size(), initial.document.buildings.size());
-
-    for (std::size_t i = 0; i < initial.document.buildings.size(); ++i)
+    const auto paths = fixtures("valid_");
+    ASSERT_GE(paths.size(), 3U);
+    for (const auto& path : paths)
     {
-        const auto& origB = initial.document.buildings[i];
-        const auto& rtB = roundTripped.document.buildings[i];
-        EXPECT_EQ(origB.id, rtB.id);
-        EXPECT_EQ(origB.footprintProposal.outerRing.size(), rtB.footprintProposal.outerRing.size());
-        for (std::size_t j = 0; j < origB.footprintProposal.outerRing.size(); ++j)
-        {
-            EXPECT_NEAR(origB.footprintProposal.outerRing[j].column, rtB.footprintProposal.outerRing[j].column, 1e-5);
-            EXPECT_NEAR(origB.footprintProposal.outerRing[j].row, rtB.footprintProposal.outerRing[j].row, 1e-5);
-        }
-        EXPECT_FLOAT_EQ(origB.scores.semantic, rtB.scores.semantic);
-        EXPECT_FLOAT_EQ(origB.scores.ndsm, rtB.scores.ndsm);
-        EXPECT_EQ(origB.roofSections.size(), rtB.roofSections.size());
+        SCOPED_TRACE(path.filename().string());
+        const Json::Value original = loadJson(path);
+        const auto result = HybridRoofGraphImporter::parse(original);
+        ASSERT_TRUE(result.success) << joined(result.errors);
+        EXPECT_TRUE(result.warnings.empty()) << joined(result.warnings);
+
+        const Json::Value serialized = HybridRoofGraphImporter::toJson(result.document);
+        EXPECT_EQ(serialized, original) << serialized.toStyledString();
+
+        const auto reparsed = HybridRoofGraphImporter::parseJson(
+            HybridRoofGraphImporter::toJsonString(result.document, false));
+        ASSERT_TRUE(reparsed.success) << joined(reparsed.errors);
+        EXPECT_EQ(HybridRoofGraphImporter::toJson(reparsed.document), original);
     }
 }
 
-TEST(HybridRoofGraphImporterTest, ExplicitPixelEdgeCoordinateConventionDoesNotAddHalfPixel)
+TEST(HybridRoofGraphImporterTest, EveryInvalidFixtureIsRejectedWithItsExpectedCode)
 {
-    // Spatial metadata with affine transform:
-    // easting = 500000 + col * 0.5
-    // northing = 2000000 - row * 0.5
-    const SpatialMetadata metadata = makeProjectedMetadata(512, 512, 0.5, -0.5);
+    const auto paths = fixtures("invalid_");
+    ASSERT_GE(paths.size(), 20U);
+    for (const auto& path : paths)
+    {
+        SCOPED_TRACE(path.filename().string());
+        const std::string expected = loadJson(path)["x_expected_error"].asString();
+        ASSERT_FALSE(expected.empty());
 
-    // In pixel_edge_column_row, pixel (10.0, 20.0) is at exact pixel edges
-    const PixelPoint edgePoint{10.0, 20.0};
-    const ProjectedPoint proj = HybridRoofGraphImporter::toProjected(edgePoint, metadata);
-
-    // Verify exact projected coordinates without any +0.5 shift:
-    // Sat2Lod2Importer added +0.5 (yielding 500000 + 10.5*0.5 = 500005.25)
-    // HybridRoofGraphImporter preserves exact pixel edges: 500000 + 10.0*0.5 = 500005.00
-    EXPECT_DOUBLE_EQ(proj.easting, 500000.0 + 10.0 * 0.5);
-    EXPECT_DOUBLE_EQ(proj.northing, 2000000.0 - 20.0 * 0.5);
+        HybridRoofGraphImportResult result;
+        EXPECT_NO_THROW(result = HybridRoofGraphImporter::parseFile(path.string()));
+        EXPECT_FALSE(result.success);
+        EXPECT_TRUE(hasMessage(result.errors, expected)) << "expected " << expected << ":" << joined(result.errors);
+        EXPECT_TRUE(result.document.buildings.empty());
+    }
 }
 
-TEST(HybridRoofGraphImporterTest, PixelCentreConventionAppliesHalfPixelShiftExplicitly)
+// Section 5 of the playbook: pixel-edge coordinates, no implicit +0.5.
+TEST(HybridRoofGraphImporterTest, PixelEdgeCoordinatesAreNeverShifted)
 {
-    // Document declaring pixel_centre_column_row
-    Json::Value doc = minimalDocument(512, 512, "pixel_centre_column_row");
-    const auto result = HybridRoofGraphImporter::parse(doc, true);
+    Json::Value root = document(100, 80);
+    firstBuilding(root)["footprint_proposal"] = rect(0, 0, 100, 80); // The whole raster, edge to edge.
+    firstCorner(root)["xy"] = point(100, 80);
+    const auto result = HybridRoofGraphImporter::parse(root);
+    ASSERT_TRUE(result.success) << joined(result.errors);
 
-    ASSERT_TRUE(result.success);
-    EXPECT_EQ(result.document.coordinateConvention, RoofGraphCoordinateConvention::PIXEL_CENTRE_COLUMN_ROW);
-    EXPECT_FALSE(result.warnings.empty());
+    const auto& ring = result.document.buildings[0].footprintProposal.outerRing;
+    EXPECT_DOUBLE_EQ(ring[0].column, 0.0);
+    EXPECT_DOUBLE_EQ(ring[0].row, 0.0);
+    EXPECT_DOUBLE_EQ(ring[2].column, 100.0);
+    EXPECT_DOUBLE_EQ(ring[2].row, 80.0);
+    EXPECT_DOUBLE_EQ(result.document.buildings[0].roofSections[0].corners[0].xy.column, 100.0);
 
-    // Coordinate [10.0, 10.0] in pixel_centre should become [10.5, 10.5] in canonical edge coordinates
-    const auto& pt = result.document.buildings[0].footprintProposal.outerRing[0];
-    EXPECT_DOUBLE_EQ(pt.column, 10.5);
-    EXPECT_DOUBLE_EQ(pt.row, 10.5);
+    // Pixel edges map straight through the geotransform. Sat2Lod2Importer,
+    // which reads pixel-centre indices, would place (10, 20) at 500005.25.
+    const SpatialMetadata metadata = makeProjectedMetadata(100, 80, 0.5, -0.5);
+    const ProjectedPoint projected = HybridRoofGraphImporter::toProjected(PixelPoint{10.0, 20.0}, metadata);
+    EXPECT_DOUBLE_EQ(projected.easting, 500005.0);
+    EXPECT_DOUBLE_EQ(projected.northing, 1999990.0);
+
+    const Json::Value serialized = HybridRoofGraphImporter::toJson(result.document);
+    EXPECT_EQ(serialized["buildings"][0]["footprint_proposal"], rect(0, 0, 100, 80));
+    EXPECT_EQ(serialized["coordinate_convention"].asString(), "pixel_edge_column_row");
 }
 
-TEST(HybridRoofGraphImporterTest, RejectsImplicitClosingVertexInStrictMode)
+TEST(HybridRoofGraphImporterTest, PixelCentreConventionIsRejectedInsteadOfShifted)
 {
-    const std::string path = findExamplesDir() + "invalid_closing_vertex.json";
-    const auto result = HybridRoofGraphImporter::parseFile(path, true);
+    Json::Value root = document();
+    root["coordinate_convention"] = "pixel_centre_column_row";
+    for (const auto mode : {RoofGraphValidationMode::Strict, RoofGraphValidationMode::Repair})
+    {
+        const auto result = HybridRoofGraphImporter::parse(root, mode);
+        EXPECT_FALSE(result.success);
+        EXPECT_TRUE(hasMessage(result.errors, "coordinate_convention")) << joined(result.errors);
+        EXPECT_TRUE(result.document.buildings.empty());
+    }
+}
 
+TEST(HybridRoofGraphImporterTest, SnakeCaseIsTheOnlyWireFormat)
+{
+    Json::Value root = document();
+    root["rasterWidth"] = root["raster_width"];
+    root.removeMember("raster_width");
+    const auto result = HybridRoofGraphImporter::parse(root);
     EXPECT_FALSE(result.success);
-    ASSERT_FALSE(result.errors.empty());
-    EXPECT_NE(result.errors[0].find("duplicate closing vertex"), std::string::npos);
+    EXPECT_TRUE(hasMessage(result.errors, "raster_size")) << joined(result.errors);
+
+    const Json::Value serialized = HybridRoofGraphImporter::toJson(
+        HybridRoofGraphImporter::parseFile((kExamples / "valid_building_complex.json").string()).document);
+    for (const std::string& key : serialized.getMemberNames())
+        EXPECT_EQ(key.find_first_of("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), std::string::npos) << key;
+    for (const std::string& key : serialized["buildings"][0].getMemberNames())
+        EXPECT_EQ(key.find_first_of("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), std::string::npos) << key;
 }
 
-TEST(HybridRoofGraphImporterTest, StripsClosingVertexWithWarningInLenientMode)
+// The only height-like value in the contract is an optional advisory hint.
+TEST(HybridRoofGraphImporterTest, HeightClassIsAnOptionalAdvisoryHint)
 {
-    const std::string path = findExamplesDir() + "invalid_closing_vertex.json";
-    const auto result = HybridRoofGraphImporter::parseFile(path, false);
+    Json::Value root = document();
+    EXPECT_FALSE(HybridRoofGraphImporter::parse(root).document.buildings[0]
+                     .roofSections[0].corners[0].heightClassHintMetres.has_value());
 
-    EXPECT_TRUE(result.success);
-    EXPECT_FALSE(result.warnings.empty());
-    // After stripping redundant closing vertex, square has 4 points
-    EXPECT_EQ(result.document.buildings[0].footprintProposal.outerRing.size(), 4U);
+    firstCorner(root)["height_class_m"] = Json::nullValue;
+    EXPECT_FALSE(HybridRoofGraphImporter::parse(root).document.buildings[0]
+                     .roofSections[0].corners[0].heightClassHintMetres.has_value());
+
+    firstCorner(root)["height_class_m"] = 37.5;
+    const auto result = HybridRoofGraphImporter::parse(root);
+    ASSERT_TRUE(result.success) << joined(result.errors);
+    EXPECT_EQ(result.document.buildings[0].roofSections[0].corners[0].heightClassHintMetres, 37.5);
+
+    const Json::Value corner = HybridRoofGraphImporter::toJson(result.document)["buildings"][0]["roof_sections"][0]["corners"][0];
+    EXPECT_EQ(corner.getMemberNames(), (std::vector<std::string>{"corner_type", "height_class_m", "score", "xy"}));
+    EXPECT_DOUBLE_EQ(corner["height_class_m"].asDouble(), 37.5);
+
+    for (const Json::Value& bad : {Json::Value(-1.0), Json::Value("12"),
+                                   Json::Value(std::numeric_limits<double>::infinity())})
+    {
+        firstCorner(root)["height_class_m"] = bad;
+        const auto strict = HybridRoofGraphImporter::parse(root);
+        EXPECT_FALSE(strict.success) << bad.toStyledString();
+
+        const auto repaired = HybridRoofGraphImporter::parse(root, RoofGraphValidationMode::Repair);
+        ASSERT_TRUE(repaired.success) << joined(repaired.errors);
+        ASSERT_EQ(repaired.document.buildings[0].roofSections[0].corners.size(), 1U);
+        EXPECT_FALSE(repaired.document.buildings[0].roofSections[0].corners[0].heightClassHintMetres.has_value());
+    }
 }
 
-TEST(HybridRoofGraphImporterTest, RejectsDuplicateBuildingIds)
+// Json::Value built in memory can carry NaN/inf, which JSON text cannot.
+TEST(HybridRoofGraphImporterTest, RejectsNonFiniteValuesFromMemoryDocuments)
 {
-    const std::string path = findExamplesDir() + "invalid_duplicate_ids.json";
-    const auto result = HybridRoofGraphImporter::parseFile(path, true);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const auto expectRejected = [](const Json::Value& root, const std::string& code)
+    {
+        HybridRoofGraphImportResult result;
+        EXPECT_NO_THROW(result = HybridRoofGraphImporter::parse(root));
+        EXPECT_FALSE(result.success);
+        EXPECT_TRUE(hasMessage(result.errors, code)) << code << joined(result.errors);
+    };
 
+    Json::Value root = document();
+    firstBuilding(root)["footprint_proposal"][1][0] = nan;
+    expectRejected(root, "non_finite");
+
+    root = document();
+    firstBuilding(root)["scores"]["semantic"] = nan;
+    expectRejected(root, "non_finite");
+
+    root = document();
+    firstBuilding(root)["scores"]["sam2"] = -std::numeric_limits<double>::infinity();
+    expectRejected(root, "non_finite");
+
+    root = document();
+    firstCorner(root)["xy"][1] = nan;
+    expectRejected(root, "non_finite");
+
+    root = document();
+    firstSection(root)["score"] = nan;
+    expectRejected(root, "non_finite");
+
+    root = document();
+    for (int index = 0; index < 5; ++index) root["metadata"]["geo_transform"].append(1.0);
+    root["metadata"]["geo_transform"].append(nan);
+    expectRejected(root, "metadata");
+}
+
+TEST(HybridRoofGraphImporterTest, MalformedInputNeverThrows)
+{
+    std::vector<Json::Value> roots;
+    roots.emplace_back(Json::arrayValue);
+    roots.emplace_back("not a document");
+    roots.emplace_back(Json::nullValue);
+    for (const char* key : {"buildings", "metadata"})
+    {
+        Json::Value root = document();
+        root[key] = 7;
+        roots.push_back(root);
+    }
+    {
+        Json::Value root = document();
+        root["metadata"]["geo_transform"] = Json::Value(Json::arrayValue);
+        for (int index = 0; index < 5; ++index) root["metadata"]["geo_transform"].append(1.0);
+        root["metadata"]["geo_transform"].append("x"); // Threw Json::LogicError before.
+        roots.push_back(root);
+    }
+    const std::vector<std::pair<const char*, Json::Value>> buildingFields = {
+        {"id", Json::Value(5)}, {"footprint_proposal", Json::Value("ring")},
+        {"holes", Json::Value(3)}, {"scores", Json::Value(true)},
+        {"roof_sections", Json::Value("x")}, {"provenance", Json::Value(1.5)},
+        {"roofprint_proposal", Json::Value(Json::objectValue)}};
+    for (const auto& [key, value] : buildingFields)
+    {
+        Json::Value root = document();
+        firstBuilding(root)[key] = value;
+        roots.push_back(root);
+    }
+    {
+        Json::Value root = document();
+        firstBuilding(root)["footprint_proposal"][0].append(1.0); // Three coordinates.
+        roots.push_back(root);
+    }
+    {
+        Json::Value root = document();
+        firstSection(root)["corners"] = Json::Value("x");
+        firstSection(root)["adjacent_sections"] = Json::Value(Json::objectValue);
+        roots.push_back(root);
+    }
+    {
+        Json::Value root = document();
+        firstCorner(root) = Json::Value(4);
+        roots.push_back(root);
+    }
+
+    for (const Json::Value& root : roots)
+    {
+        for (const auto mode : {RoofGraphValidationMode::Strict, RoofGraphValidationMode::Repair})
+        {
+            HybridRoofGraphImportResult result;
+            EXPECT_NO_THROW(result = HybridRoofGraphImporter::parse(root, mode)) << root.toStyledString();
+            if (mode == RoofGraphValidationMode::Strict)
+            {
+                EXPECT_FALSE(result.success) << root.toStyledString();
+            }
+        }
+    }
+
+    for (const std::string text : {"", "{", "[1, 2", "{\"schema\": NaN}", "{\"a\": 1, \"a\": 2}",
+                                   "{} trailing", "// comment\n{}"})
+    {
+        HybridRoofGraphImportResult result;
+        EXPECT_NO_THROW(result = HybridRoofGraphImporter::parseJson(text));
+        EXPECT_FALSE(result.success) << text;
+        EXPECT_TRUE(hasMessage(result.errors, "json_syntax")) << text << joined(result.errors);
+    }
+
+    const auto missing = HybridRoofGraphImporter::parseFile((kExamples / "does_not_exist.json").string());
+    EXPECT_FALSE(missing.success);
+    EXPECT_TRUE(hasMessage(missing.errors, "io"));
+}
+
+TEST(HybridRoofGraphImporterTest, NormalizesWindingWithAWarning)
+{
+    Json::Value root = document();
+    Json::Value reversed(Json::arrayValue);
+    const Json::Value outer = rect(10, 10, 50, 40);
+    for (int index = 3; index >= 0; --index) reversed.append(outer[index]);
+    firstBuilding(root)["footprint_proposal"] = reversed;
+    firstBuilding(root)["holes"].append(rect(20, 20, 30, 30)); // Outer winding used for a hole.
+
+    const auto result = HybridRoofGraphImporter::parse(root);
+    ASSERT_TRUE(result.success) << joined(result.errors);
+    const auto& footprint = result.document.buildings[0].footprintProposal;
+    EXPECT_EQ(HybridRoofGraphImporter::toJson(result.document)["buildings"][0]["footprint_proposal"], outer);
+    ASSERT_EQ(footprint.holes.size(), 1U);
+    Json::Value hole(Json::arrayValue); // rect(20, 20, 30, 30) reversed.
+    for (const auto& [column, row] : std::vector<std::pair<double, double>>{{20, 30}, {30, 30}, {30, 20}, {20, 20}})
+        hole.append(point(column, row));
+    EXPECT_EQ(HybridRoofGraphImporter::toJson(result.document)["buildings"][0]["holes"][0], hole);
+    EXPECT_EQ(std::count_if(result.warnings.begin(), result.warnings.end(),
+                            [](const std::string& warning) { return warning.rfind("winding:", 0) == 0; }), 2);
+}
+
+TEST(HybridRoofGraphImporterTest, ProjectPolygonFollowsTheFootprintPolygonInvariant)
+{
+    Json::Value root = document();
+    firstBuilding(root)["holes"].append(holeRect(20, 20, 30, 30));
+    const auto result = HybridRoofGraphImporter::parse(root);
+    ASSERT_TRUE(result.success) << joined(result.errors);
+
+    const SpatialMetadata metadata = makeProjectedMetadata(100, 100, 0.5, -0.5);
+    const auto projected = HybridRoofGraphImporter::projectPolygon(
+        result.document.buildings[0].footprintProposal, metadata);
+    const auto area = [](const std::vector<ProjectedPoint>& ring)
+    {
+        double twice = 0.0;
+        for (std::size_t index = 0; index < ring.size(); ++index)
+        {
+            const auto& current = ring[index];
+            const auto& next = ring[(index + 1) % ring.size()];
+            twice += current.easting * next.northing - next.easting * current.northing;
+        }
+        return 0.5 * twice;
+    };
+    EXPECT_NEAR(area(projected.outerRing), 40.0 * 30.0 * 0.25, 1e-6);
+    ASSERT_EQ(projected.holes.size(), 1U);
+    EXPECT_NEAR(area(projected.holes[0]), -10.0 * 10.0 * 0.25, 1e-6);
+}
+
+TEST(HybridRoofGraphImporterTest, RejectsRingsAboveTheVertexLimit)
+{
+    Json::Value root = document(20000, 20000);
+    Json::Value ring(Json::arrayValue);
+    for (std::size_t index = 0; index <= kRoofGraphMaxRingVertices; ++index)
+    {
+        const double angle = 2.0 * M_PI * static_cast<double>(index) / (kRoofGraphMaxRingVertices + 1);
+        ring.append(point(10000.0 + 5000.0 * std::cos(angle), 10000.0 + 5000.0 * std::sin(angle)));
+    }
+    firstBuilding(root)["footprint_proposal"] = ring;
+    const auto result = HybridRoofGraphImporter::parse(root);
     EXPECT_FALSE(result.success);
-    ASSERT_FALSE(result.errors.empty());
-    EXPECT_NE(result.errors[0].find("Duplicate building ID"), std::string::npos);
+    EXPECT_TRUE(hasMessage(result.errors, "too_many_vertices")) << joined(result.errors);
+
+    ring.resize(kRoofGraphMaxRingVertices); // At the limit: a valid polygon.
+    firstBuilding(root)["footprint_proposal"] = ring;
+    firstSection(root)["polygon"] = rect(9000, 9000, 9100, 9100);
+    const auto accepted = HybridRoofGraphImporter::parse(root);
+    EXPECT_TRUE(accepted.success) << joined(accepted.errors);
 }
 
-TEST(HybridRoofGraphImporterTest, RejectsOutOfBoundsCoordinatesInStrictMode)
+TEST(HybridRoofGraphImporterTest, RepairModeFixesWhatItCanAndReportsEveryChange)
 {
-    const std::string path = findExamplesDir() + "invalid_out_of_bounds.json";
-    const auto result = HybridRoofGraphImporter::parseFile(path, true);
+    Json::Value root = document();
+    Json::Value& building = firstBuilding(root);
+    building["footprint_proposal"] = rect(10, 10, 150, 40);                         // Off the raster.
+    building["footprint_proposal"].append(point(10, 10));                          // Closing vertex.
+    building["holes"].append(holeRect(60, 60, 70, 70));                            // Outside.
+    building["scores"]["semantic"] = 1.4;
+    building["scores"]["kibs"] = "high";
+    Json::Value bowtie(Json::arrayValue);
+    for (const auto& [column, row] : std::vector<std::pair<double, double>>{{10, 10}, {50, 40}, {50, 10}, {10, 40}})
+        bowtie.append(point(column, row));
+    building["roofprint_proposal"] = bowtie;
+    firstSection(root)["adjacent_sections"].append("b-0");                         // Itself.
+    firstSection(root)["adjacent_sections"].append("ghost");
+    Json::Value badCorner(Json::objectValue);
+    badCorner["xy"] = point(500, 5);
+    firstSection(root)["corners"].append(badCorner);
+    Json::Value unusable(Json::objectValue);
+    unusable["id"] = "unusable";
+    for (double offset : {10.0, 20.0, 30.0}) unusable["footprint_proposal"].append(point(offset, offset)); // Flat.
+    root["buildings"].append(unusable);
+    root["buildings"].append(building);                                            // Duplicate id.
 
-    EXPECT_FALSE(result.success);
-    ASSERT_FALSE(result.errors.empty());
-    EXPECT_NE(result.errors[0].find("outside raster bounds"), std::string::npos);
-}
+    EXPECT_FALSE(HybridRoofGraphImporter::parse(root).success);
+    const auto result = HybridRoofGraphImporter::parse(root, RoofGraphValidationMode::Repair);
+    ASSERT_TRUE(result.success) << joined(result.errors);
+    ASSERT_EQ(result.document.buildings.size(), 1U);
 
-TEST(HybridRoofGraphImporterTest, RejectsOutOfRangeScoresInStrictMode)
-{
-    const std::string path = findExamplesDir() + "invalid_scores_range.json";
-    const auto result = HybridRoofGraphImporter::parseFile(path, true);
+    const BuildingProposal& repaired = result.document.buildings[0];
+    ASSERT_EQ(repaired.footprintProposal.outerRing.size(), 4U);
+    EXPECT_DOUBLE_EQ(repaired.footprintProposal.outerRing[1].column, 100.0);
+    EXPECT_TRUE(repaired.footprintProposal.holes.empty());
+    EXPECT_DOUBLE_EQ(repaired.scores.semantic, 1.0);
+    EXPECT_FALSE(repaired.scores.kibs.has_value());
+    ASSERT_TRUE(repaired.roofprintProposal.has_value());
+    EXPECT_GE(repaired.roofprintProposal->size(), 3U);
+    EXPECT_TRUE(repaired.roofSections[0].adjacentSections.empty());
+    EXPECT_EQ(repaired.roofSections[0].corners.size(), 1U);
 
-    EXPECT_FALSE(result.success);
-    ASSERT_FALSE(result.errors.empty());
-    EXPECT_NE(result.errors[0].find("out of range [0, 1]"), std::string::npos);
-}
-
-TEST(HybridRoofGraphImporterTest, RejectsSelfIntersectingPolygonInStrictMode)
-{
-    const std::string path = findExamplesDir() + "invalid_self_intersection.json";
-    const auto result = HybridRoofGraphImporter::parseFile(path, true);
-
-    EXPECT_FALSE(result.success);
-    ASSERT_FALSE(result.errors.empty());
-    EXPECT_NE(result.errors[0].find("self-intersecting"), std::string::npos);
-}
-
-TEST(HybridRoofGraphImporterTest, RejectsTooFewVertices)
-{
-    const std::string path = findExamplesDir() + "invalid_too_few_vertices.json";
-    const auto result = HybridRoofGraphImporter::parseFile(path, true);
-
-    EXPECT_FALSE(result.success);
-    ASSERT_FALSE(result.errors.empty());
-    EXPECT_NE(result.errors[0].find("fewer than 3"), std::string::npos);
-}
-
-TEST(HybridRoofGraphImporterTest, ConvertsToBuildingCollectionWithCalibratedNdsmHeight)
-{
-    const int w = 60, h = 40;
-    SpatialMetadata metadata = makeProjectedMetadata(w, h, 0.5, -0.5);
-    SemanticScene semantics = makeSemanticScene(w, h);
-    GeoreferencedSurfaceBundle surface = makeSurface(w, h, 50.0F, 0.0F);
-    surface.spatialMetadata = metadata;
-    RasterGrid<float> ndsm = makeConstantGrid(w, h, 0.0F);
-
-    fillRectangle(semantics.finalClassMap, 10, 10, 40, 30, SemanticClass::BUILDING);
-    fillRectangle(semantics.buildingProbability, 10, 10, 40, 30, 0.9F);
-    fillRectangle(ndsm, 10, 10, 40, 30, 15.5F);
-
-    Json::Value doc = minimalDocument(w, h, "pixel_edge_column_row");
-    const auto importResult = HybridRoofGraphImporter::parse(doc, true);
-    ASSERT_TRUE(importResult.success);
-
-    BuildingReconstructionConfig config;
-    config.heightScaleMultiplier = 1.0F;
-    std::vector<std::string> warnings;
-    const auto collection = HybridRoofGraphImporter::toBuildingCollection(
-        importResult.document, semantics, surface, metadata, config, ndsm, warnings);
-
-    ASSERT_EQ(collection.buildings.size(), 1U);
-    const auto& building = collection.buildings[0];
-    EXPECT_NEAR(building.representativeBaseElevation, 50.0F, 1e-4);
-    EXPECT_NEAR(building.heightAboveGround, 15.5F, 1e-4);
-    EXPECT_NEAR(building.roofElevation, 65.5F, 1e-4);
-    EXPECT_GT(building.footprintAreaSquareMetres, 0.0F);
+    for (const char* code : {"out_of_bounds", "closing_vertex", "invalid_hole", "score_range", "field_type",
+                             "self_intersection", "adjacency", "degenerate_ring", "duplicate_id"})
+        EXPECT_TRUE(hasMessage(result.warnings, code)) << code << joined(result.warnings);
 }

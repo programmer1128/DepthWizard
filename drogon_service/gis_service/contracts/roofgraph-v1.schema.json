@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://depthwizard.io/contracts/roofgraph-v1.schema.json",
+  "$id": "urn:depthwizard:contracts:roofgraph:v1",
   "title": "DepthWizard RoofGraph Contract v1",
-  "description": "Canonical hybrid geometry exchange format (depthwizard.roofgraph.v1) connecting Drogon C++ GIS backend, SAM 2.1 boundary refinement, and KIBS roof decomposition.",
+  "description": "Proposal geometry exchanged between the DepthWizard backend and the SAM2/KIBS services. Coordinates are (column, row) pixel edges. No field carries an authoritative height. Geometric rules (simple rings, winding, holes inside their outer ring, raster bounds, unique ids, adjacency) are enforced by the C++ importer and the Pydantic models; see README.md.",
   "type": "object",
   "required": [
     "schema",
@@ -29,26 +29,31 @@
     },
     "coordinate_convention": {
       "type": "string",
-      "enum": [
-        "pixel_edge_column_row",
-        "pixel_centre_column_row"
-      ],
-      "default": "pixel_edge_column_row",
-      "description": "Explicit coordinate frame: pixel_edge_column_row maps (0,0) to raster top-left edge, while pixel_centre_column_row refers to pixel centers."
+      "description": "The only supported convention: (0, 0) is the top-left raster corner and (W, H) the bottom-right corner. Coordinates are never shifted by half a pixel.",
+      "const": "pixel_edge_column_row"
     },
     "metadata": {
       "type": "object",
       "description": "Optional scene-level spatial or projection metadata",
       "properties": {
-        "scene_id": { "type": "string" },
-        "crs": { "type": "string" },
+        "scene_id": {
+          "type": "string"
+        },
+        "crs": {
+          "type": "string"
+        },
         "geo_transform": {
           "type": "array",
-          "items": { "type": "number" },
+          "items": {
+            "type": "number"
+          },
           "minItems": 6,
           "maxItems": 6
         },
-        "gsd": { "type": "number", "minimum": 0.0 }
+        "gsd": {
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        }
       },
       "additionalProperties": true
     },
@@ -65,17 +70,20 @@
     "point2d": {
       "type": "array",
       "description": "2D coordinate [column, row]",
-      "items": { "type": "number" },
+      "items": {
+        "type": "number"
+      },
       "minItems": 2,
       "maxItems": 2
     },
     "ring": {
       "type": "array",
-      "description": "Open polygon ring of at least 3 unique vertices (no implicit closing vertex).",
+      "description": "Open ring (no repeated closing vertex) of at least 3 distinct vertices, at most 10000.",
       "items": {
         "$ref": "#/$defs/point2d"
       },
-      "minItems": 3
+      "minItems": 3,
+      "maxItems": 10000
     },
     "scores": {
       "type": "object",
@@ -94,36 +102,51 @@
           "default": 0.0
         },
         "sam2": {
-          "type": ["number", "null"],
+          "type": [
+            "number",
+            "null"
+          ],
           "minimum": 0.0,
           "maximum": 1.0,
-          "default": 0.0
+          "description": "Absent or null when the expert did not run."
         },
         "kibs": {
-          "type": ["number", "null"],
+          "type": [
+            "number",
+            "null"
+          ],
           "minimum": 0.0,
           "maximum": 1.0,
-          "default": 0.0
+          "description": "Absent or null when the expert did not run."
         },
         "combined": {
-          "type": ["number", "null"],
+          "type": [
+            "number",
+            "null"
+          ],
           "minimum": 0.0,
-          "maximum": 1.0
+          "maximum": 1.0,
+          "description": "Absent or null when the expert did not run."
         }
       },
       "additionalProperties": true
     },
     "corner_hint": {
       "type": "object",
-      "required": ["xy"],
+      "required": [
+        "xy"
+      ],
       "properties": {
         "xy": {
           "$ref": "#/$defs/point2d"
         },
         "height_class_m": {
-          "type": ["number", "null"],
+          "type": [
+            "number",
+            "null"
+          ],
           "minimum": 0.0,
-          "description": "Advisory height class in metres from KIBS prior (non-authoritative; GAMUS nDSM remains height authority)."
+          "description": "Advisory KIBS height class in metres. A hint only: the backend's corrected nDSM is the sole height authority."
         },
         "score": {
           "type": "number",
@@ -133,31 +156,39 @@
         },
         "corner_type": {
           "type": "string",
-          "description": "Advisory corner classification, e.g. eave_corner, ridge_end, step"
+          "description": "Advisory corner classification, e.g. eave_corner, ridge_end, step",
+          "default": "unknown"
         }
       },
       "additionalProperties": true
     },
     "roof_section": {
       "type": "object",
-      "required": ["id", "polygon"],
+      "required": [
+        "id",
+        "polygon"
+      ],
       "properties": {
         "id": {
           "type": "string",
           "minLength": 1,
-          "description": "Unique identifier for this roof section within the building"
+          "description": "Unique across the whole document."
         },
         "polygon": {
           "$ref": "#/$defs/ring"
         },
         "holes": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ring" },
+          "items": {
+            "$ref": "#/$defs/ring"
+          },
           "default": []
         },
         "corners": {
           "type": "array",
-          "items": { "$ref": "#/$defs/corner_hint" },
+          "items": {
+            "$ref": "#/$defs/corner_hint"
+          },
           "default": []
         },
         "type_hint": {
@@ -167,9 +198,12 @@
         },
         "adjacent_sections": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "default": [],
-          "description": "IDs of adjacent roof sections"
+          "description": "IDs of other sections of the same building."
         },
         "score": {
           "type": "number",
@@ -182,15 +216,20 @@
     },
     "provenance_entry": {
       "type": "object",
-      "required": ["stage", "source"],
+      "required": [
+        "stage",
+        "source"
+      ],
       "properties": {
         "stage": {
           "type": "string",
-          "description": "Pipeline stage producing or modifying this geometry (e.g. semantic_detection, sam2_refinement, kibs_decomposition, native_fallback)"
+          "description": "Pipeline stage producing or modifying this geometry (e.g. semantic_detection, sam2_refinement, kibs_decomposition, native_fallback)",
+          "minLength": 1
         },
         "source": {
           "type": "string",
-          "description": "Model or module identifier (e.g. sam2.1-hiera-large, kibs-resnet50, native-ndsm)"
+          "description": "Model or module identifier (e.g. sam2.1-hiera-large, kibs-resnet50, native-ndsm)",
+          "minLength": 1
         },
         "timestamp": {
           "type": "string",
@@ -204,46 +243,57 @@
     },
     "building_proposal": {
       "type": "object",
-      "required": ["id", "footprint_proposal"],
+      "required": [
+        "id",
+        "footprint_proposal"
+      ],
       "properties": {
         "id": {
           "type": "string",
           "minLength": 1,
-          "description": "Unique building instance identifier"
+          "description": "Unique building identifier within the document."
         },
         "footprint_proposal": {
           "$ref": "#/$defs/ring",
           "description": "Ground footprint proposal outer boundary in image coordinates"
         },
         "roofprint_proposal": {
-          "description": "Roof boundary proposal; if omitted or empty, matches footprint_proposal",
+          "description": "Visible roof outline. Absent, null or empty when no roofprint was proposed.",
           "oneOf": [
-            { "$ref": "#/$defs/ring" },
-            { "type": "array", "maxItems": 0 },
-            { "type": "null" }
+            {
+              "$ref": "#/$defs/ring"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "holes": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ring" },
+          "items": {
+            "$ref": "#/$defs/ring"
+          },
           "default": [],
-          "description": "Inner courtyards / cutouts"
+          "description": "Courtyards of footprint_proposal; each lies strictly inside it."
         },
         "scores": {
           "$ref": "#/$defs/scores"
         },
         "roof_sections": {
           "type": "array",
-          "items": { "$ref": "#/$defs/roof_section" },
+          "items": {
+            "$ref": "#/$defs/roof_section"
+          },
           "default": []
         },
         "provenance": {
           "type": "array",
           "items": {
-            "oneOf": [
-              { "$ref": "#/$defs/provenance_entry" },
-              { "type": "string" }
-            ]
+            "$ref": "#/$defs/provenance_entry"
           },
           "default": []
         }

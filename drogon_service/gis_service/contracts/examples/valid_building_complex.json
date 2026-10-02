@@ -1,35 +1,47 @@
 {
   "schema": "depthwizard.roofgraph.v1",
+  "coordinate_convention": "pixel_edge_column_row",
   "raster_width": 1024,
   "raster_height": 1024,
-  "coordinate_convention": "pixel_edge_column_row",
-  "metadata": {
-    "scene_id": "tile_43_reconstruction",
-    "crs": "EPSG:32632",
-    "geo_transform": [500000.0, 0.5, 0.0, 2000000.0, 0.0, -0.5],
-    "gsd": 0.5
-  },
   "buildings": [
     {
       "id": "candidate-courtyard-101",
       "footprint_proposal": [
-        [100.0, 100.0],
-        [300.0, 100.0],
-        [300.0, 300.0],
-        [100.0, 300.0]
-      ],
-      "roofprint_proposal": [
-        [102.0, 98.0],
-        [302.0, 98.0],
-        [302.0, 298.0],
-        [102.0, 298.0]
+        [
+          100.0,
+          100.0
+        ],
+        [
+          300.0,
+          100.0
+        ],
+        [
+          300.0,
+          300.0
+        ],
+        [
+          100.0,
+          300.0
+        ]
       ],
       "holes": [
         [
-          [160.0, 160.0],
-          [160.0, 240.0],
-          [240.0, 240.0],
-          [240.0, 160.0]
+          [
+            160.0,
+            160.0
+          ],
+          [
+            160.0,
+            240.0
+          ],
+          [
+            240.0,
+            240.0
+          ],
+          [
+            240.0,
+            160.0
+          ]
         ]
       ],
       "scores": {
@@ -43,24 +55,80 @@
         {
           "id": "101-flat-wing",
           "polygon": [
-            [102.0, 98.0],
-            [302.0, 98.0],
-            [302.0, 298.0],
-            [102.0, 298.0]
+            [
+              102.0,
+              98.0
+            ],
+            [
+              302.0,
+              98.0
+            ],
+            [
+              302.0,
+              298.0
+            ],
+            [
+              102.0,
+              298.0
+            ]
           ],
           "holes": [
             [
-              [160.0, 160.0],
-              [160.0, 240.0],
-              [240.0, 240.0],
-              [240.0, 160.0]
+              [
+                160.0,
+                160.0
+              ],
+              [
+                160.0,
+                240.0
+              ],
+              [
+                240.0,
+                240.0
+              ],
+              [
+                240.0,
+                160.0
+              ]
             ]
           ],
           "corners": [
-            {"xy": [102.0, 98.0], "height_class_m": 12.0, "score": 0.88, "corner_type": "eave_corner"},
-            {"xy": [302.0, 98.0], "height_class_m": 12.0, "score": 0.89, "corner_type": "eave_corner"},
-            {"xy": [302.0, 298.0], "height_class_m": 12.0, "score": 0.87, "corner_type": "eave_corner"},
-            {"xy": [102.0, 298.0], "height_class_m": 12.0, "score": 0.86, "corner_type": "eave_corner"}
+            {
+              "xy": [
+                102.0,
+                98.0
+              ],
+              "score": 0.88,
+              "corner_type": "eave_corner",
+              "height_class_m": 12.0
+            },
+            {
+              "xy": [
+                302.0,
+                98.0
+              ],
+              "score": 0.89,
+              "corner_type": "eave_corner",
+              "height_class_m": 12.0
+            },
+            {
+              "xy": [
+                302.0,
+                298.0
+              ],
+              "score": 0.87,
+              "corner_type": "eave_corner",
+              "height_class_m": 12.0
+            },
+            {
+              "xy": [
+                102.0,
+                298.0
+              ],
+              "score": 0.86,
+              "corner_type": "eave_corner",
+              "height_class_m": 12.0
+            }
           ],
           "type_hint": "flat",
           "adjacent_sections": [],
@@ -77,29 +145,60 @@
           "stage": "sam2_refinement",
           "source": "sam2.1-hiera-large",
           "timestamp": "2026-10-02T10:00:02Z",
-          "details": {"box_prompt": [98.0, 98.0, 302.0, 302.0], "iou_prediction": 0.96}
+          "details": {
+            "box_prompt": [
+              98.0,
+              98.0,
+              302.0,
+              302.0
+            ],
+            "iou_prediction": 0.96
+          }
         }
+      ],
+      "roofprint_proposal": [
+        [
+          102.0,
+          98.0
+        ],
+        [
+          302.0,
+          98.0
+        ],
+        [
+          302.0,
+          298.0
+        ],
+        [
+          102.0,
+          298.0
+        ]
       ]
     },
     {
       "id": "candidate-gable-102",
       "footprint_proposal": [
-        [400.0, 100.0],
-        [500.0, 100.0],
-        [500.0, 200.0],
-        [400.0, 200.0]
-      ],
-      "roofprint_proposal": [
-        [400.0, 100.0],
-        [500.0, 100.0],
-        [500.0, 200.0],
-        [400.0, 200.0]
+        [
+          400.0,
+          100.0
+        ],
+        [
+          500.0,
+          100.0
+        ],
+        [
+          500.0,
+          200.0
+        ],
+        [
+          400.0,
+          200.0
+        ]
       ],
       "holes": [],
       "scores": {
         "semantic": 0.92,
         "ndsm": 0.89,
-        "sam2": 0.90,
         "kibs": 0.88,
         "combined": 0.91
       },
@@ -107,39 +206,129 @@
         {
           "id": "102-north-pitch",
           "polygon": [
-            [400.0, 100.0],
-            [500.0, 100.0],
-            [500.0, 150.0],
-            [400.0, 150.0]
+            [
+              400.0,
+              100.0
+            ],
+            [
+              500.0,
+              100.0
+            ],
+            [
+              500.0,
+              150.0
+            ],
+            [
+              400.0,
+              150.0
+            ]
           ],
           "holes": [],
           "corners": [
-            {"xy": [400.0, 100.0], "height_class_m": 8.0, "score": 0.92, "corner_type": "eave_corner"},
-            {"xy": [500.0, 100.0], "height_class_m": 8.0, "score": 0.91, "corner_type": "eave_corner"},
-            {"xy": [500.0, 150.0], "height_class_m": 11.5, "score": 0.94, "corner_type": "ridge_end"},
-            {"xy": [400.0, 150.0], "height_class_m": 11.5, "score": 0.93, "corner_type": "ridge_end"}
+            {
+              "xy": [
+                400.0,
+                100.0
+              ],
+              "score": 0.92,
+              "corner_type": "eave_corner",
+              "height_class_m": 8.0
+            },
+            {
+              "xy": [
+                500.0,
+                100.0
+              ],
+              "score": 0.91,
+              "corner_type": "eave_corner",
+              "height_class_m": 8.0
+            },
+            {
+              "xy": [
+                500.0,
+                150.0
+              ],
+              "score": 0.94,
+              "corner_type": "ridge_end",
+              "height_class_m": 11.5
+            },
+            {
+              "xy": [
+                400.0,
+                150.0
+              ],
+              "score": 0.93,
+              "corner_type": "ridge_end",
+              "height_class_m": 11.5
+            }
           ],
           "type_hint": "gable",
-          "adjacent_sections": ["102-south-pitch"],
+          "adjacent_sections": [
+            "102-south-pitch"
+          ],
           "score": 0.89
         },
         {
           "id": "102-south-pitch",
           "polygon": [
-            [400.0, 150.0],
-            [500.0, 150.0],
-            [500.0, 200.0],
-            [400.0, 200.0]
+            [
+              400.0,
+              150.0
+            ],
+            [
+              500.0,
+              150.0
+            ],
+            [
+              500.0,
+              200.0
+            ],
+            [
+              400.0,
+              200.0
+            ]
           ],
           "holes": [],
           "corners": [
-            {"xy": [400.0, 150.0], "height_class_m": 11.5, "score": 0.93, "corner_type": "ridge_end"},
-            {"xy": [500.0, 150.0], "height_class_m": 11.5, "score": 0.94, "corner_type": "ridge_end"},
-            {"xy": [500.0, 200.0], "height_class_m": 8.0, "score": 0.90, "corner_type": "eave_corner"},
-            {"xy": [400.0, 200.0], "height_class_m": 8.0, "score": 0.91, "corner_type": "eave_corner"}
+            {
+              "xy": [
+                400.0,
+                150.0
+              ],
+              "score": 0.93,
+              "corner_type": "ridge_end",
+              "height_class_m": 11.5
+            },
+            {
+              "xy": [
+                500.0,
+                150.0
+              ],
+              "score": 0.94,
+              "corner_type": "ridge_end",
+              "height_class_m": 11.5
+            },
+            {
+              "xy": [
+                500.0,
+                200.0
+              ],
+              "score": 0.9,
+              "corner_type": "eave_corner"
+            },
+            {
+              "xy": [
+                400.0,
+                200.0
+              ],
+              "score": 0.91,
+              "corner_type": "eave_corner"
+            }
           ],
           "type_hint": "gable",
-          "adjacent_sections": ["102-north-pitch"],
+          "adjacent_sections": [
+            "102-north-pitch"
+          ],
           "score": 0.89
         }
       ],
@@ -153,9 +342,25 @@
           "stage": "kibs_decomposition",
           "source": "kibs-maskrcnn",
           "timestamp": "2026-10-02T10:00:03Z",
-          "details": {"num_facets": 2, "ridge_detected": true}
+          "details": {
+            "num_facets": 2,
+            "ridge_detected": true
+          }
         }
       ]
     }
-  ]
+  ],
+  "metadata": {
+    "scene_id": "tile_43_reconstruction",
+    "crs": "EPSG:32632",
+    "geo_transform": [
+      500000.0,
+      0.5,
+      0.0,
+      2000000.0,
+      0.0,
+      -0.5
+    ],
+    "gsd": 0.5
+  }
 }
