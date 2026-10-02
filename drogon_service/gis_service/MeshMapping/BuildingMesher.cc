@@ -1,4 +1,5 @@
 #include "BuildingMesher.h"
+#include "../UVMapping/ProjectiveTexturingEngine.h"
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -1119,6 +1120,16 @@ BuildingMesh BuildingMesher::generate(
      result.roofPrimitive.localBounds = roofBounds;
      result.wallPrimitive.localBounds = wallBounds; 
      result.edgePrimitive.localBounds = edgeBounds;
+
+     if (config.enableProjectiveTexturing && config.spatialMetadata.has_value())
+     {
+         ProjectiveTexturingEngine engine;
+         TexturingDiagnostics diagnostics;
+         auto texturedBuildings = engine.processBuildingCollection(
+             buildings, *config.spatialMetadata, config.rpcModel, config.sensorLook,
+             config.texturingConfig, diagnostics);
+         engine.applyToBuildingMesh(result, texturedBuildings, frame, config.texturingConfig);
+     }
 
      return result;
 }

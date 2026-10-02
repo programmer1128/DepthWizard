@@ -41,14 +41,14 @@ function(configure_depthwizard_test target_name)
         target_compile_options(
             ${target_name}
             PRIVATE
-            -fsanitize=address,undefined
+            -fsanitize=address
             -fno-omit-frame-pointer
         )
 
         target_link_options(
             ${target_name}
             PRIVATE
-            -fsanitize=address,undefined
+            -fsanitize=address
         )
     endif()
 endfunction()
@@ -359,6 +359,9 @@ add_executable(
     ../MeshMapping/TerrainMesher.cc
     ../MeshMapping/TerrainSurfaceComposer.cc
     ../MeshMapping/TerrainTextureComposer.cc
+    ../UVMapping/RpcCameraModel.cc
+    ../UVMapping/SensorLookGeometry.cc
+    ../UVMapping/ProjectiveTexturingEngine.cc
 )
 
 configure_depthwizard_test(mesh_pipeline_test)
@@ -406,7 +409,10 @@ add_executable(urban_scene_integration_test
     ../MeshMapping/TerrainSurfaceComposer.cc
     ../MeshMapping/TerrainTextureComposer.cc
     ../CompressionLib/DracoCompressor.cc
-    ../FileGenerators/GltfPackager.cc)
+    ../FileGenerators/GltfPackager.cc
+    ../UVMapping/RpcCameraModel.cc
+    ../UVMapping/SensorLookGeometry.cc
+    ../UVMapping/ProjectiveTexturingEngine.cc)
 configure_depthwizard_test(urban_scene_integration_test)
 target_include_directories(urban_scene_integration_test PRIVATE ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(urban_scene_integration_test PRIVATE
@@ -427,4 +433,18 @@ add_executable(scene_presentation_selector_test ScenePresentationSelector_test.c
 configure_depthwizard_test(scene_presentation_selector_test)
 target_link_libraries(scene_presentation_selector_test PRIVATE GTest::gtest_main)
 gtest_discover_tests(scene_presentation_selector_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
+
+add_executable(projective_texturing_test
+    ProjectiveTexturing_test.cc
+    ../UVMapping/RpcCameraModel.cc
+    ../UVMapping/SensorLookGeometry.cc
+    ../UVMapping/ProjectiveTexturingEngine.cc
+    ../MeshMapping/LocalFrameTransformers.cc)
+configure_depthwizard_test(projective_texturing_test)
+target_include_directories(projective_texturing_test PRIVATE ${OpenCV_INCLUDE_DIRS} ${GDAL_INCLUDE_DIRS})
+target_link_libraries(projective_texturing_test PRIVATE
+    GTest::gtest_main
+    ${DEPTHWIZARD_GDAL_TARGET})
+gtest_discover_tests(projective_texturing_test
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
