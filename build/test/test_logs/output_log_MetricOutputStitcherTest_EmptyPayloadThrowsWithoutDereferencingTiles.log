@@ -1,0 +1,2 @@
+Starting MetricOutputStitcherTest.EmptyPayloadThrowsWithoutDereferencingTiles
+[LATENCY] operation=MetricOutputStitcher::stitch empty payload [THREW] elapsed_us=63.166

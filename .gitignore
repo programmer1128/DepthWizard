@@ -1,3 +1,7 @@
 .vscode/
 drogon_service/gis_service/build/
 drogon_service/gis_service/codebase_context.txt
+# Phase 0 baseline harness: captured outputs and node tool dependencies
+baselines/
+tools/baseline/node/node_modules/
+tools/baseline/**/__pycache__/

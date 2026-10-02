@@ -1,0 +1,2 @@
+Starting SrtmExtractorTest.ExtractsAxisAlignedBoundsFromMock4x4Raster
+[LATENCY] operation=SrtmExtractor::extractGpsBounds axis-aligned 4x4 elapsed_us=76.310

@@ -1,0 +1,2 @@
+Starting SrtmExtractorTest.BuildsExactDefaultZoomSrtmUrl
+[LATENCY] operation=SrtmExtractor::buildSrtmUrl equator elapsed_us=35.568

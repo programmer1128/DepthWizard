@@ -1,0 +1,2 @@
+Starting MetricOutputStitcherTest.TwoOverlapping4x4TilesUseExactConfidenceWeights
+[LATENCY] operation=MetricOutputStitcher::stitch overlapping 4x4 tiles elapsed_us=28844.422

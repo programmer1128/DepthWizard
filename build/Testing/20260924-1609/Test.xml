@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Site BuildName="Linux-g++"
+	BuildStamp="20260924-1609-Experimental"
+	Name="fedoraLaptop"
+	Generator="ctest-4.3.0"
+	CompilerName="/usr/bin/g++"
+	CompilerVersion="16.2.1"
+	OSName="Linux"
+	Hostname="fedoraLaptop"
+	OSRelease="7.1.12-200.fc44.x86_64"
+	OSVersion="#1 SMP PREEMPT_DYNAMIC Fri Aug 28 14:00:18 UTC 2026"
+	OSPlatform="x86_64"
+	Is64Bits="1"
+	VendorString="GenuineIntel"
+	VendorID="Intel Corporation"
+	FamilyID="6"
+	ModelID="140"
+	ModelName="11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz"
+	ProcessorCacheSize="8192"
+	NumberOfLogicalCPU="8"
+	NumberOfPhysicalCPU="4"
+	TotalVirtualMemory="8191"
+	TotalPhysicalMemory="23759"
+	LogicalProcessorsPerPhysical="2"
+	ProcessorClockFrequency="1400.014038"
+	>
+	<Testing>
+		<StartDateTime>Oct 02 13:20 IST</StartDateTime>
+		<StartTestTime>1790927448</StartTestTime>
+		<TestList/>
+		<EndDateTime>Oct 02 13:20 IST</EndDateTime>
+		<EndTestTime>1790927448</EndTestTime>
+		<ElapsedMinutes>0</ElapsedMinutes>
+	</Testing>
+</Site>

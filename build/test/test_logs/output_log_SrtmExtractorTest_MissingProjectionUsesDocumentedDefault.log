@@ -1,0 +1,2 @@
+Starting SrtmExtractorTest.MissingProjectionUsesDocumentedDefault
+[LATENCY] operation=SrtmExtractor::extractGpsBounds missing projection elapsed_us=85.007

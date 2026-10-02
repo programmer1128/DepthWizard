@@ -1,0 +1,60 @@
+{
+  "schema": "depthwizard.baseline.fixtures.v1",
+  "notes": "Frozen Phase 0 fixtures. Sources stay outside git; sha256 pins the exact file. Missing slots must be curated by a human (geographically separate from model training data) before Phase 10.",
+  "fixtures": [
+    {
+      "name": "urban_dense_nyc",
+      "category": "dense_flat_roof_urban",
+      "status": "available",
+      "source": "~/Documents/nyc_test.tif",
+      "sha256": "ef4f739499d72cbc60f072075f8ded0f7215e1de16298f3abc18ba03993e3883",
+      "crs": "EPSG:32618",
+      "gsd_m": 0.5,
+      "size": [1305, 854],
+      "notes": "Manhattan (Chelsea / Midtown South). Main SAT2LoD2 regression scene: party walls, courtyards, mid-rise towers."
+    },
+    {
+      "name": "urban_dense_washington",
+      "category": "dense_flat_roof_urban",
+      "status": "available",
+      "source": "~/Documents/washington_test.tif",
+      "sha256": "9c149a3a1c35bd27fc0dfc671dd9f27054a1c4b7a02487831a221d9e0c8cedee",
+      "crs": "EPSG:32618",
+      "gsd_m": 0.5,
+      "size": [1305, 854],
+      "notes": "Washington DC. Lower, wider buildings; earlier runs showed missing semantic roofs."
+    },
+    {
+      "name": "vegetation_mountain",
+      "category": "vegetation_heavy_hilly",
+      "status": "available",
+      "source": "~/Documents/Test8.tif",
+      "sha256": "c726387e8cad6dff63971e227106e7519122bf5cb1580d0706f44c90c97337bb",
+      "crs": "EPSG:3857",
+      "gsd_m": 10.0,
+      "size": [1263, 712],
+      "notes": "Mountain scene, about 61% vegetation, about 1800 m of relief; no buildings expected (terrain presentation)."
+    },
+    {
+      "name": "residential_pitched",
+      "category": "residential_pitched_roof",
+      "status": "missing",
+      "source": null,
+      "notes": "Needed: projected-CRS RGB GeoTIFF, 0.3-1 m GSD, detached houses with gable/hip roofs."
+    },
+    {
+      "name": "sparse_urban",
+      "category": "sparse_urban",
+      "status": "missing",
+      "source": null,
+      "notes": "Needed: scattered buildings with large open ground, 0.3-1 m GSD."
+    },
+    {
+      "name": "hilly_urban",
+      "category": "hilly_urban",
+      "status": "missing",
+      "source": null,
+      "notes": "Needed: buildings on significant slopes (for example a hill town), 0.3-1 m GSD, so metric presentation and wall bases are exercised."
+    }
+  ]
+}

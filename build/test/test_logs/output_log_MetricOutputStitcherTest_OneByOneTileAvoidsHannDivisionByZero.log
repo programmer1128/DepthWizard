@@ -1,0 +1,2 @@
+Starting MetricOutputStitcherTest.OneByOneTileAvoidsHannDivisionByZero
+[LATENCY] operation=MetricOutputStitcher::stitch one-by-one tile elapsed_us=12248.262

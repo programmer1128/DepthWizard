@@ -1,0 +1,2 @@
+Starting MetricOutputStitcherTest.RejectsInconsistentSemanticClassCount
+[LATENCY] operation=MetricOutputStitcher::stitch class mismatch [THREW] elapsed_us=64.665
