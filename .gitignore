@@ -1,3 +1,4 @@
 .vscode/
 drogon_service/gis_service/build/
 drogon_service/gis_service/codebase_context.txt
+drogon_service/gis_service/.env
