@@ -10,6 +10,8 @@ struct MeshBuildConfig
 {
      ScenePresentation presentation{ScenePresentation::METRIC};
      depthwizard::PresentationStyle presentationStyle{depthwizard::PresentationStyle::SCIENTIFIC};
+     // Plain concrete facade atlas (no synthetic windows); orthophoto style only.
+     bool neutralFacades{false};
      TerrainMeshConfig terrain;
      BuildingMeshConfig building;
      DracoCompressionConfig draco;

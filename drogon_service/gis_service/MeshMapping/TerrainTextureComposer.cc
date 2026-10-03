@@ -45,15 +45,17 @@ TextureAsset TerrainTextureComposer::concealAcceptedRoofs(
         !std::isfinite(rowResolution) || rowResolution <= 0.0)
         throw std::invalid_argument("TerrainTextureComposer: invalid pixel resolution");
 
-    const int radiusX = std::clamp(
-        static_cast<int>(std::ceil(haloMetres > 0.0f ? (haloMetres / columnResolution) : 2.0)),
-        2, 3);
-    const int radiusY = std::clamp(
-        static_cast<int>(std::ceil(haloMetres > 0.0f ? (haloMetres / rowResolution) : 2.0)),
-        2, 3);
-    const cv::Mat kernel = cv::getStructuringElement(
-        cv::MORPH_RECT, cv::Size(radiusX * 2 + 1, radiusY * 2 + 1));
-    cv::dilate(repairMask, repairMask, kernel);
+    // The halo is metric: haloMetres around the exact footprint, rounded to
+    // whole pixels. A halo smaller than half a pixel adds nothing, so coarse
+    // imagery never inpaints neighbouring roads.
+    const int radiusX = static_cast<int>(std::lround(haloMetres / columnResolution));
+    const int radiusY = static_cast<int>(std::lround(haloMetres / rowResolution));
+    if (radiusX > 0 || radiusY > 0)
+    {
+        const cv::Mat kernel = cv::getStructuringElement(
+            cv::MORPH_ELLIPSE, cv::Size(radiusX * 2 + 1, radiusY * 2 + 1));
+        cv::dilate(repairMask, repairMask, kernel);
+    }
 
     // A large or border-touching roof can cover the entire texture only after
     // adding the visual halo. Keep the exact accepted footprint in that case;
@@ -74,6 +76,7 @@ TextureAsset TerrainTextureComposer::concealAcceptedRoofs(
     // Only the GLB texture is changed; the source GeoTIFF is never rewritten.
     TextureAsset output;
     output.mimeType = "image/png";
+    output.semantic = TextureSemantic::OPTICAL_GROUND_REPAIRED;
     if (!cv::imencode(".png", repaired, output.bytes,
                       {cv::IMWRITE_PNG_COMPRESSION, 3}))
         throw std::runtime_error("TerrainTextureComposer: texture encoding failed");

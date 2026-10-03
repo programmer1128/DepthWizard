@@ -18,22 +18,18 @@ bool parseSwitch(const HybridFeatureFlags::Lookup& lookup, const std::string& na
                  std::vector<std::string>& warnings)
 {
      const std::optional<std::string> value = lookup(name);
-     if (!value || value->empty() || *value == "0") return false;
-     if (*value == "1") return true;
+     if (!value || value->empty()) return false;
+     const std::string text = lower(*value);
+     if (text == "1" || text == "true" || text == "on") return true;
+     if (text == "0" || text == "false" || text == "off") return false;
      warnings.push_back(name + "='" + *value + "' is not 0 or 1; using 0.");
      return false;
 }
 } // namespace
 
-const char* toString(PresentationStyle style)
+const char* toString(City3dMode mode)
 {
-     switch (style)
-     {
-         case PresentationStyle::Terra: return "terra";
-         case PresentationStyle::Orthophoto: return "orthophoto";
-         case PresentationStyle::Scientific: break;
-     }
-     return "scientific";
+     return mode == City3dMode::Selected ? "selected" : "shadow";
 }
 
 HybridFeatureFlags HybridFeatureFlags::fromEnvironment()
@@ -51,30 +47,37 @@ HybridFeatureFlags HybridFeatureFlags::parse(const Lookup& lookup)
      HybridFeatureFlags flags;
      if (const auto style = lookup("DEPTHWIZARD_PRESENTATION_STYLE"); style && !style->empty())
      {
-         const std::string value = lower(*style);
-         if (value == "terra") flags.presentationStyle = PresentationStyle::Terra;
-         else if (value == "orthophoto") flags.presentationStyle = PresentationStyle::Orthophoto;
-         else if (value != "scientific")
+         if (const auto parsed = depthwizard::tryParsePresentationStyle(*style))
+             flags.presentationStyle = *parsed;
+         else
              flags.warnings.push_back("DEPTHWIZARD_PRESENTATION_STYLE='" + *style +
                                       "' is not scientific, terra or orthophoto; using scientific.");
      }
+     flags.neutralFacades = parseSwitch(lookup, "DEPTHWIZARD_NEUTRAL_FACADES", flags.warnings);
      flags.sam2 = parseSwitch(lookup, "DEPTHWIZARD_SAM2", flags.warnings);
      flags.kibs = parseSwitch(lookup, "DEPTHWIZARD_KIBS", flags.warnings);
      flags.hybridFusion = parseSwitch(lookup, "DEPTHWIZARD_HYBRID_FUSION", flags.warnings);
+     flags.city3d = parseSwitch(lookup, "DEPTHWIZARD_CITY3D", flags.warnings);
+     if (const auto mode = lookup("DEPTHWIZARD_CITY3D_MODE"); mode && !mode->empty())
+     {
+         const std::string value = lower(*mode);
+         if (value == "selected") flags.city3dMode = City3dMode::Selected;
+         else if (value != "shadow")
+             flags.warnings.push_back("DEPTHWIZARD_CITY3D_MODE='" + *mode + "' is not shadow or selected; using shadow.");
+     }
      return flags;
 }
 
 bool HybridFeatureFlags::allDefault() const
 {
-     return presentationStyle == PresentationStyle::Scientific && !sam2 && !kibs && !hybridFusion;
+     return presentationStyle == PresentationStyle::SCIENTIFIC && !neutralFacades &&
+            !sam2 && !kibs && !hybridFusion && !city3d;
 }
 
 std::vector<std::string> HybridFeatureFlags::unimplementedRequests() const
 {
-     // Phase 0 defines the flags only; each phase removes its entry here.
+     // Each phase removes its entry here; presentation styles landed in Phase 2.
      std::vector<std::string> requested;
-     if (presentationStyle != PresentationStyle::Scientific)
-         requested.push_back(std::string("DEPTHWIZARD_PRESENTATION_STYLE=") + toString(presentationStyle));
      if (sam2) requested.push_back("DEPTHWIZARD_SAM2=1");
      if (kibs) requested.push_back("DEPTHWIZARD_KIBS=1");
      if (hybridFusion) requested.push_back("DEPTHWIZARD_HYBRID_FUSION=1");
@@ -84,17 +87,22 @@ std::vector<std::string> HybridFeatureFlags::unimplementedRequests() const
 Json::Value HybridFeatureFlags::toJson() const
 {
      Json::Value value(Json::objectValue);
-     value["presentation_style"] = toString(presentationStyle);
+     value["presentation_style"] = depthwizard::toString(presentationStyle);
+     value["neutral_facades"] = neutralFacades;
      value["sam2"] = sam2;
      value["kibs"] = kibs;
      value["hybrid_fusion"] = hybridFusion;
+     value["city3d"] = city3d;
+     value["city3d_mode"] = toString(city3dMode);
      return value;
 }
 
 std::string HybridFeatureFlags::summary() const
 {
      std::ostringstream text;
-     text << "presentation_style=" << toString(presentationStyle)
-          << " sam2=" << sam2 << " kibs=" << kibs << " hybrid_fusion=" << hybridFusion;
+     text << "presentation_style=" << depthwizard::toString(presentationStyle)
+          << " neutral_facades=" << neutralFacades
+          << " sam2=" << sam2 << " kibs=" << kibs << " hybrid_fusion=" << hybridFusion
+          << " city3d=" << city3d << " city3d_mode=" << toString(city3dMode);
      return text.str();
 }

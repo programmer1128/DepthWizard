@@ -81,6 +81,27 @@ struct DecomposedBuildingBlock
     float footprintAreaSquareMetres{0.0f};
 };
 
+// Arbitrary building surface from an external reconstruction expert
+// (City3D), validated before it is attached. Vertices are metric projected
+// coordinates (easting, northing, elevation in the source CRS); triangle
+// indices are grouped by role. Heights stay metric: the mesher applies the
+// scene's render height scale exactly as it does for native buildings.
+struct ProjectedVertex3D
+{
+    double easting{0.0};
+    double northing{0.0};
+    double elevation{0.0};
+};
+
+struct BuildingSurfaceShell
+{
+    std::vector<ProjectedVertex3D> vertices;
+    std::vector<uint32_t> roofIndices;  // Triangles
+    std::vector<uint32_t> wallIndices;  // Triangles
+    std::string source{"city3d"};
+    float renderHeightScale{1.0f};      // Render height = metric height above base x scale
+};
+
 struct BuildingInstance 
 {
     uint32_t buildingId{0};
@@ -101,6 +122,9 @@ struct BuildingInstance
     float semanticConfidence{0.0f};
     float heightConfidence{0.0f};
     std::vector<DecomposedBuildingBlock> blocks;
+    // Validated expert shell; when present the mesher prefers it over blocks
+    // and footprint extrusion. Heights and footprints above stay authoritative.
+    std::optional<BuildingSurfaceShell> reconstructedShell;
     std::vector<std::string> geometryWarnings;
 };
 

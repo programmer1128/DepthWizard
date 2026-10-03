@@ -20,8 +20,22 @@ BuildingCollection BuildingReconstructionService::reconstruct(
      const RasterGrid<float>* reconstructionNdsm,
      const std::vector<uint8_t>* opticalImageBytes)
 {
+     return reconstructDetailed(semantics, surface, metadata, config, diagnostics,
+                                reconstructionNdsm, opticalImageBytes).buildings;
+}
+
+BuildingReconstructionResult BuildingReconstructionService::reconstructDetailed(
+     const SemanticScene& semantics,
+     const GeoreferencedSurfaceBundle& surface,
+     const SpatialMetadata& metadata,
+     const BuildingReconstructionConfig& config,
+     BuildingReconstructionDiagnostics* diagnostics,
+     const RasterGrid<float>* reconstructionNdsm,
+     const std::vector<uint8_t>* opticalImageBytes)
+{
      if (diagnostics) *diagnostics = {};
-     BuildingCollection collection; // Initializes empty. Valid return state if no buildings exist.
+     BuildingReconstructionResult result;
+     BuildingCollection& collection = result.buildings; // Empty is a valid result.
 
 
      const RasterGrid<float>& evidenceNdsm = reconstructionNdsm != nullptr
@@ -121,7 +135,7 @@ BuildingCollection BuildingReconstructionService::reconstruct(
      {
          if (diagnostics) diagnostics->rejectionReasons.push_back(maskResult.errorMessage);
          std::cerr << "[Module 6] Mask processing failed: " << maskResult.errorMessage << "\n";
-         return collection;
+         return result;
      }
 
      collection.recoveredCandidatePixelCount =
@@ -147,7 +161,8 @@ BuildingCollection BuildingReconstructionService::reconstruct(
      if (!extractionResult.success || extractionResult.acceptedComponentCount == 0) 
      {
          // No buildings found in the scene. Return empty collection gracefully.
-         return collection;
+         result.instanceLabels = std::move(extractionResult.labelRaster);
+         return result;
      }
 
      // Pre-allocate space to avoid vector reallocations
@@ -281,5 +296,6 @@ BuildingCollection BuildingReconstructionService::reconstruct(
                << ", gable=" << collection.gableRoofBlockCount
                << ", hip=" << collection.hipRoofBlockCount << "\n";
 
-     return collection;
+     result.instanceLabels = std::move(extractionResult.labelRaster);
+     return result;
 }

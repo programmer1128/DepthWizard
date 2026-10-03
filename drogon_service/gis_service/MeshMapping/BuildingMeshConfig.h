@@ -7,8 +7,11 @@ struct BuildingMeshConfig
 {
      bool flatPresentation{false}; // Set centrally by SceneMeshService.
      depthwizard::PresentationStyle presentationStyle{depthwizard::PresentationStyle::SCIENTIFIC};
-     bool generateRoofUVs{false}; 
-     bool generateWallUVs{false};
+     // Set centrally by SceneMeshService from the presentation style.
+     bool generateRoofUVs{false}; // Inverse-affine source-image UVs
+     bool generateWallUVs{false}; // Facade atlas UVs
+     bool generateVertexColors{true}; // Height-tier COLOR_0 (scientific style)
+     bool neutralFacades{false};
 
      // Small overlap absorbs differences between the full-resolution DTM and
      // the decimated terrain mesh. This is deliberately not a deep 15 m plug.

@@ -80,6 +80,9 @@ endif()
 
 #EXECUTABLE TARGET & INCLUDES
 add_executable(${PROJECT_NAME} main.cc)
+# Default City3D worker (city3d_worker/README.md); DEPTHWIZARD_CITY3D_BINARY overrides it.
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    DEPTHWIZARD_DEFAULT_CITY3D_BINARY="${CMAKE_CURRENT_SOURCE_DIR}/../../city3d_worker/build/bin/city3d_worker")
 
 # Generate views (if using Drogon CSP templates)
 drogon_create_views(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/views

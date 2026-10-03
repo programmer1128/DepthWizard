@@ -74,13 +74,20 @@ Metric exports are unchanged, not independently verified ground truth.
    Every original mask pixel keeps a label. Poorly supported cuts, excessive
    markers and single-core components retain the original component.
 
-4. Each instance is vectorized and gets its own robust height estimate. Under
-   Tactical LoD1 configuration, `regularizeRectangularFootprints` forces candidate
-   building footprints directly into crisp Oriented Bounding Boxes (OBB via
-   `cv::minAreaRect`), immediately clearing internal courtyards and returning a
-   clean 4-vertex prism footprint. When rectangular regularization is disabled,
-   the full Manhattan and CGAL edge-regularization pipeline operates with
-   GEOS polygon simplification, area bounds, and neighbour exclusion safeguards.
+4. Each instance is vectorized and gets its own robust height estimate. With
+   `regularizeRectangularFootprints`, a component becomes its oriented
+   rectangle (`cv::minAreaRect`) only when every guard passes:
+   - raw area / rectangle area >= `minimumRectangleFillRatio`;
+   - raw area / convex-hull area >= 0.96, so L-, U- and E-shapes stay as they are;
+   - every rectangle corner is supported by observed instance pixels;
+   - the area deviation is within `footprintAreaDeviationTolerance`;
+   - every courtyard lies inside the rectangle and is kept as a hole;
+   - the final footprint reaches `minimumFootprintMaskIoU` and covers no
+     neighbouring-instance pixel.
+
+   Otherwise the outline continues through the Manhattan and CGAL edge
+   regularization, GEOS simplification, area bounds and neighbour exclusion, and
+   falls back to the observed boundary when a fit fails.
    Robust roof height estimation exclusively uses the 85th percentile peak of
    the nDSM samples, scaled by `heightScaleMultiplier = 2.25f` to ensure towering
    skylines and prominent vertical relief.

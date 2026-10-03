@@ -1,6 +1,7 @@
 #include "PipelineService.h"
 
 #include "../BuildingReconstruction/BuildingReconstructionService.h"
+#include "../BuildingReconstruction/City3dOrchestrator.h"
 #include "../BuildingReconstruction/Sat2Lod2Importer.h"
 #include "Sat2Lod2ModalTransport.h"
 #include "../DataHandlers/MiniIOClient.h"
@@ -18,7 +19,6 @@
 #include "../SemanticContext/SemanticPostProcessor.h"
 #include "../SurfaceFusion/NdsmGroundBiasCorrector.h"
 #include "../SurfaceFusion/SurfaceFusionService.h"
-#include "../structures/HybridFeatureFlags.h"
 
 #include <cpl_vsi.h>
 #include <drogon/utils/Utilities.h>
@@ -33,6 +33,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <json/json.h>
 #include <optional>
 #include <opencv2/imgcodecs.hpp>
 
@@ -261,8 +262,8 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
 {
      const std::string jobId = drogon::utils::getUuid();
 
-     // Hybrid-rendering flags are defined but not yet acted on (Phase 0):
-     // log them per job so every baseline records the configuration it ran.
+     // Hybrid-rendering flags, logged per job so every baseline records the
+     // configuration it ran. Presentation styles apply to the GLB only.
      const HybridFeatureFlags featureFlags = HybridFeatureFlags::fromEnvironment();
      LOG_INFO << "PipelineService: " << jobId << " feature flags: " << featureFlags.summary();
      for (const std::string& warning : featureFlags.warnings)
@@ -455,10 +456,13 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          const bool captureDiagnostics = !diagnosticsSetting || std::string(diagnosticsSetting) != "0";
          BuildingReconstructionDiagnostics stages;
          BuildingReconstructionConfig config;
-         BuildingCollection buildings = BuildingReconstructionService::reconstruct(
+         // The detailed result keeps the authoritative instance labels that
+         // City3D inputs are cut from.
+         BuildingReconstructionResult reconstruction = BuildingReconstructionService::reconstructDetailed(
              semantics, surface, metadata, config,
              captureDiagnostics ? &stages : nullptr,
              &correction.correctedMetricNdsm, &scene.rgbTextureBytes);
+         BuildingCollection buildings = std::move(reconstruction.buildings);
 
          bool usingSat2Lod2 = false;
          if (satBuildingsDocument || !satBuildingsPath.empty())
@@ -491,14 +495,54 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          std::error_code cleanupError;
          std::filesystem::remove_all(satWorkDir, cleanupError);
 
+         // City3D (DEPTHWIZARD_CITY3D=1): per-building expert on native
+         // geometry. Shadow mode measures only; selected mode attaches
+         // validated shells. Any failure keeps that building native.
+         std::optional<City3dRunSummary> city3dSummary;
+         City3dConfig city3dConfig;
+         if (featureFlags.city3d)
+         {
+             city3dConfig = City3dConfig::fromEnvironment();
+             if (usingSat2Lod2)
+             {
+                 // SAT2LoD2 renumbers buildings, so instance labels no longer match.
+                 city3dSummary.emplace();
+                 city3dSummary->skippedReason = "sat2lod2_geometry";
+             }
+             else
+             {
+                 city3dSummary = City3dOrchestrator::run(
+                     buildings, reconstruction.instanceLabels, semantics, surface,
+                     correction.correctedMetricNdsm, metadata, config.heightScaleMultiplier,
+                     city3dConfig, jobId);
+             }
+             city3dSummary->mode = toString(featureFlags.city3dMode);
+             for (const City3dBuildingOutcome& outcome : city3dSummary->outcomes)
+             {
+                 if (outcome.route == "not_eligible") continue;
+                 LOG_INFO << "PipelineService: City3D " << jobId << " building " << outcome.buildingId
+                          << " route=" << outcome.route << " reason=" << outcome.reason
+                          << " worker_status=" << outcome.workerStatus
+                          << " points=" << outcome.points << " elapsed_ms=" << outcome.elapsedMs;
+             }
+             std::size_t attached = 0;
+             if (featureFlags.city3dMode == City3dMode::Selected)
+                 attached = City3dOrchestrator::attachAcceptedShells(buildings, *city3dSummary);
+             LOG_INFO << "PipelineService: City3D " << jobId << " mode=" << city3dSummary->mode
+                      << (city3dSummary->skippedReason.empty() ? "" : " skipped=" + city3dSummary->skippedReason)
+                      << " eligible=" << city3dSummary->eligibleCount
+                      << " accepted=" << city3dSummary->acceptedShells.size()
+                      << " attached=" << attached << " total_ms=" << city3dSummary->totalMs;
+             std::filesystem::create_directories(city3dConfig.workRoot / jobId, cleanupError);
+             Json::StreamWriterBuilder summaryWriter;
+             summaryWriter["indentation"] = "  ";
+             std::ofstream(city3dConfig.workRoot / jobId / "summary.json")
+                 << Json::writeString(summaryWriter, City3dOrchestrator::toJson(*city3dSummary)) << "\n";
+         }
+
          MeshBuildConfig meshConfig;
-         const auto hybridFlags = depthwizard::HybridFeatureFlags::loadFromEnvironment();
-         meshConfig.presentationStyle = hybridFlags.presentationStyle;
-         LOG_INFO << "PipelineService: hybrid flags: presentation_style="
-                  << depthwizard::toString(hybridFlags.presentationStyle)
-                  << "; sam2=" << (hybridFlags.enableSam2 ? 1 : 0)
-                  << "; kibs=" << (hybridFlags.enableKibs ? 1 : 0)
-                  << "; hybrid_fusion=" << (hybridFlags.enableHybridFusion ? 1 : 0);
+         meshConfig.presentationStyle = featureFlags.presentationStyle;
+         meshConfig.neutralFacades = featureFlags.neutralFacades;
          const ScenePresentationDecision sceneDecision = ScenePresentationSelector::select(
              semantics, surface, buildings);
          auto presentation = sceneDecision.presentation;
@@ -548,6 +592,31 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          for (const std::string& warning : glb.geometryWarnings)
          {
              LOG_WARN << "PipelineService: " << jobId << ": " << warning;
+         }
+
+         // City3D comparison files (local only): in shadow mode the returned
+         // GLB is native, so also mesh the accepted shells for comparison.
+         if (city3dSummary && !city3dSummary->acceptedShells.empty())
+         {
+             const std::filesystem::path city3dDirectory = city3dConfig.workRoot / jobId;
+             const auto writeGlb = [&](const std::string& name, const std::vector<uint8_t>& bytes)
+             {
+                 std::ofstream file(city3dDirectory / name, std::ios::binary);
+                 file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+             };
+             if (featureFlags.city3dMode == City3dMode::Shadow)
+             {
+                 BuildingCollection compared = buildings;
+                 City3dOrchestrator::attachAcceptedShells(compared, *city3dSummary);
+                 const GlbBuildResult comparison = SceneMeshService::generateGlb(
+                     scene, surface, compared, metadata, meshConfig);
+                 writeGlb("native_baseline.glb", glb.compressedGlbByteBuffer);
+                 writeGlb("city3d_comparison.glb", comparison.compressedGlbByteBuffer);
+                 LOG_INFO << "PipelineService: City3D " << jobId << " comparison GLB "
+                          << comparison.compressedGlbByteBuffer.size() << " bytes in " << city3dDirectory;
+             }
+             else
+                 writeGlb("city3d_selected.glb", glb.compressedGlbByteBuffer);
          }
 
          // 8. Upload the finished GLB before replying to the frontend.

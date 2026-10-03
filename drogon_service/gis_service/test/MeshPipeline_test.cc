@@ -7,12 +7,18 @@
 #include "MeshMapping/TerrainSurfaceComposer.h"
 #include "MeshMapping/TerrainTextureComposer.h"
 #include "MeshMapping/FacadeAtlasGenerator.h"
+#include "MeshMapping/PresentationMaterials.h"
+#include "GlbTestSupport.h"
 #include <opencv2/imgcodecs.hpp>
 #include "TestGridSupport.h"
 #include "BuildingReconstructionTestSupport.h"
 #include "tiny_gltf.h"
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdint>
+#include <tuple>
 #include <limits>
 #include <string>
 #include <vector>
@@ -1053,248 +1059,563 @@ TEST(MeshPipelineTest, CollinearVertexAlongStraightWallDoesNotEmitVerticalSeam)
     EXPECT_EQ(verticalSeams, 4);
 }
 
-TEST(MeshPipelineTest, ExactBuildingMaskConcealAcceptedRoofsPreservesSurroundingRoads)
+// --- Phase 2: render-only textures, UVs and materials -----------------------
+
+using depthwizard::FacadeAtlasGenerator;
+
+BuildingInstance boxBuilding(uint32_t id, double left, double top, double right, double bottom,
+                             float height)
+{
+    // Projected rectangle with pixel-edge footprint on a 1 m north-up raster
+    // whose origin is (0, 0): column = easting, row = -northing.
+    BuildingInstance building;
+    building.buildingId = id;
+    building.heightAboveGround = height;
+    building.representativeBaseElevation = 100.0F;
+    building.roofElevation = 100.0F + height;
+    building.pixelFootprint.outerRing = {{left, top}, {right, top}, {right, bottom}, {left, bottom}};
+    building.projectedFootprint.outerRing = {{left, -top}, {right, -top}, {right, -bottom}, {left, -bottom}};
+    return building;
+}
+
+SpatialMetadata unitMetadata(int width, int height)
+{
+    SpatialMetadata metadata = makeProjectedMetadata(width, height, 1.0, -1.0);
+    metadata.geoTransform[0] = 0.0;
+    metadata.geoTransform[3] = 0.0;
+    return metadata;
+}
+
+uint8_t cell(const RasterGrid<uint8_t>& mask, int column, int row)
+{
+    return mask.data[static_cast<std::size_t>(row) * mask.width + column];
+}
+
+int countSet(const RasterGrid<uint8_t>& mask)
+{
+    int count = 0;
+    for (uint8_t value : mask.data) count += value != 0;
+    return count;
+}
+
+TEST(MeshPipelineTest, ExactFootprintMaskCoversOnlyPixelCentresInside)
+{
+    const SpatialMetadata metadata = unitMetadata(64, 64);
+    BuildingCollection buildings;
+    buildings.buildings.push_back(boxBuilding(1, 20, 20, 40, 40, 10.0F));
+    buildings.buildings[0].pixelFootprint.holes = {{{28, 28}, {28, 32}, {32, 32}, {32, 28}}};
+
+    const RasterGrid<uint8_t> exact = TerrainSurfaceComposer::buildExactFootprintMask(buildings, metadata);
+    EXPECT_EQ(countSet(exact), 20 * 20 - 4 * 4);
+    EXPECT_EQ(cell(exact, 20, 20), 1);
+    EXPECT_EQ(cell(exact, 39, 39), 1);
+    EXPECT_EQ(cell(exact, 40, 30), 0); // Pixel 40 starts at the footprint's right edge.
+    EXPECT_EQ(cell(exact, 19, 30), 0);
+    EXPECT_EQ(cell(exact, 30, 30), 0); // Courtyard.
+
+    // The polygon-fill mask grows by its boundary pixels even at 0 m clearance.
+    buildings.buildings[0].pixelFootprint.holes.clear();
+    EXPECT_GT(countSet(TerrainSurfaceComposer::buildAcceptedBuildingMask(buildings, metadata, 0.0F)), 400);
+
+    // Fractional edges: centres 10.5, 11.5 and 12.5 lie inside [10.4, 12.6].
+    BuildingCollection fractional;
+    fractional.buildings.push_back(boxBuilding(2, 10.4, 10.4, 12.6, 12.6, 5.0F));
+    EXPECT_EQ(countSet(TerrainSurfaceComposer::buildExactFootprintMask(fractional, metadata)), 9);
+}
+
+TEST(MeshPipelineTest, ConcealedRoofHaloIsMetricAndLeavesRoadsOutsideItUntouched)
 {
     constexpr int n = 64;
-    auto metadata = makeProjectedMetadata(n, n, 1.0, -1.0);
-
-    // Create 64x64 optical image: grey road (120, 120, 120), red roof (10, 10, 200) inside [20, 40] x [20, 40]
     cv::Mat optical(n, n, CV_8UC3, cv::Scalar(120, 120, 120));
     optical(cv::Rect(20, 20, 20, 20)).setTo(cv::Scalar(10, 10, 200));
-
+    optical(cv::Rect(0, 30, 20, 1)).setTo(cv::Scalar(40, 200, 40)); // Road marking up to the wall.
     TextureAsset original;
     original.mimeType = "image/png";
     ASSERT_TRUE(cv::imencode(".png", optical, original.bytes));
 
-    // Construct BuildingInstance exactly matching the 20x20 pixel footprint
-    // In UTM: col 20 = easting 20.0, row 20 = northing -20.0
-    BuildingInstance bldg;
-    bldg.buildingId = 1;
-    bldg.heightAboveGround = 15.0F;
-    bldg.representativeBaseElevation = 100.0F;
-    bldg.roofElevation = 115.0F;
-    bldg.pixelFootprint.outerRing = {
-        {20.0, 20.0}, {40.0, 20.0}, {40.0, 40.0}, {20.0, 40.0}
-    };
-    bldg.projectedFootprint.outerRing = {
-        {20.0, -20.0}, {40.0, -20.0}, {40.0, -40.0}, {20.0, -40.0}
-    };
     BuildingCollection buildings;
-    buildings.buildings.push_back(bldg);
+    buildings.buildings.push_back(boxBuilding(1, 20, 20, 40, 40, 10.0F));
 
-    // Build exact building mask (clearance = 0.0m)
-    const RasterGrid<uint8_t> exactMask =
-        TerrainSurfaceComposer::buildAcceptedBuildingMask(buildings, metadata, 0.0F);
+    const auto repair = [&](double pixelSize, float halo)
+    {
+        SpatialMetadata metadata = unitMetadata(n, n);
+        metadata.geoTransform[1] = pixelSize;
+        metadata.geoTransform[5] = -pixelSize;
+        const TextureAsset repaired = TerrainTextureComposer::concealAcceptedRoofs(
+            original, TerrainSurfaceComposer::buildExactFootprintMask(buildings, metadata), metadata, halo);
+        EXPECT_EQ(repaired.semantic, TextureSemantic::OPTICAL_GROUND_REPAIRED);
+        return cv::imdecode(repaired.bytes, cv::IMREAD_COLOR);
+    };
 
-    // Conceal accepted roofs with 1.0m visual halo
-    TextureAsset repaired = TerrainTextureComposer::concealAcceptedRoofs(
-        original, exactMask, metadata, 1.0F);
-    ASSERT_FALSE(repaired.bytes.empty());
+    // No halo: the roof is inpainted and the marking touching the wall survives.
+    cv::Mat noHalo = repair(1.0, 0.0F);
+    EXPECT_NE(noHalo.at<cv::Vec3b>(30, 30), cv::Vec3b(10, 10, 200));
+    EXPECT_EQ(noHalo.at<cv::Vec3b>(30, 19), cv::Vec3b(40, 200, 40));
 
-    cv::Mat repairedMat = cv::imdecode(repaired.bytes, cv::IMREAD_COLOR);
-    ASSERT_EQ(repairedMat.cols, n);
-    ASSERT_EQ(repairedMat.rows, n);
+    // 2 m at 1 m/pixel repairs two pixels around the roof, and nothing beyond.
+    cv::Mat twoMetres = repair(1.0, 2.0F);
+    EXPECT_NE(twoMetres.at<cv::Vec3b>(30, 18), cv::Vec3b(40, 200, 40));
+    EXPECT_EQ(twoMetres.at<cv::Vec3b>(30, 17), cv::Vec3b(40, 200, 40));
 
-    // 1. Center of roof (30, 30) should be inpainted (no longer pure red 10, 10, 200)
-    const auto centerPixel = repairedMat.at<cv::Vec3b>(30, 30);
-    EXPECT_NE(centerPixel, cv::Vec3b(10, 10, 200));
-
-    // 2. Distant road pixel (5, 5) must be 100% untouched
-    const auto roadPixel = repairedMat.at<cv::Vec3b>(5, 5);
-    EXPECT_EQ(roadPixel, cv::Vec3b(120, 120, 120));
-
-    // 3. Another road pixel (55, 55) must be 100% untouched
-    const auto roadPixel2 = repairedMat.at<cv::Vec3b>(55, 55);
-    EXPECT_EQ(roadPixel2, cv::Vec3b(120, 120, 120));
+    // 1 m at 10 m/pixel rounds to no halo (it was always 2-3 pixels before).
+    cv::Mat coarse = repair(10.0, 1.0F);
+    EXPECT_EQ(coarse.at<cv::Vec3b>(30, 19), cv::Vec3b(40, 200, 40));
 }
 
-TEST(MeshPipelineTest, FacadeAtlasDeterministicGenerationAndWallUvs)
+TEST(MeshPipelineTest, FacadeAtlasIsDeterministicBandedAndRepeatable)
 {
-    // 1. Deterministic generation: identical bytes on successive runs
-    TextureAsset atlas1 = depthwizard::FacadeAtlasGenerator::generateAtlasPng(false);
-    TextureAsset atlas2 = depthwizard::FacadeAtlasGenerator::generateAtlasPng(false);
-    EXPECT_EQ(atlas1.bytes, atlas2.bytes);
-    EXPECT_EQ(atlas1.semantic, TextureSemantic::FACADE_ATLAS);
-    EXPECT_EQ(atlas1.mimeType, "image/png");
+    const TextureAsset atlas = FacadeAtlasGenerator::generateAtlasPng(false);
+    EXPECT_EQ(atlas.bytes, FacadeAtlasGenerator::generateAtlasPng(false).bytes);
+    EXPECT_EQ(atlas.semantic, TextureSemantic::FACADE_ATLAS);
+    EXPECT_EQ(atlas.mimeType, "image/png");
+    EXPECT_EQ(atlas.wrapS, TextureWrap::REPEAT);
+    EXPECT_EQ(atlas.wrapT, TextureWrap::CLAMP_TO_EDGE);
 
-    cv::Mat mat = cv::imdecode(atlas1.bytes, cv::IMREAD_COLOR);
-    ASSERT_FALSE(mat.empty());
-    EXPECT_EQ(mat.cols, depthwizard::FacadeAtlasGenerator::kAtlasWidth);
-    EXPECT_EQ(mat.rows, depthwizard::FacadeAtlasGenerator::kAtlasHeight);
-
-    // 2. Wall UV computation tests
-    for (uint32_t bldgId = 0; bldgId < 4; ++bldgId)
+    const cv::Mat image = cv::imdecode(atlas.bytes, cv::IMREAD_COLOR);
+    ASSERT_EQ(image.cols, FacadeAtlasGenerator::kAtlasWidth);
+    ASSERT_EQ(image.rows, FacadeAtlasGenerator::kAtlasHeight);
+    for (int band = 0; band < FacadeAtlasGenerator::kVariantCount; ++band)
     {
-        float uBase, vBase, uTop, vTop;
-        depthwizard::FacadeAtlasGenerator::computeWallUV(bldgId, 0.0F, 0.0F, 15.0F, uBase, vBase);
-        depthwizard::FacadeAtlasGenerator::computeWallUV(bldgId, 0.0F, 15.0F, 15.0F, uTop, vTop);
-
-        EXPECT_GE(uBase, 0.0F); EXPECT_LE(uBase, 1.0F);
-        EXPECT_GE(vBase, 0.0F); EXPECT_LE(vBase, 1.0F);
-        EXPECT_GE(uTop, 0.0F); EXPECT_LE(uTop, 1.0F);
-        EXPECT_GE(vTop, 0.0F); EXPECT_LE(vTop, 1.0F);
-
-        // Ground is bottom of cell (higher V in glTF), top of wall is lower V
-        EXPECT_GT(vBase, vTop);
+        // Darker ground floor at the bottom of every band.
+        const int bottom = (band + 1) * FacadeAtlasGenerator::kBandHeight;
+        const double ground = cv::mean(image(cv::Rect(0, bottom - FacadeAtlasGenerator::kFloorPixels,
+                                                      image.cols, FacadeAtlasGenerator::kFloorPixels)))[1];
+        const double upper = cv::mean(image(cv::Rect(0, bottom - 6 * FacadeAtlasGenerator::kFloorPixels,
+                                                     image.cols, FacadeAtlasGenerator::kFloorPixels)))[1];
+        EXPECT_LT(ground, upper) << "band " << band;
+        // Seamless horizontal repeat: the first and last columns hold the same pattern.
+        EXPECT_LT(cv::norm(image.col(0).rowRange(bottom - 256, bottom), image.col(image.cols - 1).rowRange(bottom - 256, bottom),
+                           cv::NORM_L1) / 256.0, 12.0);
     }
 
-    // 3. Neutral-only generation
-    TextureAsset neutralAtlas = depthwizard::FacadeAtlasGenerator::generateAtlasPng(true);
-    ASSERT_FALSE(neutralAtlas.bytes.empty());
-    float uNeut, vNeut;
-    depthwizard::FacadeAtlasGenerator::computeWallUV(0, 5.0F, 10.0F, 20.0F, uNeut, vNeut, true);
-    // Neutral variant is variant 3: cell row 1, col 1 -> u in [0.5, 1.0], v in [0.5, 1.0]
-    EXPECT_GE(uNeut, 0.5F); EXPECT_LE(uNeut, 1.0F);
-    EXPECT_GE(vNeut, 0.5F); EXPECT_LE(vNeut, 1.0F);
+    // Neutral atlas: plain concrete in every band.
+    const cv::Mat neutral = cv::imdecode(FacadeAtlasGenerator::generateAtlasPng(true).bytes, cv::IMREAD_COLOR);
+    EXPECT_NE(atlas.bytes, FacadeAtlasGenerator::generateAtlasPng(true).bytes);
+    cv::Mat channels[3];
+    cv::split(neutral, channels);
+    EXPECT_LT(cv::norm(channels[0], channels[2], cv::NORM_INF), 1.0); // Grey only
 }
 
-TEST(MeshPipelineTest, ParametricGableAndHipRidgesReceiveValidRoofUvs)
+TEST(MeshPipelineTest, FacadeFloorsVariantsAndUvMath)
 {
-    constexpr int n = 64;
-    auto metadata = makeProjectedMetadata(n, n, 1.0, -1.0);
+    EXPECT_EQ(FacadeAtlasGenerator::presentationFloors(15.5), 5);
+    EXPECT_EQ(FacadeAtlasGenerator::presentationFloors(3.1 * 2.6), 3);
+    EXPECT_EQ(FacadeAtlasGenerator::presentationFloors(0.5), 1);
+    EXPECT_EQ(FacadeAtlasGenerator::presentationFloors(500.0), FacadeAtlasGenerator::kFloorsPerBand);
+    EXPECT_EQ(FacadeAtlasGenerator::presentationFloors(std::numeric_limits<double>::quiet_NaN()), 1);
 
-    BuildingInstance gableBldg;
-    gableBldg.buildingId = 101;
-    gableBldg.heightAboveGround = 15.0F;
-    gableBldg.representativeBaseElevation = 100.0F;
-    gableBldg.roofElevation = 115.0F;
-    gableBldg.projectedFootprint.outerRing = {
-        {10.0, -10.0}, {30.0, -10.0}, {30.0, -30.0}, {10.0, -30.0}
-    };
-    DecomposedBuildingBlock gableBlock;
-    gableBlock.projectedCorners = {{{10.0, -10.0}, {30.0, -10.0}, {30.0, -30.0}, {10.0, -30.0}}};
-    gableBlock.roof.type = RoofType::GABLE;
-    gableBlock.roof.eaveHeightAboveGround = 10.0F;
-    gableBlock.roof.ridgeHeightAboveGround = 15.0F;
-    gableBlock.roof.ridgeStartProjected = {10.0, -20.0};
-    gableBlock.roof.ridgeEndProjected = {30.0, -20.0};
-    gableBldg.blocks.push_back(gableBlock);
+    // Stable hash: repeatable, covers every variant, not id % 4.
+    std::array<int, FacadeAtlasGenerator::kVariantCount> histogram{};
+    bool differsFromModulo = false;
+    for (uint32_t id = 1; id <= 400; ++id)
+    {
+        const int variant = FacadeAtlasGenerator::variantFor(id, false);
+        ASSERT_EQ(variant, FacadeAtlasGenerator::variantFor(id, false));
+        ++histogram[variant];
+        differsFromModulo = differsFromModulo || variant != static_cast<int>(id % 4);
+        EXPECT_EQ(FacadeAtlasGenerator::variantFor(id, true), FacadeAtlasGenerator::kNeutralVariant);
+    }
+    EXPECT_TRUE(differsFromModulo);
+    for (int count : histogram) EXPECT_GT(count, 60);
 
-    BuildingInstance hipBldg;
-    hipBldg.buildingId = 102;
-    hipBldg.heightAboveGround = 20.0F;
-    hipBldg.representativeBaseElevation = 100.0F;
-    hipBldg.roofElevation = 120.0F;
-    hipBldg.projectedFootprint.outerRing = {
-        {35.0, -10.0}, {55.0, -10.0}, {55.0, -30.0}, {35.0, -30.0}
-    };
-    DecomposedBuildingBlock hipBlock;
-    hipBlock.projectedCorners = {{{35.0, -10.0}, {55.0, -10.0}, {55.0, -30.0}, {35.0, -30.0}}};
-    hipBlock.roof.type = RoofType::HIP;
-    hipBlock.roof.eaveHeightAboveGround = 12.0F;
-    hipBlock.roof.ridgeHeightAboveGround = 20.0F;
-    hipBlock.roof.ridgeStartProjected = {38.0, -20.0};
-    hipBlock.roof.ridgeEndProjected = {52.0, -20.0};
-    hipBldg.blocks.push_back(hipBlock);
+    // u: one tile per 24 m; a segment keeps its length and continues the phase.
+    const auto [u0, u1] = FacadeAtlasGenerator::segmentU(30.0, 6.0);
+    EXPECT_FLOAT_EQ(u0, 0.25F);
+    EXPECT_FLOAT_EQ(u1, 0.50F);
+    const auto [u2, u3] = FacadeAtlasGenerator::segmentU(36.0, 30.0);
+    EXPECT_FLOAT_EQ(u2, u1);
+    EXPECT_FLOAT_EQ(u3 - u2, 30.0F / 24.0F);
+
+    // v: ground at the band bottom, one atlas floor per presentation floor,
+    // clamped inside the band above the top floor.
+    constexpr double atlasHeight = FacadeAtlasGenerator::kAtlasHeight;
+    for (int variant = 0; variant < FacadeAtlasGenerator::kVariantCount; ++variant)
+    {
+        const double bottom = (variant + 1) * FacadeAtlasGenerator::kBandHeight;
+        EXPECT_FLOAT_EQ(FacadeAtlasGenerator::v(variant, 5, 15.5, 0.0),
+                        (bottom - FacadeAtlasGenerator::kBandMarginPixels) / atlasHeight);
+        EXPECT_FLOAT_EQ(FacadeAtlasGenerator::v(variant, 5, 15.5, 15.5),
+                        (bottom - 5 * FacadeAtlasGenerator::kFloorPixels) / atlasHeight);
+        EXPECT_FLOAT_EQ(FacadeAtlasGenerator::v(variant, 5, 15.5, 6.2),
+                        (bottom - 2 * FacadeAtlasGenerator::kFloorPixels) / atlasHeight);
+        const float top = FacadeAtlasGenerator::v(variant, 32, 99.2, 1000.0);
+        EXPECT_GE(top * atlasHeight, variant * FacadeAtlasGenerator::kBandHeight + FacadeAtlasGenerator::kBandMarginPixels - 1e-3);
+        EXPECT_LE(FacadeAtlasGenerator::v(variant, 5, 15.5, -0.5) * atlasHeight, bottom);
+    }
+}
+
+// Shared by the roof UV tests: a sheared, rotated geotransform exercises
+// every term of the inverse affine transform.
+SpatialMetadata shearedMetadata()
+{
+    SpatialMetadata metadata = makeProjectedMetadata(100, 80, 0.5, -0.5);
+    metadata.geoTransform = {500000.0, 0.5, 0.1, 2000000.0, 0.05, -0.5};
+    return metadata;
+}
+
+ProjectedPoint project(const SpatialMetadata& metadata, double column, double row)
+{
+    const auto& gt = metadata.geoTransform;
+    return {gt[0] + column * gt[1] + row * gt[2], gt[3] + column * gt[4] + row * gt[5]};
+}
+
+std::pair<double, double> pixelOf(const SpatialMetadata& metadata, const LocalSceneFrame& frame,
+                                  double x, double z)
+{
+    const auto& gt = metadata.geoTransform;
+    const double dx = x + frame.projectedOriginX - gt[0];
+    const double dy = -z + frame.projectedOriginY - gt[3];
+    const double det = gt[1] * gt[5] - gt[2] * gt[4];
+    return {(dx * gt[5] - dy * gt[2]) / det, (dy * gt[1] - dx * gt[4]) / det};
+}
+
+DecomposedBuildingBlock pixelBlock(const SpatialMetadata& metadata, RoofType type, double left, double top,
+                                   double right, double bottom, float eave, float ridge)
+{
+    DecomposedBuildingBlock block;
+    block.pixelCorners = {{{left, top}, {right, top}, {right, bottom}, {left, bottom}}};
+    for (std::size_t corner = 0; corner < 4; ++corner)
+        block.projectedCorners[corner] = project(metadata, block.pixelCorners[corner].column, block.pixelCorners[corner].row);
+    block.roof.type = type;
+    block.roof.eaveHeightAboveGround = eave;
+    block.roof.ridgeHeightAboveGround = ridge;
+    const double middle = 0.5 * (top + bottom);
+    block.roof.ridgeStartProjected = project(metadata, left, middle);
+    block.roof.ridgeEndProjected = project(metadata, right, middle);
+    return block;
+}
+
+TEST(MeshPipelineTest, RoofUvsAreTheExactInverseAffineIncludingRidgeVertices)
+{
+    const SpatialMetadata metadata = shearedMetadata();
+    LocalSceneFrame frame;
+    const ProjectedPoint origin = project(metadata, 50, 40);
+    frame.projectedOriginX = origin.easting;
+    frame.projectedOriginY = origin.northing;
+    frame.elevationOrigin = 100.0;
 
     BuildingCollection buildings;
-    buildings.buildings = {gableBldg, hipBldg};
-
-    LocalSceneFrame frame;
-    frame.projectedOriginX = 32.0;
-    frame.projectedOriginY = -32.0;
-    frame.elevationOrigin = 100.0;
+    for (const auto& [id, type, left] : std::vector<std::tuple<uint32_t, RoofType, double>>{
+             {1, RoofType::GABLE, 10.0}, {2, RoofType::HIP, 55.0}})
+    {
+        BuildingInstance building;
+        building.buildingId = id;
+        building.heightAboveGround = 12.0F;
+        building.representativeBaseElevation = 100.0F;
+        building.roofElevation = 112.0F;
+        building.blocks.push_back(pixelBlock(metadata, type, left, 20.0, left + 30.0, 40.0, 8.0F, 12.0F));
+        for (const PixelPoint& corner : building.blocks[0].pixelCorners)
+            building.projectedFootprint.outerRing.push_back(project(metadata, corner.column, corner.row));
+        buildings.buildings.push_back(building);
+    }
 
     BuildingMeshConfig config;
     config.generateRoofUVs = true;
     config.generateWallUVs = true;
-    config.presentationStyle = depthwizard::PresentationStyle::ORTHOPHOTO_REALISTIC;
-
-    const auto mesh = BuildingMesher::generate(buildings, frame, config, &metadata);
-
-    // 1. Verify UV existence and cardinality
+    const BuildingMesh mesh = BuildingMesher::generate(buildings, frame, config, &metadata);
     ASSERT_TRUE(mesh.roofPrimitive.uvs.has_value());
-    ASSERT_TRUE(mesh.wallPrimitive.uvs.has_value());
-    EXPECT_EQ(mesh.roofPrimitive.uvs->size(), (mesh.roofPrimitive.positions.size() / 3) * 2);
-    EXPECT_EQ(mesh.wallPrimitive.uvs->size(), (mesh.wallPrimitive.positions.size() / 3) * 2);
+    ASSERT_EQ(mesh.roofPrimitive.uvs->size(), mesh.roofPrimitive.positions.size() / 3 * 2);
+    EXPECT_EQ(mesh.roofUvOutOfBoundsVertexCount, 0U);
 
-    // 2. Verify all roof UVs are valid in [0.0, 1.0] without NaN or Inf
-    for (std::size_t i = 0; i < mesh.roofPrimitive.uvs->size(); i += 2)
+    bool foundGableRidgeStart = false;
+    for (std::size_t vertex = 0; vertex < mesh.roofPrimitive.positions.size() / 3; ++vertex)
     {
-        float u = (*mesh.roofPrimitive.uvs)[i];
-        float v = (*mesh.roofPrimitive.uvs)[i + 1];
-        EXPECT_TRUE(std::isfinite(u));
-        EXPECT_TRUE(std::isfinite(v));
-        EXPECT_GE(u, 0.0F); EXPECT_LE(u, 1.0F);
-        EXPECT_GE(v, 0.0F); EXPECT_LE(v, 1.0F);
+        const auto [column, row] = pixelOf(metadata, frame, mesh.roofPrimitive.positions[vertex * 3],
+                                           mesh.roofPrimitive.positions[vertex * 3 + 2]);
+        const float u = (*mesh.roofPrimitive.uvs)[vertex * 2];
+        const float v = (*mesh.roofPrimitive.uvs)[vertex * 2 + 1];
+        // glTF top-left UV origin: v grows with the row (no 1 - row/height flip).
+        EXPECT_NEAR(u, column / 100.0, 1e-5);
+        EXPECT_NEAR(v, row / 80.0, 1e-5);
+        foundGableRidgeStart = foundGableRidgeStart ||
+            (std::abs(u - 0.1F) < 1e-5F && std::abs(v - 0.375F) < 1e-5F &&
+             mesh.roofPrimitive.positions[vertex * 3 + 1] > 11.9F);
     }
-
-    // 3. Realistic presentation style emits 0 edge lines
-    EXPECT_TRUE(mesh.edgePrimitive.positions.empty());
+    EXPECT_TRUE(foundGableRidgeStart); // Gable ridge end at pixel (10, 30), 12 m up.
 }
 
-TEST(MeshPipelineTest, GltfPackagerPacksMultiTextureDescriptorsAndClampedSamplers)
+TEST(MeshPipelineTest, RoofAndTerrainShareOneImageConvention)
+{
+    const SpatialMetadata metadata = shearedMetadata();
+    GeoreferencedSurfaceBundle surface = makeSurface(100, 80, 100.0F, 0.0F);
+    surface.spatialMetadata = metadata;
+    LocalSceneFrame frame;
+    frame.projectedOriginX = metadata.geoTransform[0];
+    frame.projectedOriginY = metadata.geoTransform[3];
+    frame.elevationOrigin = 100.0;
+
+    RasterGrid<uint8_t> noBuildings;
+    noBuildings.width = 100;
+    noBuildings.height = 80;
+    noBuildings.data.assign(100 * 80, 0);
+    const TerrainMesh terrain = TerrainMesher::generate(surface, noBuildings, metadata, frame, TerrainMeshConfig());
+    ASSERT_TRUE(terrain.terrainPrimitive.uvs.has_value());
+    std::size_t checked = 0;
+    for (std::size_t vertex = 0; vertex < terrain.terrainPrimitive.positions.size() / 3; ++vertex)
+    {
+        const float u = (*terrain.terrainPrimitive.uvs)[vertex * 2];
+        const float v = (*terrain.terrainPrimitive.uvs)[vertex * 2 + 1];
+        if (u == 0.5F && v == 0.5F) continue; // Skirt centre
+        const auto [column, row] = pixelOf(metadata, frame, terrain.terrainPrimitive.positions[vertex * 3],
+                                           terrain.terrainPrimitive.positions[vertex * 3 + 2]);
+        EXPECT_NEAR(u, column / 100.0, 1e-5);
+        EXPECT_NEAR(v, row / 80.0, 1e-5);
+        ++checked;
+    }
+    EXPECT_GT(checked, 100U);
+}
+
+TEST(MeshPipelineTest, RoofVerticesOutsideTheImageAreReportedNotClamped)
+{
+    const SpatialMetadata metadata = unitMetadata(64, 64);
+    BuildingCollection buildings;
+    buildings.buildings.push_back(boxBuilding(1, 50, 10, 70, 30, 10.0F)); // Ends at column 70 of 64.
+    LocalSceneFrame frame;
+    frame.elevationOrigin = 100.0;
+    BuildingMeshConfig config;
+    config.generateRoofUVs = true;
+    const BuildingMesh mesh = BuildingMesher::generate(buildings, frame, config, &metadata);
+    EXPECT_GT(mesh.roofUvOutOfBoundsVertexCount, 0U);
+    EXPECT_GT(*std::max_element(mesh.roofPrimitive.uvs->begin(), mesh.roofPrimitive.uvs->end()), 1.05F);
+
+    BuildingMeshConfig withoutMetadata;
+    withoutMetadata.generateRoofUVs = true;
+    EXPECT_THROW(BuildingMesher::generate(buildings, frame, withoutMetadata, nullptr), std::invalid_argument);
+}
+
+TEST(MeshPipelineTest, Lod1WallUvsFollowThePerimeterAndPresentationFloors)
+{
+    const SpatialMetadata metadata = unitMetadata(64, 64);
+    BuildingCollection buildings;
+    buildings.buildings.push_back(boxBuilding(7, 10, 10, 40, 22, 15.5F)); // 30 m x 12 m, 5 floors
+    LocalSceneFrame frame;
+    frame.elevationOrigin = 100.0;
+    BuildingMeshConfig config;
+    config.generateWallUVs = true;
+    const BuildingMesh mesh = BuildingMesher::generate(buildings, frame, config, &metadata);
+    ASSERT_TRUE(mesh.wallPrimitive.uvs.has_value());
+    const auto& positions = mesh.wallPrimitive.positions;
+    const auto& uvs = *mesh.wallPrimitive.uvs;
+    const std::size_t quads = positions.size() / 12;
+    ASSERT_EQ(quads, 4U);
+
+    const int variant = FacadeAtlasGenerator::variantFor(7, false);
+    const float ground = FacadeAtlasGenerator::v(variant, 5, 15.5, -0.5);
+    const float top = FacadeAtlasGenerator::v(variant, 5, 15.5, 15.5);
+    EXPECT_FLOAT_EQ(top, ((variant + 1) * 1024.0F - 5 * 32.0F) / 4096.0F);
+    double perimeter = 0.0;
+    for (std::size_t quad = 0; quad < quads; ++quad)
+    {
+        // Vertex order per quad: base A, roof A, roof B, base B.
+        const std::size_t first = quad * 4;
+        const auto uv = [&](std::size_t vertex, int axis) { return uvs[(first + vertex) * 2 + axis]; };
+        const double length = std::hypot(positions[(first + 2) * 3] - positions[(first + 1) * 3],
+                                         positions[(first + 2) * 3 + 2] - positions[(first + 1) * 3 + 2]);
+        EXPECT_FLOAT_EQ(uv(0, 1), ground);
+        EXPECT_FLOAT_EQ(uv(1, 1), top);
+        EXPECT_FLOAT_EQ(uv(2, 1), top);
+        EXPECT_NEAR(uv(2, 0) - uv(1, 0), length / 24.0, 1e-5);
+        const double expectedStart = perimeter / 24.0 - std::floor(perimeter / 24.0);
+        EXPECT_NEAR(uv(0, 0), expectedStart, 1e-5); // Pattern continues around the corner.
+        perimeter += length;
+    }
+    EXPECT_NEAR(perimeter, 84.0, 1e-4);
+}
+
+TEST(MeshPipelineTest, Lod2WallAndGableUvsAreDistinctContinuousAndFloorAligned)
+{
+    const SpatialMetadata metadata = unitMetadata(64, 64);
+    LocalSceneFrame frame;
+    frame.elevationOrigin = 100.0;
+
+    // A: 20 x 10 m gable (eave 6 m, ridge 9 m). B: flat, 12 m, on A's north side.
+    BuildingInstance building = boxBuilding(11, 10, 30, 30, 40, 12.0F);
+    building.projectedFootprint.outerRing = {{10, -20}, {30, -20}, {30, -40}, {10, -40}};
+    building.blocks.push_back(pixelBlock(metadata, RoofType::GABLE, 10, 30, 30, 40, 6.0F, 9.0F));
+    building.blocks.push_back(pixelBlock(metadata, RoofType::FLAT, 10, 20, 30, 30, 12.0F, 12.0F));
+    BuildingCollection buildings;
+    buildings.buildings.push_back(building);
+
+    BuildingMeshConfig config;
+    config.flatPresentation = true;
+    config.generateWallUVs = true;
+    const BuildingMesh mesh = BuildingMesher::generate(buildings, frame, config, &metadata);
+    ASSERT_TRUE(mesh.wallPrimitive.uvs.has_value());
+    const auto& positions = mesh.wallPrimitive.positions;
+    const auto& normals = *mesh.wallPrimitive.normals;
+    const auto& uvs = *mesh.wallPrimitive.uvs;
+    const std::size_t vertices = positions.size() / 3;
+    const int variant = FacadeAtlasGenerator::variantFor(11, false);
+
+    // Regression: every corner used to receive the third corner's UV.
+    for (std::size_t triangle = 0; triangle < vertices / 3; ++triangle)
+    {
+        const std::size_t a = triangle * 3;
+        const bool allEqual = uvs[a * 2] == uvs[(a + 1) * 2] && uvs[a * 2] == uvs[(a + 2) * 2] &&
+                              uvs[a * 2 + 1] == uvs[(a + 1) * 2 + 1] && uvs[a * 2 + 1] == uvs[(a + 2) * 2 + 1];
+        EXPECT_FALSE(allEqual) << "triangle " << triangle;
+    }
+
+    // B's setback wall faces A across the shared edge (local z = 30) and starts
+    // at A's 6 m eave: its base v is two of B's four floors up, not the ground floor.
+    const float setbackBase = FacadeAtlasGenerator::v(variant, 4, 12.0, 6.0);
+    EXPECT_FLOAT_EQ(setbackBase, ((variant + 1) * 1024.0F - 2 * 32.0F) / 4096.0F);
+    bool foundSetback = false;
+    std::vector<float> gableEaveU;
+    std::vector<float> wallTopU;
+    for (std::size_t vertex = 0; vertex < vertices; ++vertex)
+    {
+        const float y = positions[vertex * 3 + 1];
+        const float nx = normals[vertex * 3];
+        const float nz = normals[vertex * 3 + 2];
+        if (std::abs(y - 6.0F) < 1e-4F && std::abs(nz) > 0.99F &&
+            std::abs(positions[vertex * 3 + 2] - 30.0F) < 1e-3F)
+        {
+            EXPECT_FLOAT_EQ(uvs[vertex * 2 + 1], setbackBase);
+            foundSetback = true;
+        }
+        // A's east end (x = 30, normal +X): gable eave vertices and wall-top vertices.
+        if (nx > 0.99F && positions[vertex * 3] > 29.999F && positions[vertex * 3 + 2] > 30.0F - 1e-3F)
+        {
+            if (std::abs(y - 6.0F) < 1e-4F)
+            {
+                EXPECT_FLOAT_EQ(uvs[vertex * 2 + 1], FacadeAtlasGenerator::v(variant, 2, 6.0, 6.0));
+                gableEaveU.push_back(uvs[vertex * 2]);
+            }
+            if (std::abs(y - 9.0F) < 1e-4F)
+                EXPECT_FLOAT_EQ(uvs[vertex * 2 + 1], FacadeAtlasGenerator::v(variant, 2, 6.0, 9.0));
+        }
+    }
+    EXPECT_TRUE(foundSetback);
+    // Gable eave u values coincide with the wall below on the same edge.
+    ASSERT_FALSE(gableEaveU.empty());
+    std::sort(gableEaveU.begin(), gableEaveU.end());
+    gableEaveU.erase(std::unique(gableEaveU.begin(), gableEaveU.end(),
+                                 [](float l, float r) { return std::abs(l - r) < 1e-6F; }), gableEaveU.end());
+    EXPECT_EQ(gableEaveU.size(), 2U);
+    EXPECT_NEAR(gableEaveU[1] - gableEaveU[0], 10.0 / 24.0, 1e-5);
+}
+
+TEST(MeshPipelineTest, VertexColoursAreOptionalAndNeverChangeGeometry)
+{
+    const SpatialMetadata metadata = unitMetadata(64, 64);
+    BuildingCollection buildings;
+    buildings.buildings.push_back(boxBuilding(3, 10, 10, 30, 30, 20.0F));
+    LocalSceneFrame frame;
+    frame.elevationOrigin = 100.0;
+
+    BuildingMeshConfig coloured;
+    BuildingMeshConfig plain;
+    plain.generateVertexColors = false;
+    plain.generateRoofUVs = true;
+    plain.generateWallUVs = true;
+    const BuildingMesh a = BuildingMesher::generate(buildings, frame, coloured, &metadata);
+    const BuildingMesh b = BuildingMesher::generate(buildings, frame, plain, &metadata);
+    EXPECT_TRUE(a.roofPrimitive.colors.has_value());
+    EXPECT_FALSE(b.roofPrimitive.colors.has_value());
+    EXPECT_FALSE(b.wallPrimitive.colors.has_value());
+    EXPECT_EQ(a.roofPrimitive.positions, b.roofPrimitive.positions);
+    EXPECT_EQ(a.wallPrimitive.positions, b.wallPrimitive.positions);
+    EXPECT_EQ(a.roofPrimitive.indices, b.roofPrimitive.indices);
+    EXPECT_EQ(a.wallPrimitive.featureIds, b.wallPrimitive.featureIds);
+}
+
+MeshPrimitive texturedTriangle(MaterialRole role)
+{
+    MeshPrimitive primitive;
+    primitive.positions = {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F};
+    primitive.normals = std::vector<float>{0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F};
+    primitive.uvs = std::vector<float>{0.0F, 0.0F, 2.5F, 0.0F, 0.0F, 0.75F};
+    primitive.indices = {0, 1, 2};
+    primitive.materialRole = role;
+    return primitive;
+}
+
+TEST(MeshPipelineTest, GltfPackagerBindsTexturesSamplersAndRejectsUnboundRoles)
 {
     SceneMesh scene;
-    scene.presentationStyle = "ORTHOPHOTO_REALISTIC";
-    scene.localFrame.horizontalCrs = "EPSG:32633";
-
-    // Dummy triangle primitive
-    MeshPrimitive prim;
-    prim.topology = PrimitiveTopology::TRIANGLES;
-    prim.positions = {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F};
-    prim.normals = std::vector<float>{0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F};
-    prim.uvs = std::vector<float>{0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F};
-    prim.indices = {0, 1, 2};
-    prim.materialRole = MaterialRole::TERRAIN_TEXTURE;
-
-    // Create 3 tiny 8x8 dummy textures
-    for (int t = 0; t < 3; ++t)
+    for (int index = 0; index < 3; ++index)
     {
-        cv::Mat img(8, 8, CV_8UC3, cv::Scalar(50 * (t + 1), 60, 70));
         TextureAsset asset;
         asset.mimeType = "image/png";
-        ASSERT_TRUE(cv::imencode(".png", img, asset.bytes));
+        ASSERT_TRUE(cv::imencode(".png", cv::Mat(8, 8, CV_8UC3, cv::Scalar(40 * index, 60, 70)), asset.bytes));
         scene.textures.push_back(asset);
     }
+    scene.textures[0].semantic = TextureSemantic::OPTICAL_GROUND_REPAIRED;
+    scene.textures[1].semantic = TextureSemantic::OPTICAL_ORIGINAL;
+    scene.textures[2] = FacadeAtlasGenerator::generateAtlasPng(false);
+    scene.materialDescriptors = depthwizard::presentation::orthophotoMaterials(0, 1, 2);
 
-    MaterialDescriptor mat0;
-    mat0.name = "Terrain_Repaired";
-    mat0.role = MaterialRole::TERRAIN_TEXTURE;
-    mat0.textureIndex = 0;
-    mat0.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
-
-    MaterialDescriptor mat1;
-    mat1.name = "Roof_Original";
-    mat1.role = MaterialRole::BUILDING_ROOF;
-    mat1.textureIndex = 1;
-    mat1.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
-
-    MaterialDescriptor mat2;
-    mat2.name = "Wall_Facade";
-    mat2.role = MaterialRole::BUILDING_WALL;
-    mat2.textureIndex = 2;
-    mat2.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
-
-    scene.materialDescriptors = {mat0, mat1, mat2};
-
-    DracoCompressionConfig dracoConfig;
-    CompressedPrimitive compPrim = DracoCompressor::compress(prim, dracoConfig);
-    ASSERT_TRUE(compPrim.success);
-
-    GlbBuildResult result = GltfPackager::buildSceneToMemory(scene, {compPrim}, 1);
-    ASSERT_FALSE(result.compressedGlbByteBuffer.empty());
-
-    tinygltf::TinyGLTF loader;
-    tinygltf::Model model;
-    std::string err, warn;
-    ASSERT_TRUE(loader.LoadBinaryFromMemory(&model, &err, &warn,
-        result.compressedGlbByteBuffer.data(), result.compressedGlbByteBuffer.size())) << err;
-
-    EXPECT_EQ(model.images.size(), 3U);
-    EXPECT_EQ(model.textures.size(), 3U);
-    EXPECT_EQ(model.samplers.size(), 3U);
-    EXPECT_EQ(model.materials.size(), 3U);
-
-    for (const auto& sampler : model.samplers)
+    std::vector<CompressedPrimitive> primitives;
+    for (MaterialRole role : {MaterialRole::TERRAIN_TEXTURE, MaterialRole::BUILDING_ROOF, MaterialRole::BUILDING_WALL})
     {
-        EXPECT_EQ(sampler.wrapS, TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE);
-        EXPECT_EQ(sampler.wrapT, TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE);
+        primitives.push_back(DracoCompressor::compress(texturedTriangle(role)));
+        ASSERT_TRUE(primitives.back().success);
     }
+    const GlbBuildResult result = GltfPackager::buildSceneToMemory(scene, primitives, 1);
+    ASSERT_FALSE(result.compressedGlbByteBuffer.empty());
+    const tinygltf::Model model = loadGlb(result.compressedGlbByteBuffer);
 
-    EXPECT_EQ(model.materials[0].pbrMetallicRoughness.baseColorTexture.index, 0);
-    EXPECT_EQ(model.materials[1].pbrMetallicRoughness.baseColorTexture.index, 1);
-    EXPECT_EQ(model.materials[2].pbrMetallicRoughness.baseColorTexture.index, 2);
+    ASSERT_EQ(model.samplers.size(), 3U);
+    EXPECT_EQ(model.samplers[0].wrapS, TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE);
+    EXPECT_EQ(model.samplers[1].wrapT, TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE);
+    EXPECT_EQ(model.samplers[2].wrapS, TINYGLTF_TEXTURE_WRAP_REPEAT);
+    EXPECT_EQ(model.samplers[2].wrapT, TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE);
+    ASSERT_EQ(model.meshes[0].primitives.size(), 3U);
+    for (int index = 0; index < 3; ++index)
+    {
+        const tinygltf::Primitive& primitive = model.meshes[0].primitives[index];
+        EXPECT_EQ(model.materials[primitive.material].pbrMetallicRoughness.baseColorTexture.index, index);
+        // Draco preserves TEXCOORD_0, including the repeating u = 2.5.
+        const std::vector<float> uv = decodeDracoAttribute(model, primitive, "TEXCOORD_0");
+        ASSERT_EQ(uv.size(), 6U);
+        EXPECT_NEAR(uv[2], 2.5F, 1e-3F);
+        EXPECT_NEAR(uv[5], 0.75F, 1e-3F);
+    }
+    // No material is unlit, so the extension is not declared.
+    EXPECT_EQ(std::count(model.extensionsUsed.begin(), model.extensionsUsed.end(), "KHR_materials_unlit"), 0);
+
+    // A primitive whose role has no material is an error, never material 0.
+    SceneMesh missingWall = scene;
+    missingWall.materialDescriptors.pop_back();
+    const GlbBuildResult unbound = GltfPackager::buildSceneToMemory(missingWall, primitives, 1);
+    EXPECT_TRUE(unbound.compressedGlbByteBuffer.empty());
+    EXPECT_FALSE(unbound.geometryWarnings.empty());
+
+    SceneMesh badIndex = scene;
+    badIndex.materialDescriptors[1].textureIndex = 9;
+    EXPECT_TRUE(GltfPackager::buildSceneToMemory(badIndex, primitives, 1).compressedGlbByteBuffer.empty());
+}
+
+TEST(MeshPipelineTest, MaterialBindingRulesRejectCrossedTextures)
+{
+    SceneMesh scene;
+    scene.terrainPrimitive = texturedTriangle(MaterialRole::TERRAIN_TEXTURE);
+    scene.roofPrimitive = texturedTriangle(MaterialRole::BUILDING_ROOF);
+    scene.wallPrimitive = texturedTriangle(MaterialRole::BUILDING_WALL);
+    for (TextureSemantic semantic : {TextureSemantic::OPTICAL_GROUND_REPAIRED, TextureSemantic::OPTICAL_ORIGINAL,
+                                     TextureSemantic::FACADE_ATLAS})
+    {
+        TextureAsset asset;
+        asset.semantic = semantic;
+        scene.textures.push_back(asset);
+    }
+    scene.materialDescriptors = depthwizard::presentation::orthophotoMaterials(0, 1, 2);
+    EXPECT_EQ(depthwizard::presentation::bindingProblem(scene), "");
+
+    SceneMesh crossed = scene;
+    crossed.materialDescriptors = depthwizard::presentation::orthophotoMaterials(1, 0, 2);
+    crossed.materialDescriptors[0].textureSemantic = TextureSemantic::OPTICAL_ORIGINAL;
+    crossed.materialDescriptors[1].textureSemantic = TextureSemantic::OPTICAL_GROUND_REPAIRED;
+    EXPECT_NE(depthwizard::presentation::bindingProblem(crossed), "");
+
+    SceneMesh noUvs = scene;
+    noUvs.roofPrimitive.uvs.reset();
+    EXPECT_NE(depthwizard::presentation::bindingProblem(noUvs), "");
+
+    SceneMesh duplicate = scene;
+    duplicate.materialDescriptors.push_back(duplicate.materialDescriptors[2]);
+    EXPECT_NE(depthwizard::presentation::bindingProblem(duplicate), "");
 }
 
 } // namespace

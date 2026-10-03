@@ -5,8 +5,11 @@
 #include "BuildingMesher.h"
 #include "TerrainTextureComposer.h"
 #include "FacadeAtlasGenerator.h"
+#include "PresentationMaterials.h"
 #include "SceneAssembler.h"
 #include "../FileGenerators/GltfPackager.h"
+
+using depthwizard::PresentationStyle;
 
 GlbBuildResult SceneMeshService::generateGlb(
      const SceneInput& scene,
@@ -22,12 +25,22 @@ GlbBuildResult SceneMeshService::generateGlb(
      if (flat) terrainConfig.elevationSource = TerrainElevationSource::FLAT_PRESENTATION;
      terrainConfig.generateSkirt = !flat;
      buildingConfig.flatPresentation = flat;
-     buildingConfig.presentationStyle = config.presentationStyle;
-     if (config.presentationStyle == depthwizard::PresentationStyle::ORTHOPHOTO_REALISTIC)
+
+     // Presentation styles change materials, textures and UVs only; geometry,
+     // heights and exported rasters are identical in every style.
+     const bool hasOpticalImage = !scene.rgbTextureBytes.empty() && !scene.textureMimeType.empty();
+     PresentationStyle style = config.presentationStyle;
+     if (style == PresentationStyle::ORTHOPHOTO_REALISTIC && !hasOpticalImage)
      {
-         buildingConfig.generateRoofUVs = true;
-         buildingConfig.generateWallUVs = true;
+         result.geometryWarnings.push_back(
+             "Orthophoto presentation needs the optical image; using terra massing.");
+         style = PresentationStyle::TERRA_MASSING;
      }
+     buildingConfig.presentationStyle = style;
+     buildingConfig.generateVertexColors = style == PresentationStyle::SCIENTIFIC;
+     buildingConfig.generateRoofUVs = style == PresentationStyle::ORTHOPHOTO_REALISTIC;
+     buildingConfig.generateWallUVs = style == PresentationStyle::ORTHOPHOTO_REALISTIC;
+     buildingConfig.neutralFacades = config.neutralFacades;
 
      //Establish Mathematical Anchor
      LocalSceneFrame frame = LocalFrameTransformer::create(metadata, surface);
@@ -55,6 +68,12 @@ GlbBuildResult SceneMeshService::generateGlb(
          result.geometryWarnings.push_back(
              "Building " + std::to_string(id) + " failed roof triangulation.");
      }
+     if (bldgMesh.roofUvOutOfBoundsVertexCount > 0)
+     {
+         result.geometryWarnings.push_back(
+             std::to_string(bldgMesh.roofUvOutOfBoundsVertexCount) +
+             " roof vertices lie outside the optical image; their texture is edge-clamped.");
+     }
 
      // An accepted building must materialize as both a roof and wall mesh.
      // Returning a terrain-only GLB in this state would silently recreate the
@@ -71,195 +90,57 @@ GlbBuildResult SceneMeshService::generateGlb(
      //Assemble into Unified Scene
      SceneMesh sceneMesh = SceneAssembler::assemble(terrain, bldgMesh, scene, frame);
      sceneMesh.presentationMode = flat ? "flat_urban" : "metric";
+     sceneMesh.presentationStyle = depthwizard::toString(style);
 
-     // Multi-texture & PBR material setup based on presentation style
-     const bool hasOpticalImage = !scene.rgbTextureBytes.empty() && !scene.textureMimeType.empty();
-     TextureAsset opticalAsset;
-     if (hasOpticalImage)
+     if (style == PresentationStyle::SCIENTIFIC)
      {
-         opticalAsset.bytes = scene.rgbTextureBytes;
-         opticalAsset.mimeType = scene.textureMimeType;
-         opticalAsset.semantic = TextureSemantic::OPTICAL_ORIGINAL;
-     }
-
-     if (config.presentationStyle == depthwizard::PresentationStyle::ORTHOPHOTO_REALISTIC)
-     {
-         sceneMesh.presentationStyle = "ORTHOPHOTO_REALISTIC";
-         if (hasOpticalImage)
-         {
-             // Zero geometric clearance mask for texture concealment
-             const RasterGrid<uint8_t> exactBuildingMask =
-                 TerrainSurfaceComposer::buildAcceptedBuildingMask(
-                     buildings,
-                     metadata,
-                     0.0f);
-
-             TextureAsset repairedOpt = TerrainTextureComposer::concealAcceptedRoofs(
-                 opticalAsset,
-                 exactBuildingMask,
-                 metadata,
-                 config.terrain.buildingTextureHaloMetres);
-             repairedOpt.semantic = TextureSemantic::OPTICAL_GROUND_REPAIRED;
-
-             TextureAsset origOpt = opticalAsset;
-             origOpt.semantic = TextureSemantic::OPTICAL_ORIGINAL;
-
-             TextureAsset facadeAtlas = depthwizard::FacadeAtlasGenerator::generateAtlasPng(false);
-             facadeAtlas.semantic = TextureSemantic::FACADE_ATLAS;
-
-             sceneMesh.textures = {repairedOpt, origOpt, facadeAtlas};
-
-             // Material descriptors
-             MaterialDescriptor terrainMat;
-             terrainMat.name = "Terrain_Repaired_Optical";
-             terrainMat.role = MaterialRole::TERRAIN_TEXTURE;
-             terrainMat.textureSemantic = TextureSemantic::OPTICAL_GROUND_REPAIRED;
-             terrainMat.textureIndex = 0;
-             terrainMat.baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
-             terrainMat.metallicFactor = 0.0f;
-             terrainMat.roughnessFactor = 0.85f;
-             terrainMat.doubleSided = false;
-
-             MaterialDescriptor roofMat;
-             roofMat.name = "Building_Roof_Optical";
-             roofMat.role = MaterialRole::BUILDING_ROOF;
-             roofMat.textureSemantic = TextureSemantic::OPTICAL_ORIGINAL;
-             roofMat.textureIndex = 1;
-             roofMat.baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
-             roofMat.metallicFactor = 0.05f;
-             roofMat.roughnessFactor = 0.60f;
-             roofMat.doubleSided = true;
-
-             MaterialDescriptor wallMat;
-             wallMat.name = "Building_Wall_FacadeAtlas";
-             wallMat.role = MaterialRole::BUILDING_WALL;
-             wallMat.textureSemantic = TextureSemantic::FACADE_ATLAS;
-             wallMat.textureIndex = 2;
-             wallMat.baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
-             wallMat.metallicFactor = 0.10f;
-             wallMat.roughnessFactor = 0.50f;
-             wallMat.doubleSided = true;
-
-             sceneMesh.materialDescriptors = {terrainMat, roofMat, wallMat};
-         }
-     }
-     else if (config.presentationStyle == depthwizard::PresentationStyle::TERRA_MASSING)
-     {
-         sceneMesh.presentationStyle = "TERRA_MASSING";
-         if (hasOpticalImage)
-         {
-             const RasterGrid<uint8_t> exactBuildingMask =
-                 TerrainSurfaceComposer::buildAcceptedBuildingMask(
-                     buildings,
-                     metadata,
-                     0.0f);
-
-             TextureAsset repairedOpt = TerrainTextureComposer::concealAcceptedRoofs(
-                 opticalAsset,
-                 exactBuildingMask,
-                 metadata,
-                 config.terrain.buildingTextureHaloMetres);
-             repairedOpt.semantic = TextureSemantic::OPTICAL_GROUND_REPAIRED;
-
-             sceneMesh.textures = {repairedOpt};
-
-             MaterialDescriptor terrainMat;
-             terrainMat.name = "Terrain_Repaired_Optical";
-             terrainMat.role = MaterialRole::TERRAIN_TEXTURE;
-             terrainMat.textureSemantic = TextureSemantic::OPTICAL_GROUND_REPAIRED;
-             terrainMat.textureIndex = 0;
-             terrainMat.baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
-             terrainMat.metallicFactor = 0.0f;
-             terrainMat.roughnessFactor = 0.85f;
-             terrainMat.doubleSided = false;
-
-             MaterialDescriptor roofMat;
-             roofMat.name = "Building_Roof_TerraMassing";
-             roofMat.role = MaterialRole::BUILDING_ROOF;
-             roofMat.textureIndex = -1;
-             roofMat.baseColorFactor = {0.95f, 0.94f, 0.90f, 1.0f};
-             roofMat.metallicFactor = 0.0f;
-             roofMat.roughnessFactor = 0.80f;
-             roofMat.doubleSided = true;
-
-             MaterialDescriptor wallMat;
-             wallMat.name = "Building_Wall_TerraMassing";
-             wallMat.role = MaterialRole::BUILDING_WALL;
-             wallMat.textureIndex = -1;
-             wallMat.baseColorFactor = {0.70f, 0.69f, 0.67f, 1.0f};
-             wallMat.metallicFactor = 0.0f;
-             wallMat.roughnessFactor = 0.85f;
-             wallMat.doubleSided = true;
-
-             sceneMesh.materialDescriptors = {terrainMat, roofMat, wallMat};
-         }
-         else
-         {
-             MaterialDescriptor terrainMat;
-             terrainMat.name = "Terrain_Grey";
-             terrainMat.role = MaterialRole::TERRAIN_TEXTURE;
-             terrainMat.textureIndex = -1;
-             terrainMat.baseColorFactor = {0.26, 0.26, 0.26, 1.0};
-             terrainMat.unlit = true;
-
-             MaterialDescriptor roofMat;
-             roofMat.name = "Building_Roof_TerraMassing";
-             roofMat.role = MaterialRole::BUILDING_ROOF;
-             roofMat.textureIndex = -1;
-             roofMat.baseColorFactor = {0.95f, 0.94f, 0.90f, 1.0f};
-             roofMat.metallicFactor = 0.0f;
-             roofMat.roughnessFactor = 0.80f;
-             roofMat.doubleSided = true;
-
-             MaterialDescriptor wallMat;
-             wallMat.name = "Building_Wall_TerraMassing";
-             wallMat.role = MaterialRole::BUILDING_WALL;
-             wallMat.textureIndex = -1;
-             wallMat.baseColorFactor = {0.70f, 0.69f, 0.67f, 1.0f};
-             wallMat.metallicFactor = 0.0f;
-             wallMat.roughnessFactor = 0.85f;
-             wallMat.doubleSided = true;
-
-             sceneMesh.materialDescriptors = {terrainMat, roofMat, wallMat};
-         }
+         sceneMesh.materialDescriptors = depthwizard::presentation::scientificMaterials();
      }
      else
      {
-         sceneMesh.presentationStyle = "SCIENTIFIC";
-         MaterialDescriptor terrainMat;
-         terrainMat.name = "Terrain_Grey";
-         terrainMat.role = MaterialRole::TERRAIN_TEXTURE;
-         terrainMat.textureIndex = -1;
-         terrainMat.baseColorFactor = {0.26, 0.26, 0.26, 1.0};
-         terrainMat.unlit = true;
+         // glTF multiplies COLOR_0 into the base colour: drop the solid grey
+         // terrain colours so the texture or material colour shows as-is.
+         sceneMesh.terrainPrimitive.colors.reset();
 
-         MaterialDescriptor roofMat;
-         roofMat.name = "Building_Roof";
-         roofMat.role = MaterialRole::BUILDING_ROOF;
-         roofMat.textureIndex = -1;
-         roofMat.baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
-         roofMat.metallicFactor = 0.10f;
-         roofMat.roughnessFactor = 0.40f;
-         roofMat.doubleSided = true;
+         std::optional<int> repairedGround;
+         if (hasOpticalImage)
+         {
+             TextureAsset optical;
+             optical.bytes = scene.rgbTextureBytes;
+             optical.mimeType = scene.textureMimeType;
+             optical.semantic = TextureSemantic::OPTICAL_ORIGINAL;
 
-         MaterialDescriptor wallMat;
-         wallMat.name = "Building_Wall";
-         wallMat.role = MaterialRole::BUILDING_WALL;
-         wallMat.textureIndex = -1;
-         wallMat.baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
-         wallMat.metallicFactor = 0.10f;
-         wallMat.roughnessFactor = 0.40f;
-         wallMat.doubleSided = true;
+             // Exact footprints (zero clearance), never the dilated terrain
+             // clearance mask; buildingTextureHaloMetres alone adds the halo.
+             TextureAsset ground = TerrainTextureComposer::concealAcceptedRoofs(
+                 optical,
+                 TerrainSurfaceComposer::buildExactFootprintMask(buildings, metadata),
+                 metadata,
+                 config.terrain.buildingTextureHaloMetres);
+             ground.semantic = TextureSemantic::OPTICAL_GROUND_REPAIRED;
+             sceneMesh.textures.push_back(std::move(ground));
+             repairedGround = static_cast<int>(sceneMesh.textures.size() - 1);
 
-         MaterialDescriptor edgeMat;
-         edgeMat.name = "Building_Edge_Highlight";
-         edgeMat.role = MaterialRole::BUILDING_EDGE;
-         edgeMat.textureIndex = -1;
-         edgeMat.baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
-         edgeMat.metallicFactor = 0.0f;
-         edgeMat.roughnessFactor = 0.10f;
+             if (style == PresentationStyle::ORTHOPHOTO_REALISTIC)
+             {
+                 sceneMesh.textures.push_back(std::move(optical));
+                 const int roofTexture = static_cast<int>(sceneMesh.textures.size() - 1);
+                 sceneMesh.textures.push_back(
+                     depthwizard::FacadeAtlasGenerator::generateAtlasPng(config.neutralFacades));
+                 const int facadeTexture = static_cast<int>(sceneMesh.textures.size() - 1);
+                 sceneMesh.materialDescriptors = depthwizard::presentation::orthophotoMaterials(
+                     *repairedGround, roofTexture, facadeTexture);
+                 sceneMesh.syntheticFacades = true;
+             }
+         }
+         if (style == PresentationStyle::TERRA_MASSING)
+             sceneMesh.materialDescriptors = depthwizard::presentation::terraMaterials(repairedGround);
+     }
 
-         sceneMesh.materialDescriptors = {terrainMat, roofMat, wallMat, edgeMat};
+     if (const std::string problem = depthwizard::presentation::bindingProblem(sceneMesh); !problem.empty())
+     {
+         result.geometryWarnings.push_back("Material binding error: " + problem + ".");
+         return result;
      }
 
      //Compress Primitives Independently via Draco

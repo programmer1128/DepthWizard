@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cstdlib>
 
 namespace fs = std::filesystem;
 using namespace depthwizard;
@@ -348,7 +349,11 @@ void generateFixture(
     const ScenePresentationDecision decision = ScenePresentationSelector::select(semantics, surface, buildings);
     MeshBuildConfig meshConfig;
     meshConfig.presentation = decision.presentation;
+    // Baselines are scientific; DEPTHWIZARD_PRESENTATION_STYLE renders the
+    // other styles from the same fixtures for visual and validator checks.
     meshConfig.presentationStyle = depthwizard::PresentationStyle::SCIENTIFIC;
+    if (const char* style = std::getenv("DEPTHWIZARD_PRESENTATION_STYLE"))
+        if (const auto parsed = depthwizard::tryParsePresentationStyle(style)) meshConfig.presentationStyle = *parsed;
 
     // Generate native GLB
     GlbBuildResult glb = SceneMeshService::generateGlb(sceneInput, surface, buildings, meta, meshConfig);

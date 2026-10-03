@@ -719,4 +719,136 @@ TEST(FootprintVectorizerTest, GeosSimplifiesOuterRingWithoutFillingCourtyard)
     EXPECT_LT(FootprintVectorizer::calculateSignedArea(
         simplified.holes.front()), 0.0);
 }
+// --- Guarded rectangle regularization (default config: regularization on) ---
+
+BuildingReconstructionConfig rectangleRegularizationConfig()
+{
+    BuildingReconstructionConfig config;
+    EXPECT_TRUE(config.regularizeRectangularFootprints);
+    config.footprintDilationMetres = 0.0F;
+    config.minHoleAreaSquareMetres = 1.0F;
+    return config;
+}
+
+ComponentStats statsFromLabels(const RasterGrid<int32_t>& labels, int componentId)
+{
+    ComponentStats stats;
+    stats.componentId = componentId;
+    int minX = labels.width, minY = labels.height, maxX = -1, maxY = -1;
+    for (int row = 0; row < labels.height; ++row)
+        for (int column = 0; column < labels.width; ++column)
+            if (labels.data[static_cast<std::size_t>(row) * labels.width + column] == componentId)
+            {
+                ++stats.pixelCount;
+                minX = std::min(minX, column);
+                maxX = std::max(maxX, column);
+                minY = std::min(minY, row);
+                maxY = std::max(maxY, row);
+            }
+    stats.pixelBoundingBox = {minX, minY, maxX - minX + 1, maxY - minY + 1};
+    stats.physicalAreaSquareMetres = static_cast<double>(stats.pixelCount);
+    return stats;
+}
+
+bool pixelInside(const FootprintVectorizationResult& result, float column, float row)
+{
+    std::vector<cv::Point2f> outer;
+    for (const auto& point : result.pixelFootprint.outerRing) outer.emplace_back(point.column, point.row);
+    if (cv::pointPolygonTest(outer, cv::Point2f(column, row), false) <= 0) return false;
+    for (const auto& ring : result.pixelFootprint.holes)
+    {
+        std::vector<cv::Point2f> hole;
+        for (const auto& point : ring) hole.emplace_back(point.column, point.row);
+        if (cv::pointPolygonTest(hole, cv::Point2f(column, row), false) >= 0) return false;
+    }
+    return true;
+}
+
+bool hasWarning(const FootprintVectorizationResult& result, const std::string& text)
+{
+    return std::any_of(result.warnings.begin(), result.warnings.end(),
+        [&](const std::string& warning) { return warning.find(text) != std::string::npos; });
+}
+
+TEST(FootprintVectorizerTest, LShapedComponentRemainsLShaped)
+{
+    // 91% of its box: dense enough for the fill ratio, but concave and with an
+    // unsupported corner, so it must not be paved into its bounding rectangle.
+    auto labels = makeConstantGrid<int32_t>(16, 16, 0);
+    fillRectangle<int32_t>(labels, 2, 2, 12, 12, 1);
+    fillRectangle<int32_t>(labels, 9, 2, 12, 5, 0);
+    const auto stats = statsFromLabels(labels, 1);
+    ASSERT_EQ(stats.pixelCount, 91);
+    const auto result = FootprintVectorizer::vectorize(
+        stats, labels, makeProjectedMetadata(16, 16), rectangleRegularizationConfig());
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_GE(result.projectedFootprint.outerRing.size(), 6U);
+    EXPECT_NEAR(projectedRingArea(result.projectedFootprint.outerRing), 91.0, 2.0);
+    EXPECT_FALSE(pixelInside(result, 10.5F, 3.5F)); // The missing corner stays empty
+    EXPECT_FALSE(hasWarning(result, "Near-rectangular"));
+    EXPECT_FALSE(hasWarning(result, "Oriented Bounding Box"));
+}
+
+TEST(FootprintVectorizerTest, UShapedComponentRemainsUShaped)
+{
+    auto labels = makeConstantGrid<int32_t>(18, 16, 0);
+    fillRectangle<int32_t>(labels, 2, 2, 14, 12, 1);
+    fillRectangle<int32_t>(labels, 6, 2, 10, 8, 0); // Open notch, 4 x 6
+    const auto stats = statsFromLabels(labels, 1);
+    const auto result = FootprintVectorizer::vectorize(
+        stats, labels, makeProjectedMetadata(18, 16), rectangleRegularizationConfig());
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_GE(result.projectedFootprint.outerRing.size(), 8U);
+    EXPECT_NEAR(projectedRingArea(result.projectedFootprint.outerRing), 96.0, 2.0);
+    EXPECT_FALSE(pixelInside(result, 8.0F, 4.0F));  // Inside the notch
+    EXPECT_TRUE(pixelInside(result, 3.5F, 4.0F));   // Left arm
+    EXPECT_TRUE(pixelInside(result, 12.5F, 4.0F));  // Right arm
+    EXPECT_FALSE(hasWarning(result, "Near-rectangular"));
+}
+
+TEST(FootprintVectorizerTest, CourtyardSurvivesRectangleRegularization)
+{
+    auto labels = makeConstantGrid<int32_t>(18, 18, 0);
+    fillRectangle<int32_t>(labels, 2, 2, 16, 16, 1);
+    fillRectangle<int32_t>(labels, 7, 7, 11, 11, 0); // 4 x 4 courtyard
+    const auto stats = statsFromLabels(labels, 1);
+    const auto result = FootprintVectorizer::vectorize(
+        stats, labels, makeProjectedMetadata(18, 18), rectangleRegularizationConfig());
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    ASSERT_EQ(result.projectedFootprint.holes.size(), 1U);
+    EXPECT_NEAR(projectedRingArea(result.projectedFootprint.holes[0]), 16.0, 1.0);
+    EXPECT_FALSE(pixelInside(result, 9.0F, 9.0F)); // Courtyard centre is open
+    EXPECT_TRUE(pixelInside(result, 3.0F, 9.0F));
+}
+
+TEST(FootprintVectorizerTest, GenuineRectangleIsRegularized)
+{
+    auto labels = makeConstantGrid<int32_t>(16, 16, 0);
+    fillRectangle<int32_t>(labels, 2, 2, 12, 12, 1);
+    labels.data[2 * 16 + 2] = 0; // One-pixel corner nick
+    labels.data[11 * 16 + 11] = 0;
+    const auto stats = statsFromLabels(labels, 1);
+    const auto result = FootprintVectorizer::vectorize(
+        stats, labels, makeProjectedMetadata(16, 16), rectangleRegularizationConfig());
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_EQ(result.projectedFootprint.outerRing.size(), 4U);
+    EXPECT_NEAR(projectedRingArea(result.projectedFootprint.outerRing), 100.0, 1e-5);
+    EXPECT_TRUE(hasWarning(result, "Near-rectangular"));
+}
+
+TEST(FootprintVectorizerTest, RectangleOverlappingAnotherInstanceIsRejected)
+{
+    // The bounding rectangle of instance 1 would cover a pixel of instance 2.
+    auto labels = makeConstantGrid<int32_t>(16, 16, 0);
+    fillRectangle<int32_t>(labels, 2, 2, 12, 12, 1);
+    labels.data[2 * 16 + 2] = 2;
+    const auto stats = statsFromLabels(labels, 1);
+    const auto result = FootprintVectorizer::vectorize(
+        stats, labels, makeProjectedMetadata(16, 16), rectangleRegularizationConfig());
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_FALSE(pixelInside(result, 2.5F, 2.5F)); // Instance 2 is not covered
+    EXPECT_LT(projectedRingArea(result.projectedFootprint.outerRing), 100.0);
+    EXPECT_FALSE(hasWarning(result, "Near-rectangular"));
+    EXPECT_TRUE(hasWarning(result, "neighbouring"));
+}
 } // namespace

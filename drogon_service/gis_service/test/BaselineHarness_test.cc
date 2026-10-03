@@ -86,39 +86,47 @@ std::string writeRaster(const std::string& name, const std::vector<float>& value
 TEST(HybridFeatureFlagsTest, DefaultsReproduceTheCurrentPipeline)
 {
     const HybridFeatureFlags flags = parse({});
-    EXPECT_EQ(flags.presentationStyle, PresentationStyle::Scientific);
+    EXPECT_EQ(flags.presentationStyle, PresentationStyle::SCIENTIFIC);
+    EXPECT_FALSE(flags.neutralFacades);
     EXPECT_FALSE(flags.sam2);
     EXPECT_FALSE(flags.kibs);
     EXPECT_FALSE(flags.hybridFusion);
     EXPECT_TRUE(flags.allDefault());
     EXPECT_TRUE(flags.unimplementedRequests().empty());
     EXPECT_TRUE(flags.warnings.empty());
-    EXPECT_EQ(flags.summary(), "presentation_style=scientific sam2=0 kibs=0 hybrid_fusion=0");
+    EXPECT_EQ(flags.summary(),
+              "presentation_style=scientific neutral_facades=0 sam2=0 kibs=0 hybrid_fusion=0 city3d=0 city3d_mode=shadow");
 
     // Explicit "off" values are the same as unset.
     EXPECT_TRUE(parse({{"DEPTHWIZARD_PRESENTATION_STYLE", "scientific"}, {"DEPTHWIZARD_SAM2", "0"},
-                       {"DEPTHWIZARD_KIBS", ""}, {"DEPTHWIZARD_HYBRID_FUSION", "0"}}).allDefault());
+                       {"DEPTHWIZARD_KIBS", ""}, {"DEPTHWIZARD_HYBRID_FUSION", "off"},
+                       {"DEPTHWIZARD_NEUTRAL_FACADES", "false"}}).allDefault());
 }
 
-TEST(HybridFeatureFlagsTest, ParsesRequestsAndReportsThemAsUnimplemented)
+TEST(HybridFeatureFlagsTest, PresentationStylesAreImplementedAndModelFlagsAreNot)
 {
     const HybridFeatureFlags flags = parse({{"DEPTHWIZARD_PRESENTATION_STYLE", "Terra"},
+                                            {"DEPTHWIZARD_NEUTRAL_FACADES", "1"},
                                             {"DEPTHWIZARD_SAM2", "1"},
-                                            {"DEPTHWIZARD_KIBS", "1"},
-                                            {"DEPTHWIZARD_HYBRID_FUSION", "1"}});
-    EXPECT_EQ(flags.presentationStyle, PresentationStyle::Terra);
-    EXPECT_TRUE(flags.sam2 && flags.kibs && flags.hybridFusion);
+                                            {"DEPTHWIZARD_KIBS", "true"},
+                                            {"DEPTHWIZARD_HYBRID_FUSION", "ON"}});
+    EXPECT_EQ(flags.presentationStyle, PresentationStyle::TERRA_MASSING);
+    EXPECT_TRUE(flags.neutralFacades && flags.sam2 && flags.kibs && flags.hybridFusion);
     EXPECT_FALSE(flags.allDefault());
-    EXPECT_EQ(flags.unimplementedRequests().size(), 4U);
+    // Phase 2 implements presentation styles; SAM2, KIBS and fusion remain unimplemented.
+    EXPECT_EQ(flags.unimplementedRequests(),
+              (std::vector<std::string>{"DEPTHWIZARD_SAM2=1", "DEPTHWIZARD_KIBS=1", "DEPTHWIZARD_HYBRID_FUSION=1"}));
     EXPECT_EQ(flags.toJson()["presentation_style"].asString(), "terra");
     EXPECT_EQ(parse({{"DEPTHWIZARD_PRESENTATION_STYLE", "orthophoto"}}).presentationStyle,
-              PresentationStyle::Orthophoto);
+              PresentationStyle::ORTHOPHOTO_REALISTIC);
+    EXPECT_EQ(parse({{"DEPTHWIZARD_PRESENTATION_STYLE", "ORTHOPHOTO_REALISTIC"}}).presentationStyle,
+              PresentationStyle::ORTHOPHOTO_REALISTIC);
 }
 
 TEST(HybridFeatureFlagsTest, InvalidValuesFallBackToDefaultsWithWarnings)
 {
     const HybridFeatureFlags flags = parse({{"DEPTHWIZARD_PRESENTATION_STYLE", "photoreal"},
-                                            {"DEPTHWIZARD_SAM2", "yes"},
+                                            {"DEPTHWIZARD_SAM2", "maybe"},
                                             {"DEPTHWIZARD_KIBS", "2"}});
     EXPECT_TRUE(flags.allDefault());
     EXPECT_EQ(flags.warnings.size(), 3U);

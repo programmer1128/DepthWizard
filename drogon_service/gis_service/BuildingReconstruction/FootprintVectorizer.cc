@@ -951,50 +951,91 @@ FootprintVectorizationResult FootprintVectorizer::vectorize(
          const cv::RotatedRect box = cv::minAreaRect(local);
          const double boxArea = static_cast<double>(box.size.width) * box.size.height;
 
-         // FORCED OBB OVERRIDE:
-         // Ignore all fill ratios, concavity checks, and neighbor overlaps.
-         // Force the semantic blob into its minimum bounding rectangle instantly.
-         if (boxArea > 0.0)
+         const double rawArea = std::abs(calculateSignedArea(rawOuter));
+         std::vector<cv::Point2f> hull;
+         cv::convexHull(local, hull);
+         const double hullArea = std::abs(cv::contourArea(hull));
+         // Rectangle candidacy is governed by box fill, convexity, corner
+         // support, area, courtyard containment, and (downstream, in
+         // fitsInstance) final mask IoU and zero neighbouring-instance pixels.
+         cv::Point2f corners[4];
+         box.points(corners);
+         bool cornersSupported = true;
+         const double halfPixelDiagonal = 0.5 * std::hypot(
+             std::hypot(metadata.geoTransform[1], metadata.geoTransform[4]),
+             std::hypot(metadata.geoTransform[2], metadata.geoTransform[5]));
+         const double cornerSupportDistance =
+             config.maxCornerAdjustmentMetres +
+             config.footprintDilationMetres + halfPixelDiagonal;
+         for (const auto& corner : corners)
          {
-             cv::Point2f corners[4];
-             box.points(corners);
+             if (std::abs(cv::pointPolygonTest(local, corner, true)) >
+                 config.maxCornerAdjustmentMetres + 1e-6)
+                 cornersSupported = false;
+
+             // Check support against the observed instance, not only the
+             // already-dilated outline, so a deep L/U-shaped recess is never
+             // paved into a rectangle.
+             const double cornerE = origin.easting + corner.x;
+             const double cornerN = origin.northing + corner.y;
+             double nearestObserved = std::numeric_limits<double>::infinity();
+             for (int row = static_cast<int>(by);
+                  row < static_cast<int>(by + bh); ++row)
+             {
+                 for (int column = static_cast<int>(bx);
+                      column < static_cast<int>(bx + bw); ++column)
+                 {
+                     if (labelRaster.data[
+                             static_cast<std::size_t>(row) * labelRaster.width +
+                             column] != stats.componentId)
+                         continue;
+                     const double centreE = metadata.geoTransform[0] +
+                         (column + 0.5) * metadata.geoTransform[1] +
+                         (row + 0.5) * metadata.geoTransform[2];
+                     const double centreN = metadata.geoTransform[3] +
+                         (column + 0.5) * metadata.geoTransform[4] +
+                         (row + 0.5) * metadata.geoTransform[5];
+                     nearestObserved = std::min(nearestObserved,
+                         std::hypot(centreE - cornerE, centreN - cornerN));
+                 }
+             }
+             if (nearestObserved > cornerSupportDistance + 1e-6)
+                 cornersSupported = false;
+         }
+
+         double totalHolesArea = 0.0;
+         for (const auto& hole : holeRings)
+         {
+             totalHolesArea += std::abs(calculateSignedArea(hole));
+         }
+         const double expectedOuterArea = referenceArea + totalHolesArea;
+
+         // Every courtyard must lie inside the rectangle, where it is kept as
+         // a hole; a rectangle that would cut through one is not used.
+         const std::vector<cv::Point2f> boxRing(corners, corners + 4);
+         bool courtyardsPreserved = true;
+         for (const auto& hole : holeRings)
+             for (const auto& point : hole)
+                 if (cv::pointPolygonTest(boxRing,
+                         cv::Point2f(static_cast<float>(point.easting - origin.easting),
+                                     static_cast<float>(point.northing - origin.northing)),
+                         false) <= 0)
+                     courtyardsPreserved = false;
+
+         // A building must be extremely close to its own convex hull to be treated as a basic rectangle.
+         // This prevents E-shaped or U-shaped complexes from being paved over by a single 4-point bounding box.
+         if (boxArea > 0.0 && rawArea / boxArea >= config.minimumRectangleFillRatio &&
+             hullArea > 0.0 && rawArea / hullArea >= 0.96 && cornersSupported &&
+             courtyardsPreserved &&
+             std::abs(boxArea - expectedOuterArea) <= config.footprintAreaDeviationTolerance * expectedOuterArea)
+         {
              auto& ring = result.projectedFootprint.outerRing;
              ring.clear();
              for (const auto& corner : corners)
                  ring.push_back({origin.easting + corner.x, origin.northing + corner.y});
              if (calculateSignedArea(ring) < 0.0)
                  std::reverse(ring.begin(), ring.end());
-             
-             // Nuke all courtyards/holes so the building is a solid box
-             result.projectedFootprint.holes.clear();
-             holeRings.clear();
-             
-             result.warnings.push_back("Semantic blob forcibly snapped to Oriented Bounding Box.");
-             
-             // CRITICAL: Build pixel ring and return immediately to prevent 
-             // downstream CGAL, GEOS, or RDP logic from warping our perfect rectangle.
-             auto buildPixelRingLocal = [&](const std::vector<ProjectedPoint>& projRing) -> std::vector<PixelPoint>
-             {
-                 std::vector<PixelPoint> pixRing;
-                 double invDet = metadata.geoTransform[1] * metadata.geoTransform[5] - metadata.geoTransform[2] * metadata.geoTransform[4];
-                 double invGT1 = metadata.geoTransform[5] / invDet;
-                 double invGT2 = -metadata.geoTransform[2] / invDet;
-                 double invGT4 = -metadata.geoTransform[4] / invDet;
-                 double invGT5 = metadata.geoTransform[1] / invDet;
-
-                 for (const auto& pt : projRing)
-                 {
-                     double dE = pt.easting - metadata.geoTransform[0];
-                     double dN = pt.northing - metadata.geoTransform[3];
-                     pixRing.push_back({ (invGT1 * dE + invGT2 * dN), (invGT4 * dE + invGT5 * dN) });
-                 }
-                 return pixRing;
-             };
-
-             result.pixelFootprint.outerRing = buildPixelRingLocal(result.projectedFootprint.outerRing);
-             result.pixelFootprint.holes.clear();
-             result.success = true;
-             return result; 
+             result.warnings.push_back("Near-rectangular footprint regularized to supported axes.");
          }
      }
 

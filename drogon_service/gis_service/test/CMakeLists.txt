@@ -404,6 +404,35 @@ gtest_discover_tests(
     DISCOVERY_MODE PRE_TEST
 )
 
+add_executable(city3d_slice_test
+    City3dSlice_test.cc
+    ../BuildingReconstruction/City3dInputBuilder.cc
+    ../BuildingReconstruction/City3dOrchestrator.cc
+    ../BuildingReconstruction/City3dResultImporter.cc
+    ../BuildingReconstruction/City3dWorkerProcess.cc
+    ../MeshMapping/SceneMeshService.cc
+    ../MeshMapping/SceneAssembler.cc
+    ../MeshMapping/BuildingMesher.cc
+    ../MeshMapping/FacadeAtlasGenerator.cc
+    ../MeshMapping/LocalFrameTransformers.cc
+    ../MeshMapping/TerrainMesher.cc
+    ../MeshMapping/TerrainSurfaceComposer.cc
+    ../MeshMapping/TerrainTextureComposer.cc
+    ../CompressionLib/DracoCompressor.cc
+    ../FileGenerators/GltfPackager.cc
+    ../utils/FeatureFlags.cc)
+configure_depthwizard_test(city3d_slice_test)
+target_include_directories(city3d_slice_test PRIVATE ${OpenCV_INCLUDE_DIRS})
+set(DEPTHWIZARD_CITY3D_TEST_WORKER "${CMAKE_CURRENT_SOURCE_DIR}/../../../city3d_worker/build/bin/city3d_worker")
+if (NOT EXISTS "${DEPTHWIZARD_CITY3D_TEST_WORKER}")
+    set(DEPTHWIZARD_CITY3D_TEST_WORKER "")
+endif ()
+target_compile_definitions(city3d_slice_test PRIVATE CITY3D_WORKER_BINARY="${DEPTHWIZARD_CITY3D_TEST_WORKER}")
+target_link_libraries(city3d_slice_test PRIVATE
+    GTest::gtest_main Drogon::Drogon ${DEPTHWIZARD_GDAL_TARGET} draco ${OpenCV_LIBS} OpenMP::OpenMP_CXX CGAL::CGAL)
+gtest_discover_tests(city3d_slice_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
+
 add_executable(urban_scene_integration_test
     UrbanSceneIntegration_test.cc
     ../BuildingReconstruction/BuildingMaskProcessor.cc
@@ -434,6 +463,30 @@ target_link_libraries(urban_scene_integration_test PRIVATE
 gtest_discover_tests(urban_scene_integration_test
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
 
+# Production presentation path: SAT2LoD2 geometry + nDSM heights +
+# orthophoto roof UVs + facade UVs + repaired optical terrain, checked in the GLB.
+add_executable(sat2lod2_orthophoto_integration_test
+    Sat2Lod2OrthophotoIntegration_test.cc
+    ../BuildingReconstruction/Sat2Lod2Importer.cc
+    ../BuildingReconstruction/BuildingHeightEstimator.cc
+    ../BuildingReconstruction/FootprintGeometryRegularizer.cc
+    ../MeshMapping/SceneMeshService.cc
+    ../MeshMapping/SceneAssembler.cc
+    ../MeshMapping/BuildingMesher.cc
+    ../MeshMapping/FacadeAtlasGenerator.cc
+    ../MeshMapping/LocalFrameTransformers.cc
+    ../MeshMapping/TerrainMesher.cc
+    ../MeshMapping/TerrainSurfaceComposer.cc
+    ../MeshMapping/TerrainTextureComposer.cc
+    ../CompressionLib/DracoCompressor.cc
+    ../FileGenerators/GltfPackager.cc)
+configure_depthwizard_test(sat2lod2_orthophoto_integration_test)
+target_include_directories(sat2lod2_orthophoto_integration_test PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(sat2lod2_orthophoto_integration_test PRIVATE
+    GTest::gtest_main Drogon::Drogon ${DEPTHWIZARD_GDAL_TARGET} draco ${OpenCV_LIBS} OpenMP::OpenMP_CXX CGAL::CGAL)
+gtest_discover_tests(sat2lod2_orthophoto_integration_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
+
 # Phase 0 baseline harness: feature flags and the GLB/raster inspector, on a
 # GLB produced by the real reconstruction and packaging path.
 add_executable(baseline_harness_test
@@ -452,6 +505,7 @@ add_executable(baseline_harness_test
     ../MeshMapping/SceneMeshService.cc
     ../MeshMapping/SceneAssembler.cc
     ../MeshMapping/BuildingMesher.cc
+    ../MeshMapping/FacadeAtlasGenerator.cc
     ../MeshMapping/LocalFrameTransformers.cc
     ../MeshMapping/TerrainMesher.cc
     ../MeshMapping/TerrainSurfaceComposer.cc
@@ -481,9 +535,9 @@ target_link_libraries(scene_presentation_selector_test PRIVATE GTest::gtest_main
 gtest_discover_tests(scene_presentation_selector_test
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
 
-add_executable(hybrid_feature_flags_test HybridFeatureFlags_test.cc)
+add_executable(hybrid_feature_flags_test HybridFeatureFlags_test.cc ../utils/FeatureFlags.cc)
 configure_depthwizard_test(hybrid_feature_flags_test)
-target_link_libraries(hybrid_feature_flags_test PRIVATE GTest::gtest_main)
+target_link_libraries(hybrid_feature_flags_test PRIVATE GTest::gtest_main Drogon::Drogon)
 gtest_discover_tests(hybrid_feature_flags_test
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
 

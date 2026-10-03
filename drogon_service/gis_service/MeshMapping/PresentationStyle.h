@@ -1,16 +1,21 @@
 #pragma once
 
+#include <algorithm>
+#include <cctype>
+#include <optional>
 #include <string>
 #include <string_view>
 
 namespace depthwizard
 {
 
+// Render-only styles (playbook section 6.5). None of them changes geometry,
+// heights or exported rasters; only materials, textures and UVs differ.
 enum class PresentationStyle
 {
-    SCIENTIFIC,          // Current height-colored baseline with optional edge lines
-    TERRA_MASSING,       // Clean ivory/white roofs, neutral walls, muted/optical terrain
-    ORTHOPHOTO_REALISTIC // Photographic roof texture, repaired optical terrain, facade atlas
+    SCIENTIFIC,          // Height-coloured massing with edge lines (default)
+    TERRA_MASSING,       // Ivory roofs, neutral walls, repaired optical or muted terrain
+    ORTHOPHOTO_REALISTIC // Optical roofs, repaired optical terrain, procedural facades
 };
 
 inline const char* toString(PresentationStyle style) noexcept
@@ -27,20 +32,16 @@ inline const char* toString(PresentationStyle style) noexcept
     return "scientific";
 }
 
-inline PresentationStyle parsePresentationStyle(std::string_view str) noexcept
+// Case-insensitive; accepts the short names and the enum names.
+inline std::optional<PresentationStyle> tryParsePresentationStyle(std::string_view text)
 {
-    if (str == "terra" || str == "TERRA" ||
-        str == "terra_massing" || str == "TERRA_MASSING")
-    {
-        return PresentationStyle::TERRA_MASSING;
-    }
-    if (str == "orthophoto" || str == "ORTHOPHOTO" ||
-        str == "orthophoto_realistic" || str == "ORTHOPHOTO_REALISTIC")
-    {
-        return PresentationStyle::ORTHOPHOTO_REALISTIC;
-    }
-    return PresentationStyle::SCIENTIFIC;
+    std::string value(text);
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (value == "scientific") return PresentationStyle::SCIENTIFIC;
+    if (value == "terra" || value == "terra_massing") return PresentationStyle::TERRA_MASSING;
+    if (value == "orthophoto" || value == "orthophoto_realistic") return PresentationStyle::ORTHOPHOTO_REALISTIC;
+    return std::nullopt;
 }
 
 } // namespace depthwizard
-

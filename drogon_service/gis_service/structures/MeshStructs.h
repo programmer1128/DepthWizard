@@ -29,12 +29,20 @@ enum class TextureSemantic
     AO_ATLAS
 };
 
+enum class TextureWrap
+{
+    CLAMP_TO_EDGE, // Geographic images: finite, never tiled
+    REPEAT         // Facade atlas along a wall (horizontal bands only)
+};
+
+// One glTF material per role. Every primitive role in the scene must have
+// exactly one descriptor; the packager rejects unbound or invalid bindings.
 struct MaterialDescriptor
 {
     std::string name;
     MaterialRole role{MaterialRole::TERRAIN_TEXTURE};
     TextureSemantic textureSemantic{TextureSemantic::NONE};
-    int textureIndex{-1}; // Index into scene.textures, -1 if untextured
+    int textureIndex{-1}; // Index into SceneMesh::textures, -1 if untextured
     std::vector<double> baseColorFactor{1.0, 1.0, 1.0, 1.0};
     double metallicFactor{0.0};
     double roughnessFactor{0.9};
@@ -48,6 +56,8 @@ struct TextureAsset
     std::vector<uint8_t> bytes;
     std::string mimeType; // Preserves image/jpeg or image/png
     TextureSemantic semantic{TextureSemantic::NONE};
+    TextureWrap wrapS{TextureWrap::CLAMP_TO_EDGE};
+    TextureWrap wrapT{TextureWrap::CLAMP_TO_EDGE};
 };
 
 struct MeshPrimitive 
@@ -111,6 +121,9 @@ struct BuildingMesh
     MeshPrimitive edgePrimitive; // Mode: LINES
     std::vector<uint32_t> emittedBuildingIds;
     std::vector<uint32_t> rejectedBuildingIds;
+    // Roof vertices whose inverse-affine image position lies outside the
+    // raster by more than rounding error. Their UVs are left unclamped.
+    std::size_t roofUvOutOfBoundsVertexCount{0};
 };
 
 struct SceneMesh 
@@ -123,9 +136,10 @@ struct SceneMesh
     MeshPrimitive edgePrimitive; // Wireframe edge lines (Mode: LINES)
     std::optional<MeshPrimitive> overlayPrimitive;
     std::vector<MaterialRole> materials;
-    std::optional<TextureAsset> texture; // Bound with MIME type (legacy fallback)
+    std::optional<TextureAsset> texture; // Legacy single texture, used when textures is empty
     std::vector<TextureAsset> textures;  // Multi-texture table
     std::vector<MaterialDescriptor> materialDescriptors; // PBR material table
-    std::string presentationStyle{"SCIENTIFIC"}; // Presentation style extras
+    std::string presentationStyle{"scientific"}; // depthwizard::toString(PresentationStyle)
+    bool syntheticFacades{false}; // Walls carry the procedural facade atlas
     AxisAlignedBounds sceneBounds;
 };

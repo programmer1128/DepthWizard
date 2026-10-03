@@ -1,4 +1,6 @@
 #include "GltfPackager.h"
+#include "../MeshMapping/PresentationMaterials.h"
+#include <algorithm>
 #include <iostream>
 #include <cstring>
 #include <sstream>
@@ -18,10 +20,22 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     GlbBuildResult result;
     tinygltf::Model model;
 
+    // Material table: the scene's descriptors, or the scientific materials for
+    // the roles of a scene assembled without descriptors.
+    std::vector<MaterialDescriptor> descriptors = scene.materialDescriptors;
+    if (descriptors.empty()) {
+        for (const MaterialDescriptor& descriptor : depthwizard::presentation::scientificMaterials()) {
+            if (std::find(scene.materials.begin(), scene.materials.end(), descriptor.role) != scene.materials.end())
+                descriptors.push_back(descriptor);
+        }
+    }
+    const bool anyUnlit = std::any_of(descriptors.begin(), descriptors.end(),
+                                      [](const MaterialDescriptor& d) { return d.unlit; });
+
     // 1. Register Global Extensions
     model.extensionsUsed.push_back("KHR_draco_mesh_compression");
     model.extensionsRequired.push_back("KHR_draco_mesh_compression");
-    model.extensionsUsed.push_back("KHR_materials_unlit");
+    if (anyUnlit) model.extensionsUsed.push_back("KHR_materials_unlit");
 
     // 2. Metadata Injection (Asset Extras)
     tinygltf::Value::Object extras;
@@ -35,6 +49,8 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
     extras["renderYIsAbsoluteElevationOffset"] = tinygltf::Value(scene.presentationMode == "metric");
     extras["heightScale"] = tinygltf::Value(1.0);
     extras["presentationStyle"] = tinygltf::Value(scene.presentationStyle);
+    // Procedural facades are a presentation feature, never source-derived.
+    if (scene.syntheticFacades) extras["syntheticFacades"] = tinygltf::Value(true);
     model.asset.extras = tinygltf::Value(extras);
     model.asset.generator = "DepthWizard 3D Pipeline";
     model.asset.version = "2.0";
@@ -120,10 +136,15 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
 
         tinygltf::Texture tex;
         tex.source = static_cast<int>(model.images.size() - 1);
-        // Orthophotos and facade atlas cells are clamped to edge to prevent border bleeding
+        // Geographic images are clamped (finite, and no opposite-edge bleeding
+        // at skirts); the facade atlas repeats horizontally within its bands.
+        const auto wrap = [](TextureWrap mode) {
+            return mode == TextureWrap::REPEAT ? TINYGLTF_TEXTURE_WRAP_REPEAT
+                                               : TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE;
+        };
         tinygltf::Sampler sampler;
-        sampler.wrapS = TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE;
-        sampler.wrapT = TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE;
+        sampler.wrapS = wrap(texAsset.wrapS);
+        sampler.wrapT = wrap(texAsset.wrapT);
         sampler.magFilter = TINYGLTF_TEXTURE_FILTER_LINEAR;
         sampler.minFilter = TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR;
         model.samplers.push_back(sampler);
@@ -220,75 +241,36 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
 
     // 6. Define Materials
     std::unordered_map<MaterialRole, int> materialMap;
-
-    if (!scene.materialDescriptors.empty()) {
-        for (const auto& desc : scene.materialDescriptors) {
-            tinygltf::Material mat;
-            mat.name = desc.name;
-            if (desc.baseColorFactor.size() == 4) {
-                mat.pbrMetallicRoughness.baseColorFactor = {
-                    desc.baseColorFactor[0],
-                    desc.baseColorFactor[1],
-                    desc.baseColorFactor[2],
-                    desc.baseColorFactor[3]};
-            }
-            mat.pbrMetallicRoughness.metallicFactor = desc.metallicFactor;
-            mat.pbrMetallicRoughness.roughnessFactor = desc.roughnessFactor;
-            mat.doubleSided = desc.doubleSided;
-            mat.alphaMode = desc.alphaMode;
-
-            if (desc.textureIndex >= 0 && desc.textureIndex < static_cast<int>(model.textures.size())) {
-                mat.pbrMetallicRoughness.baseColorTexture.index = desc.textureIndex;
-                mat.pbrMetallicRoughness.baseColorTexture.texCoord = 0;
-            }
-
-            if (desc.unlit) {
-                mat.extensions["KHR_materials_unlit"] = tinygltf::Value(tinygltf::Value::Object{});
-            }
-
-            model.materials.push_back(mat);
-            materialMap[desc.role] = static_cast<int>(model.materials.size() - 1);
+    for (const auto& desc : descriptors) {
+        tinygltf::Material mat;
+        mat.name = desc.name;
+        if (desc.baseColorFactor.size() == 4) {
+            mat.pbrMetallicRoughness.baseColorFactor = desc.baseColorFactor;
         }
-    } else {
-        auto createMaterial = [&](MaterialRole role) -> int {
-            tinygltf::Material mat;
-            mat.pbrMetallicRoughness.metallicFactor = 0.0;
-            mat.pbrMetallicRoughness.roughnessFactor = 0.9;
-            mat.doubleSided = false;
+        mat.pbrMetallicRoughness.metallicFactor = desc.metallicFactor;
+        mat.pbrMetallicRoughness.roughnessFactor = desc.roughnessFactor;
+        mat.doubleSided = desc.doubleSided;
+        mat.alphaMode = desc.alphaMode;
 
-            if (role == MaterialRole::TERRAIN_TEXTURE) {
-                mat.pbrMetallicRoughness.baseColorFactor = {0.26, 0.26, 0.26, 1.0};
-                mat.extensions["KHR_materials_unlit"] = tinygltf::Value(
-                    tinygltf::Value::Object{});
-                mat.name = "Terrain_Grey";
-            } else if (role == MaterialRole::BUILDING_WALL) {
-                mat.pbrMetallicRoughness.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
-                mat.pbrMetallicRoughness.metallicFactor = 0.10;
-                mat.pbrMetallicRoughness.roughnessFactor = 0.40;
-                mat.alphaMode = "OPAQUE";
-                mat.doubleSided = true;
-                mat.name = "Building_Wall";
-            } else if (role == MaterialRole::BUILDING_ROOF) {
-                mat.pbrMetallicRoughness.baseColorFactor = {1.0, 1.0, 1.0, 1.0};
-                mat.pbrMetallicRoughness.metallicFactor = 0.10;
-                mat.pbrMetallicRoughness.roughnessFactor = 0.40;
-                mat.alphaMode = "OPAQUE";
-                mat.doubleSided = true;
-                mat.name = "Building_Roof";
-            } else if (role == MaterialRole::BUILDING_EDGE) {
-                mat.pbrMetallicRoughness.baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
-                mat.pbrMetallicRoughness.metallicFactor = 0.0f;
-                mat.pbrMetallicRoughness.roughnessFactor = 0.1f;
-                mat.name = "Building_Edge_Highlight";
+        if (desc.textureIndex >= 0) {
+            if (desc.textureIndex >= static_cast<int>(model.textures.size())) {
+                result.geometryWarnings.push_back("Material " + desc.name + " references a missing texture.");
+                return result;
             }
-
-            model.materials.push_back(mat);
-            return static_cast<int>(model.materials.size() - 1);
-        };
-
-        for (MaterialRole role : scene.materials) {
-            materialMap[role] = createMaterial(role);
+            mat.pbrMetallicRoughness.baseColorTexture.index = desc.textureIndex;
+            mat.pbrMetallicRoughness.baseColorTexture.texCoord = 0;
+            // Untextured (scientific) materials stay byte-identical.
+            mat.extras = tinygltf::Value(tinygltf::Value::Object{
+                {"textureSemantic",
+                 tinygltf::Value(std::string(depthwizard::presentation::textureSemanticName(desc.textureSemantic)))}});
         }
+
+        if (desc.unlit) {
+            mat.extensions["KHR_materials_unlit"] = tinygltf::Value(tinygltf::Value::Object{});
+        }
+
+        model.materials.push_back(mat);
+        materialMap[desc.role] = static_cast<int>(model.materials.size() - 1);
     }
 
     // 7. Assemble Mesh and Primitives
@@ -301,7 +283,13 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
 
         tinygltf::Primitive gltfPrim;
         gltfPrim.mode = TINYGLTF_MODE_TRIANGLES;
-        gltfPrim.material = materialMap[prim.materialRole];
+        // Never fall back to material 0: that would put the terrain material on a roof.
+        const auto bound = materialMap.find(prim.materialRole);
+        if (bound == materialMap.end()) {
+            result.geometryWarnings.push_back("A primitive's material role has no material.");
+            return result;
+        }
+        gltfPrim.material = bound->second;
 
         tinygltf::Value::Object dracoExt;
         dracoExt["bufferView"] = tinygltf::Value(dracoBufferViewIndices[i]);
