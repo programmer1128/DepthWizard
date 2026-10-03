@@ -1297,4 +1297,105 @@ TEST(MeshPipelineTest, GltfPackagerPacksMultiTextureDescriptorsAndClampedSampler
     EXPECT_EQ(model.materials[2].pbrMetallicRoughness.baseColorTexture.index, 2);
 }
 
+TEST(MeshPipelineTest, BuildingMesherWallTrianglesReceiveDistinctUVs)
+{
+    constexpr int n = 64;
+    auto metadata = makeProjectedMetadata(n, n, 1.0, -1.0);
+
+    BuildingInstance gableBldg;
+    gableBldg.buildingId = 201;
+    gableBldg.heightAboveGround = 15.0F;
+    gableBldg.representativeBaseElevation = 100.0F;
+    gableBldg.roofElevation = 115.0F;
+    gableBldg.projectedFootprint.outerRing = {
+        {10.0, -10.0}, {30.0, -10.0}, {30.0, -30.0}, {10.0, -30.0}
+    };
+    DecomposedBuildingBlock gableBlock;
+    gableBlock.projectedCorners = {{{10.0, -10.0}, {30.0, -10.0}, {30.0, -30.0}, {10.0, -30.0}}};
+    gableBlock.roof.type = RoofType::GABLE;
+    gableBlock.roof.eaveHeightAboveGround = 10.0F;
+    gableBlock.roof.ridgeHeightAboveGround = 15.0F;
+    gableBlock.roof.ridgeStartProjected = {10.0, -20.0};
+    gableBlock.roof.ridgeEndProjected = {30.0, -20.0};
+    gableBldg.blocks.push_back(gableBlock);
+
+    BuildingCollection buildings;
+    buildings.buildings.push_back(gableBldg);
+    LocalSceneFrame frame;
+    frame.elevationOrigin = 100.0;
+
+    BuildingMeshConfig config;
+    config.generateRoofUVs = true;
+    config.generateWallUVs = true;
+    config.presentationStyle = depthwizard::PresentationStyle::ORTHOPHOTO_REALISTIC;
+
+    const auto bldgMesh = BuildingMesher::generate(buildings, frame, config, &metadata);
+    ASSERT_TRUE(bldgMesh.wallPrimitive.uvs.has_value());
+    ASSERT_FALSE(bldgMesh.wallPrimitive.indices.empty());
+
+    // Invariant: No wall triangle can collapse to a single texel (identical UVs for all 3 corners).
+    for (size_t i = 0; i + 2 < bldgMesh.wallPrimitive.indices.size(); i += 3)
+    {
+        uint32_t i0 = bldgMesh.wallPrimitive.indices[i];
+        uint32_t i1 = bldgMesh.wallPrimitive.indices[i + 1];
+        uint32_t i2 = bldgMesh.wallPrimitive.indices[i + 2];
+        float u0 = (*bldgMesh.wallPrimitive.uvs)[i0 * 2];
+        float v0 = (*bldgMesh.wallPrimitive.uvs)[i0 * 2 + 1];
+        float u1 = (*bldgMesh.wallPrimitive.uvs)[i1 * 2];
+        float v1 = (*bldgMesh.wallPrimitive.uvs)[i1 * 2 + 1];
+        float u2 = (*bldgMesh.wallPrimitive.uvs)[i2 * 2];
+        float v2 = (*bldgMesh.wallPrimitive.uvs)[i2 * 2 + 1];
+
+        bool allIdentical = (u0 == u1 && u1 == u2 && v0 == v1 && v1 == v2);
+        EXPECT_FALSE(allIdentical)
+            << "Triangle " << (i / 3) << " collapsed to single UV (" << u0 << ", " << v0 << ")";
+    }
+}
+
+TEST(MeshPipelineTest, FacadeAtlasFloorCountAndBuildingHashProperties)
+{
+    // 1. Presentation floor count: round(height / 3.1m) clamped to [1, 30]
+    EXPECT_EQ(depthwizard::FacadeAtlasGenerator::computePresentationFloorCount(0.0F), 1);
+    EXPECT_EQ(depthwizard::FacadeAtlasGenerator::computePresentationFloorCount(2.0F), 1);
+    EXPECT_EQ(depthwizard::FacadeAtlasGenerator::computePresentationFloorCount(3.1F), 1);
+    EXPECT_EQ(depthwizard::FacadeAtlasGenerator::computePresentationFloorCount(4.6F), 1);
+    EXPECT_EQ(depthwizard::FacadeAtlasGenerator::computePresentationFloorCount(4.7F), 2);
+    EXPECT_EQ(depthwizard::FacadeAtlasGenerator::computePresentationFloorCount(10.0F), 3);
+    EXPECT_EQ(depthwizard::FacadeAtlasGenerator::computePresentationFloorCount(15.5F), 5);
+    EXPECT_EQ(depthwizard::FacadeAtlasGenerator::computePresentationFloorCount(31.0F), 10);
+    EXPECT_EQ(depthwizard::FacadeAtlasGenerator::computePresentationFloorCount(93.0F), 30);
+    EXPECT_EQ(depthwizard::FacadeAtlasGenerator::computePresentationFloorCount(200.0F), 30);
+
+    // 2. Stable 32-bit hash coverage of all 4 variants
+    std::set<uint32_t> variants;
+    for (uint32_t id = 1; id <= 100; ++id)
+    {
+        uint32_t h1 = depthwizard::FacadeAtlasGenerator::hashBuildingId(id);
+        uint32_t h2 = depthwizard::FacadeAtlasGenerator::hashBuildingId(id);
+        EXPECT_EQ(h1, h2); // Determinism
+        variants.insert(h1 % depthwizard::FacadeAtlasGenerator::kVariantCount);
+    }
+    EXPECT_EQ(variants.size(), 4U);
+}
+
+TEST(MeshPipelineTest, FacadeWallContinuousTilingAndSetbackHeight)
+{
+    // 1. Continuous 10m wall tiling spans the full cell without squishing
+    float u0, v0, u10, v10;
+    depthwizard::FacadeAtlasGenerator::computeWallUV(0, 0.0F, 0.0F, 15.0F, u0, v0);
+    depthwizard::FacadeAtlasGenerator::computeWallUV(0, 10.0F, 0.0F, 15.0F, u10, v10);
+    const float expectedSpan = 0.5F - 2.0F * (1.0F / 512.0F);
+    EXPECT_NEAR(u10 - u0, expectedSpan, 1e-4);
+
+    // 2. Setback wall base height does NOT draw ground floor plinth halfway up building
+    float uGroundBase, vGroundBase, uSetbackBase, vSetbackBase;
+    depthwizard::FacadeAtlasGenerator::computeWallUV(0, 0.0F, 0.0F, 30.0F, uGroundBase, vGroundBase);
+    depthwizard::FacadeAtlasGenerator::computeWallUV(0, 0.0F, 15.0F, 30.0F, uSetbackBase, vSetbackBase);
+    // In glTF, higher V is at bottom (ground). Setback base must be higher up (lower V)
+    EXPECT_GT(vGroundBase, vSetbackBase);
+    const float dv = vGroundBase - vSetbackBase;
+    EXPECT_NEAR(dv, 0.5F * expectedSpan, 1e-3);
+}
+
 } // namespace
+

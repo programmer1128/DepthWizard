@@ -159,30 +159,38 @@ void FacadeAtlasGenerator::computeWallUV(
     uint32_t buildingId,
     float cumulativeEdgeDist,
     float heightFromGround,
-    float wallHeight,
+    float totalBuildingHeight,
     float& outU,
     float& outV,
     bool neutralOnly)
 {
-    const uint32_t variant = neutralOnly ? 3 : (buildingId % kVariantCount);
+    const uint32_t variant = neutralOnly ? 3 : (hashBuildingId(buildingId) % kVariantCount);
     const int cellCol = static_cast<int>(variant % kGridCols);
     const int cellRow = static_cast<int>(variant / kGridCols);
 
     const float uMin = cellCol * 0.5f;
     const float vMin = cellRow * 0.5f;
 
-    // ~3.0m window bay width
-    float localU = std::fmod(cumulativeEdgeDist / 3.0f, 1.0f);
-    if (localU < 0.0f) localU += 1.0f;
+    // Nominal tile width is 10.0m. Continuous cumulative edge distance maps across [0, 1].
+    // Seamless continuous edge mapping without per-vertex fmod artifacts.
+    const float safeEdgeDist = std::max(cumulativeEdgeDist, 0.0f);
+    const float localU = std::clamp(safeEdgeDist / kNominalTileWidthMetres, 0.0f, 1.0f);
 
-    // Vertical wall fraction
-    const float safeHeight = std::max(wallHeight, 0.1f);
-    const float localV = std::clamp(heightFromGround / safeHeight, 0.0f, 1.0f);
+    // Presentation floor count derived from total building height per playbook Section 6.4:
+    // round(height / 3.1 m), clamped to [1, 30].
+    [[maybe_unused]] const int floorCount = computePresentationFloorCount(totalBuildingHeight);
+
+    // Vertical wall fraction relative to total building height from ground.
+    // For multi-tier / setback buildings, heightFromGround maps into the building's overall height,
+    // ensuring setback walls do not render a ground plinth halfway up the structure.
+    const float safeTotalHeight = std::max(totalBuildingHeight, 0.1f);
+    const float vFraction = std::clamp(heightFromGround / safeTotalHeight, 0.0f, 1.0f);
+    const float localV = 1.0f - vFraction;
 
     // 1-pixel margin inside cell boundaries to prevent clamp bleeding at borders
     const float margin = 1.0f / static_cast<float>(kAtlasWidth);
     outU = (uMin + margin) + localU * (0.5f - 2.0f * margin);
-    outV = (vMin + margin) + (1.0f - localV) * (0.5f - 2.0f * margin);
+    outV = (vMin + margin) + localV * (0.5f - 2.0f * margin);
 }
 
 } // namespace depthwizard

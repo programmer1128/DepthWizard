@@ -568,8 +568,10 @@ BuildingMesh BuildingMesher::generate(
                      finalB = tierB * 0.65f;
                  }
 
-                 for (const Vertex3& vertex : {a, b, c})
+                 const std::array<Vertex3, 3> triVertices{a, b, c};
+                 for (std::size_t vIdx = 0; vIdx < 3; ++vIdx)
                  {
+                     const Vertex3& vertex = triVertices[vIdx];
                      primitive.positions.push_back(
                          static_cast<float>(vertex.x));
                      primitive.positions.push_back(vertex.y);
@@ -586,7 +588,6 @@ BuildingMesh BuildingMesher::generate(
                      {
                          if (hasCustomUVs)
                          {
-                             std::size_t vIdx = (&vertex == &a) ? 0 : ((&vertex == &b) ? 1 : 2);
                              primitive.uvs->push_back(localUVs[vIdx].first);
                              primitive.uvs->push_back(localUVs[vIdx].second);
                          }
@@ -689,6 +690,13 @@ BuildingMesh BuildingMesher::generate(
                  return height;
              };
 
+             float maxRidgeY = localBaseY;
+             for (const auto& blk : blocks)
+             {
+                 maxRidgeY = std::max(maxRidgeY, blk.ridgeY);
+             }
+             const float totalBldgHeight = std::max(maxRidgeY - localBaseY, 0.1f);
+
              for (std::size_t blockIndex = 0;
                   blockIndex < blocks.size(); ++blockIndex)
              {
@@ -748,6 +756,18 @@ BuildingMesh BuildingMesher::generate(
                  const std::array<int, 2> sideB = ridgeRunsAlongEdge0
                      ? std::array<int, 2>{3, 2}
                      : std::array<int, 2>{0, 3};
+
+                 std::array<float, 4> edgeLengths{};
+                 std::array<float, 4> edgeStartDist{};
+                 float perimeterDist = 0.0f;
+                 for (std::size_t edge = 0; edge < 4; ++edge)
+                 {
+                     edgeStartDist[edge] = perimeterDist;
+                     const auto& ca = block.corners[edge];
+                     const auto& cb = block.corners[(edge + 1) % 4];
+                     edgeLengths[edge] = static_cast<float>(std::hypot(cb.x - ca.x, cb.z - ca.z));
+                     perimeterDist += edgeLengths[edge];
+                 }
 
                  auto midpoint = [&](const std::array<int, 2>& end)
                  {
@@ -843,13 +863,17 @@ BuildingMesh BuildingMesher::generate(
                                   std::hypot(v1.x - v0.x, v1.z - v0.z));
                               const float eaveH = block.eaveY - localBaseY;
                               const float ridgeH = block.ridgeY - localBaseY;
+                              const std::size_t gableEdgeIdx = end[0];
+                              const float gStartDist = (gableEdgeIdx < 4) ? edgeStartDist[gableEdgeIdx] : 0.0f;
+                              const float gTileBase = std::floor(gStartDist / depthwizard::FacadeAtlasGenerator::kNominalTileWidthMetres) * depthwizard::FacadeAtlasGenerator::kNominalTileWidthMetres;
+                              const float gStartInTile = gStartDist - gTileBase;
                               float u0 = 0.5f, v0_uv = 0.5f, u1 = 0.5f, v1_uv = 0.5f, uRidge = 0.5f, vRidge = 0.5f;
                               depthwizard::FacadeAtlasGenerator::computeWallUV(
-                                  bldg.buildingId, 0.0f, eaveH, ridgeH, u0, v0_uv);
+                                  bldg.buildingId, gStartInTile, eaveH, totalBldgHeight, u0, v0_uv);
                               depthwizard::FacadeAtlasGenerator::computeWallUV(
-                                  bldg.buildingId, gableSpan, eaveH, ridgeH, u1, v1_uv);
+                                  bldg.buildingId, gStartInTile + gableSpan, eaveH, totalBldgHeight, u1, v1_uv);
                               depthwizard::FacadeAtlasGenerator::computeWallUV(
-                                  bldg.buildingId, 0.5f * gableSpan, ridgeH, ridgeH, uRidge, vRidge);
+                                  bldg.buildingId, gStartInTile + 0.5f * gableSpan, ridgeH, totalBldgHeight, uRidge, vRidge);
                               std::array<std::pair<float, float>, 3> gableUVs{
                                   {{u0, v0_uv}, {u1, v1_uv}, {uRidge, vRidge}}};
                               emitTriangle(result.wallPrimitive, wallBounds,
@@ -861,7 +885,6 @@ BuildingMesh BuildingMesher::generate(
                      }
                  }
 
-                 float cumulativeEdgeDist = 0.0f;
                  for (std::size_t edge = 0; edge < 4; ++edge)
                  {
                      const auto& a = block.corners[edge];
@@ -922,20 +945,25 @@ BuildingMesh BuildingMesher::generate(
                              const Vertex3 topA{start.x, block.eaveY, start.z};
                              const Vertex3 topB{finish.x, block.eaveY, finish.z};
                              const Vertex3 baseB{finish.x, wallBaseY, finish.z};
-                             const float segLen = static_cast<float>(
-                                 std::hypot(finish.x - start.x, finish.z - start.z));
-                             const float hA = block.eaveY - wallBaseY;
-                             const float hB = block.eaveY - wallBaseY;
+                             const float segStartDist = edgeStartDist[edge] +
+                                 static_cast<float>(cuts[segment]) * edgeLengths[edge];
+                             const float segFinishDist = edgeStartDist[edge] +
+                                 static_cast<float>(cuts[segment + 1]) * edgeLengths[edge];
+                             const float absBaseH = wallBaseY - localBaseY;
+                             const float absTopH = block.eaveY - localBaseY;
+                             const float tileBase = std::floor(segStartDist / depthwizard::FacadeAtlasGenerator::kNominalTileWidthMetres) * depthwizard::FacadeAtlasGenerator::kNominalTileWidthMetres;
+                             const float segStartInTile = segStartDist - tileBase;
+                             const float segFinishInTile = segFinishDist - tileBase;
                              float uBaseA = 0.5f, vBaseA = 0.5f, uTopA = 0.5f, vTopA = 0.5f;
                              float uTopB = 0.5f, vTopB = 0.5f, uBaseB = 0.5f, vBaseB = 0.5f;
                              depthwizard::FacadeAtlasGenerator::computeWallUV(
-                                 bldg.buildingId, cumulativeEdgeDist, 0.0f, hA, uBaseA, vBaseA);
+                                 bldg.buildingId, segStartInTile, absBaseH, totalBldgHeight, uBaseA, vBaseA);
                              depthwizard::FacadeAtlasGenerator::computeWallUV(
-                                 bldg.buildingId, cumulativeEdgeDist, hA, hA, uTopA, vTopA);
+                                 bldg.buildingId, segStartInTile, absTopH, totalBldgHeight, uTopA, vTopA);
                              depthwizard::FacadeAtlasGenerator::computeWallUV(
-                                 bldg.buildingId, cumulativeEdgeDist + segLen, hB, hB, uTopB, vTopB);
+                                 bldg.buildingId, segFinishInTile, absTopH, totalBldgHeight, uTopB, vTopB);
                              depthwizard::FacadeAtlasGenerator::computeWallUV(
-                                 bldg.buildingId, cumulativeEdgeDist + segLen, 0.0f, hB, uBaseB, vBaseB);
+                                 bldg.buildingId, segFinishInTile, absBaseH, totalBldgHeight, uBaseB, vBaseB);
                              std::array<std::pair<float, float>, 3> uvQuad1{
                                  {{uBaseA, vBaseA}, {uTopA, vTopA}, {uTopB, vTopB}}};
                              std::array<std::pair<float, float>, 3> uvQuad2{
@@ -946,7 +974,6 @@ BuildingMesh BuildingMesher::generate(
                              emitTriangle(result.wallPrimitive, wallBounds,
                                  baseA, topB, baseB,
                                  wallR, wallG, wallB, wallA, outward, &uvQuad2);
-                             cumulativeEdgeDist += segLen;
                              pushEdge(baseA, topA);
                          }
                          if (!std::isfinite(neighbourY) ||
@@ -1063,20 +1090,25 @@ BuildingMesh BuildingMesher::generate(
                      : localBaseY;
 
                  // Push 4 independent vertices per wall quad to guarantee crisp corners
-                 const float wallHA = localRoofY - baseA;
-                 const float wallHB = localRoofY - baseB;
+                 const float absBaseHA = baseA - localBaseY;
+                 const float absBaseHB = baseB - localBaseY;
+                 const float absRoofH = localRoofY - localBaseY;
+                 const float totalBldgH = std::max(absRoofH, 0.1f);
                  float uBaseA = 0.5f, vBaseA = 0.5f, uRoofA = 0.5f, vRoofA = 0.5f;
                  float uRoofB = 0.5f, vRoofB = 0.5f, uBaseB = 0.5f, vBaseB = 0.5f;
                  if (result.wallPrimitive.uvs.has_value())
                  {
+                     const float tileBase = std::floor(ringDist / depthwizard::FacadeAtlasGenerator::kNominalTileWidthMetres) * depthwizard::FacadeAtlasGenerator::kNominalTileWidthMetres;
+                     const float startInTile = ringDist - tileBase;
+                     const float finishInTile = ringDist + len - tileBase;
                      depthwizard::FacadeAtlasGenerator::computeWallUV(
-                         bldg.buildingId, ringDist, 0.0f, wallHA, uBaseA, vBaseA);
+                         bldg.buildingId, startInTile, absBaseHA, totalBldgH, uBaseA, vBaseA);
                      depthwizard::FacadeAtlasGenerator::computeWallUV(
-                         bldg.buildingId, ringDist, wallHA, wallHA, uRoofA, vRoofA);
+                         bldg.buildingId, startInTile, absRoofH, totalBldgH, uRoofA, vRoofA);
                      depthwizard::FacadeAtlasGenerator::computeWallUV(
-                         bldg.buildingId, ringDist + len, wallHB, wallHB, uRoofB, vRoofB);
+                         bldg.buildingId, finishInTile, absRoofH, totalBldgH, uRoofB, vRoofB);
                      depthwizard::FacadeAtlasGenerator::computeWallUV(
-                         bldg.buildingId, ringDist + len, 0.0f, wallHB, uBaseB, vBaseB);
+                         bldg.buildingId, finishInTile, absBaseHB, totalBldgH, uBaseB, vBaseB);
                  }
                  auto pushWallVertex = [&](double vx, float vy, double vz, float u, float v)
                  {
