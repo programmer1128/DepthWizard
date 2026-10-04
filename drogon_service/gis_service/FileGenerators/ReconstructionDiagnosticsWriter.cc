@@ -73,6 +73,7 @@ std::filesystem::path ReconstructionDiagnosticsWriter::write(
     Json::Value summary(Json::objectValue);
     summary["uuid"] = uuid;
     summary["presentation_mode"] = d.presentationMode;
+    summary["presentation_policy"] = d.presentationPolicy;
     summary["presentation_reason"] = d.presentationReason;
     summary["strong_building_fraction"] = d.strongBuildingFraction;
     summary["vegetation_fraction"] = d.vegetationFraction;

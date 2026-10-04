@@ -18,6 +18,8 @@ endif()
 
 function(configure_depthwizard_test target_name)
     target_compile_features(${target_name} PRIVATE cxx_std_23)
+    target_compile_definitions(${target_name} PRIVATE
+        DEPTHWIZARD_VEGETATION_ASSET_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../assets/vegetation/optimized")
 
     target_include_directories(
         ${target_name}
@@ -411,6 +413,18 @@ add_executable(city3d_slice_test
     ../BuildingReconstruction/City3dResultImporter.cc
     ../BuildingReconstruction/City3dWorkerProcess.cc
     ../MeshMapping/SceneMeshService.cc
+    ../Vegetation/DenseForestProxyGenerator.cc
+    ../Vegetation/VegetationCoverGenerator.cc
+    ../Vegetation/ForestTreeScatter.cc
+    ../Vegetation/VegetationExternalPackaging.cc
+    ../Vegetation/ExternalVegetationAssetLoader.cc
+    ../MeshMapping/TerrainSurfaceSampler.cc
+    ../Vegetation/VegetationCanopyBuilder.cc
+    ../Vegetation/VegetationHeightSampler.cc
+    ../Vegetation/VegetationTreeInstancer.cc
+    ../Vegetation/VegetationTreePrototypes.cc
+    ../Vegetation/VegetationTreePackaging.cc
+    ../Vegetation/VegetationTreeCandidateGenerator.cc
     ../MeshMapping/SceneAssembler.cc
     ../MeshMapping/BuildingMesher.cc
     ../MeshMapping/FacadeAtlasGenerator.cc
@@ -446,6 +460,18 @@ add_executable(urban_scene_integration_test
     ../BuildingReconstruction/BuildingReconstructionService.cc
     ../SurfaceFusion/SurfaceFusionService.cc
     ../MeshMapping/SceneMeshService.cc
+    ../Vegetation/DenseForestProxyGenerator.cc
+    ../Vegetation/VegetationCoverGenerator.cc
+    ../Vegetation/ForestTreeScatter.cc
+    ../Vegetation/VegetationExternalPackaging.cc
+    ../Vegetation/ExternalVegetationAssetLoader.cc
+    ../MeshMapping/TerrainSurfaceSampler.cc
+    ../Vegetation/VegetationCanopyBuilder.cc
+    ../Vegetation/VegetationHeightSampler.cc
+    ../Vegetation/VegetationTreeInstancer.cc
+    ../Vegetation/VegetationTreePrototypes.cc
+    ../Vegetation/VegetationTreePackaging.cc
+    ../Vegetation/VegetationTreeCandidateGenerator.cc
     ../MeshMapping/ScenePresentationSelector.cc
     ../MeshMapping/SceneAssembler.cc
     ../MeshMapping/BuildingMesher.cc
@@ -467,10 +493,29 @@ gtest_discover_tests(urban_scene_integration_test
 # orthophoto roof UVs + facade UVs + repaired optical terrain, checked in the GLB.
 add_executable(sat2lod2_orthophoto_integration_test
     Sat2Lod2OrthophotoIntegration_test.cc
+    ../Vegetation/VegetationTreeCandidateGenerator.cc
+    ../Vegetation/VegetationClassifier.cc
+    ../Vegetation/VegetationConfig.cc
+    ../Vegetation/VegetationExtractor.cc
+    ../Vegetation/VegetationHeightSampler.cc
+    ../MeshMapping/ScenePresentationSelector.cc
+    ../MeshMapping/ScenePresentationPolicy.cc
     ../BuildingReconstruction/Sat2Lod2Importer.cc
     ../BuildingReconstruction/BuildingHeightEstimator.cc
     ../BuildingReconstruction/FootprintGeometryRegularizer.cc
     ../MeshMapping/SceneMeshService.cc
+    ../Vegetation/DenseForestProxyGenerator.cc
+    ../Vegetation/VegetationCoverGenerator.cc
+    ../Vegetation/ForestTreeScatter.cc
+    ../Vegetation/VegetationExternalPackaging.cc
+    ../Vegetation/ExternalVegetationAssetLoader.cc
+    ../MeshMapping/TerrainSurfaceSampler.cc
+    ../Vegetation/VegetationCanopyBuilder.cc
+    ../Vegetation/VegetationHeightSampler.cc
+    ../Vegetation/VegetationTreeInstancer.cc
+    ../Vegetation/VegetationTreePrototypes.cc
+    ../Vegetation/VegetationTreePackaging.cc
+    ../Vegetation/VegetationTreeCandidateGenerator.cc
     ../MeshMapping/SceneAssembler.cc
     ../MeshMapping/BuildingMesher.cc
     ../MeshMapping/FacadeAtlasGenerator.cc
@@ -485,6 +530,154 @@ target_include_directories(sat2lod2_orthophoto_integration_test PRIVATE ${OpenCV
 target_link_libraries(sat2lod2_orthophoto_integration_test PRIVATE
     GTest::gtest_main Drogon::Drogon ${DEPTHWIZARD_GDAL_TARGET} draco ${OpenCV_LIBS} OpenMP::OpenMP_CXX CGAL::CGAL)
 gtest_discover_tests(sat2lod2_orthophoto_integration_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
+
+# Automatic urban-versus-natural presentation: natural terrain stays metric
+# DTM terrain with skirts; overrides are render-only.
+add_executable(natural_terrain_presentation_test
+    NaturalTerrainPresentation_test.cc
+    ../Vegetation/VegetationConfig.cc
+    ../Vegetation/VegetationExtractor.cc
+    ../Vegetation/VegetationClassifier.cc
+    ../MeshMapping/ScenePresentationSelector.cc
+    ../MeshMapping/ScenePresentationPolicy.cc
+    ../BuildingReconstruction/Sat2Lod2Importer.cc
+    ../BuildingReconstruction/BuildingHeightEstimator.cc
+    ../BuildingReconstruction/FootprintGeometryRegularizer.cc
+    ../MeshMapping/SceneMeshService.cc
+    ../Vegetation/DenseForestProxyGenerator.cc
+    ../Vegetation/VegetationCoverGenerator.cc
+    ../Vegetation/ForestTreeScatter.cc
+    ../Vegetation/VegetationExternalPackaging.cc
+    ../Vegetation/ExternalVegetationAssetLoader.cc
+    ../MeshMapping/TerrainSurfaceSampler.cc
+    ../Vegetation/VegetationCanopyBuilder.cc
+    ../Vegetation/VegetationHeightSampler.cc
+    ../Vegetation/VegetationTreeInstancer.cc
+    ../Vegetation/VegetationTreePrototypes.cc
+    ../Vegetation/VegetationTreePackaging.cc
+    ../Vegetation/VegetationTreeCandidateGenerator.cc
+    ../MeshMapping/SceneAssembler.cc
+    ../MeshMapping/BuildingMesher.cc
+    ../MeshMapping/FacadeAtlasGenerator.cc
+    ../MeshMapping/LocalFrameTransformers.cc
+    ../MeshMapping/TerrainMesher.cc
+    ../MeshMapping/TerrainSurfaceComposer.cc
+    ../MeshMapping/TerrainTextureComposer.cc
+    ../CompressionLib/DracoCompressor.cc
+    ../FileGenerators/GltfPackager.cc)
+configure_depthwizard_test(natural_terrain_presentation_test)
+target_include_directories(natural_terrain_presentation_test PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(natural_terrain_presentation_test PRIVATE
+    GTest::gtest_main Drogon::Drogon ${DEPTHWIZARD_GDAL_TARGET} draco ${OpenCV_LIBS} OpenMP::OpenMP_CXX CGAL::CGAL)
+gtest_discover_tests(natural_terrain_presentation_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
+
+# Vegetation overlay, stage 2: configuration, mask, recovery, heights and
+# diagnostics (no geometry), plus the shared pixel/world/UV helper checked
+# against TerrainMesher and BuildingMesher.
+add_executable(vegetation_mask_test
+    VegetationMask_test.cc
+    ../Vegetation/VegetationConfig.cc
+    ../Vegetation/VegetationExtractor.cc
+    ../Vegetation/VegetationHeightSampler.cc
+    ../Vegetation/VegetationClassifier.cc
+    ../Vegetation/VegetationDiagnostics.cc)
+configure_depthwizard_test(vegetation_mask_test)
+target_include_directories(vegetation_mask_test PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(vegetation_mask_test PRIVATE GTest::gtest_main Drogon::Drogon ${OpenCV_LIBS})
+gtest_discover_tests(vegetation_mask_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
+
+# Vegetation overlay, stage 3: dense/isolated classification, the
+# rendered-terrain sampler and the canopy mesh.
+add_executable(vegetation_canopy_test
+    VegetationCanopy_test.cc
+    ../Vegetation/VegetationConfig.cc
+    ../Vegetation/VegetationExtractor.cc
+    ../Vegetation/VegetationHeightSampler.cc
+    ../Vegetation/VegetationClassifier.cc
+    ../Vegetation/VegetationCanopyBuilder.cc
+    ../MeshMapping/TerrainSurfaceSampler.cc
+    ../MeshMapping/TerrainMesher.cc
+    ../MeshMapping/TerrainTextureComposer.cc
+    ../MeshMapping/LocalFrameTransformers.cc)
+configure_depthwizard_test(vegetation_canopy_test)
+target_include_directories(vegetation_canopy_test PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(vegetation_canopy_test PRIVATE
+    GTest::gtest_main ${DEPTHWIZARD_GDAL_TARGET} ${OpenCV_LIBS} OpenMP::OpenMP_CXX)
+gtest_discover_tests(vegetation_canopy_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
+
+# Vegetation overlay, stage 4: deterministic individual-tree candidates.
+add_executable(vegetation_tree_candidates_test
+    VegetationTreeCandidates_test.cc
+    ../Vegetation/VegetationConfig.cc
+    ../Vegetation/VegetationExtractor.cc
+    ../Vegetation/VegetationHeightSampler.cc
+    ../Vegetation/VegetationClassifier.cc
+    ../Vegetation/VegetationTreeCandidateGenerator.cc
+    ../Vegetation/VegetationTreeDiagnostics.cc
+    ../Vegetation/VegetationTreePrototypes.cc
+    ../Vegetation/VegetationTreeInstancer.cc
+    ../MeshMapping/TerrainSurfaceSampler.cc
+    ../MeshMapping/LocalFrameTransformers.cc)
+configure_depthwizard_test(vegetation_tree_candidates_test)
+target_include_directories(vegetation_tree_candidates_test PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(vegetation_tree_candidates_test PRIVATE GTest::gtest_main Drogon::Drogon ${OpenCV_LIBS})
+gtest_discover_tests(vegetation_tree_candidates_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
+
+# Vegetation overlay, stage 5: tree prototypes, instances, chunks.
+add_executable(vegetation_trees_test
+    VegetationTrees_test.cc
+    ../Vegetation/VegetationConfig.cc
+    ../Vegetation/VegetationTreeCandidateGenerator.cc
+    ../Vegetation/VegetationTreeInstancer.cc
+    ../Vegetation/VegetationTreePrototypes.cc
+    ../Vegetation/VegetationTreePackaging.cc
+    ../Vegetation/VegetationHeightSampler.cc
+    ../MeshMapping/TerrainSurfaceSampler.cc
+    ../MeshMapping/LocalFrameTransformers.cc)
+configure_depthwizard_test(vegetation_trees_test)
+target_include_directories(vegetation_trees_test PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(vegetation_trees_test PRIVATE GTest::gtest_main ${OpenCV_LIBS})
+gtest_discover_tests(vegetation_trees_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
+
+# Vegetation stage 5A: bundled external assets and forest-patch placement.
+add_executable(vegetation_external_assets_test
+    VegetationExternalAssets_test.cc
+    ../Vegetation/ExternalVegetationAssetLoader.cc
+    ../Vegetation/DenseForestProxyGenerator.cc
+    ../Vegetation/VegetationCoverGenerator.cc
+    ../Vegetation/ForestTreeScatter.cc
+    ../Vegetation/VegetationConfig.cc
+    ../Vegetation/VegetationTreeCandidateGenerator.cc
+    ../Vegetation/VegetationTreeInstancer.cc
+    ../Vegetation/VegetationTreePrototypes.cc
+    ../Vegetation/VegetationHeightSampler.cc
+    ../MeshMapping/TerrainSurfaceSampler.cc
+    ../MeshMapping/LocalFrameTransformers.cc
+    ../tools/TinyGltfImplementation.cc)
+configure_depthwizard_test(vegetation_external_assets_test)
+target_include_directories(vegetation_external_assets_test PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(vegetation_external_assets_test PRIVATE GTest::gtest_main ${OpenCV_LIBS} Drogon::Drogon)
+gtest_discover_tests(vegetation_external_assets_test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
+
+add_executable(geo_transform_mapping_test
+    GeoTransformMapping_test.cc
+    ../MeshMapping/BuildingMesher.cc
+    ../MeshMapping/FacadeAtlasGenerator.cc
+    ../MeshMapping/LocalFrameTransformers.cc
+    ../MeshMapping/TerrainMesher.cc
+    ../MeshMapping/TerrainTextureComposer.cc)
+configure_depthwizard_test(geo_transform_mapping_test)
+target_include_directories(geo_transform_mapping_test PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(geo_transform_mapping_test PRIVATE
+    GTest::gtest_main ${DEPTHWIZARD_GDAL_TARGET} ${OpenCV_LIBS} OpenMP::OpenMP_CXX CGAL::CGAL)
+gtest_discover_tests(geo_transform_mapping_test
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
 
 # Phase 0 baseline harness: feature flags and the GLB/raster inspector, on a
@@ -503,6 +696,18 @@ add_executable(baseline_harness_test
     ../BuildingReconstruction/BuildingRoofModeler.cc
     ../BuildingReconstruction/BuildingReconstructionService.cc
     ../MeshMapping/SceneMeshService.cc
+    ../Vegetation/DenseForestProxyGenerator.cc
+    ../Vegetation/VegetationCoverGenerator.cc
+    ../Vegetation/ForestTreeScatter.cc
+    ../Vegetation/VegetationExternalPackaging.cc
+    ../Vegetation/ExternalVegetationAssetLoader.cc
+    ../MeshMapping/TerrainSurfaceSampler.cc
+    ../Vegetation/VegetationCanopyBuilder.cc
+    ../Vegetation/VegetationHeightSampler.cc
+    ../Vegetation/VegetationTreeInstancer.cc
+    ../Vegetation/VegetationTreePrototypes.cc
+    ../Vegetation/VegetationTreePackaging.cc
+    ../Vegetation/VegetationTreeCandidateGenerator.cc
     ../MeshMapping/SceneAssembler.cc
     ../MeshMapping/BuildingMesher.cc
     ../MeshMapping/FacadeAtlasGenerator.cc
@@ -529,7 +734,8 @@ gtest_discover_tests(reconstruction_diagnostics_test
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_MODE PRE_TEST)
 
 add_executable(scene_presentation_selector_test ScenePresentationSelector_test.cc
-    ../MeshMapping/ScenePresentationSelector.cc)
+    ../MeshMapping/ScenePresentationSelector.cc
+    ../MeshMapping/ScenePresentationPolicy.cc)
 configure_depthwizard_test(scene_presentation_selector_test)
 target_link_libraries(scene_presentation_selector_test PRIVATE GTest::gtest_main)
 gtest_discover_tests(scene_presentation_selector_test
@@ -555,6 +761,18 @@ add_executable(generate_baseline_fixtures
     ../BuildingReconstruction/BuildingReconstructionService.cc
     ../SurfaceFusion/SurfaceFusionService.cc
     ../MeshMapping/SceneMeshService.cc
+    ../Vegetation/DenseForestProxyGenerator.cc
+    ../Vegetation/VegetationCoverGenerator.cc
+    ../Vegetation/ForestTreeScatter.cc
+    ../Vegetation/VegetationExternalPackaging.cc
+    ../Vegetation/ExternalVegetationAssetLoader.cc
+    ../MeshMapping/TerrainSurfaceSampler.cc
+    ../Vegetation/VegetationCanopyBuilder.cc
+    ../Vegetation/VegetationHeightSampler.cc
+    ../Vegetation/VegetationTreeInstancer.cc
+    ../Vegetation/VegetationTreePrototypes.cc
+    ../Vegetation/VegetationTreePackaging.cc
+    ../Vegetation/VegetationTreeCandidateGenerator.cc
     ../MeshMapping/ScenePresentationSelector.cc
     ../MeshMapping/SceneAssembler.cc
     ../MeshMapping/BuildingMesher.cc
@@ -572,3 +790,22 @@ target_include_directories(generate_baseline_fixtures PRIVATE ${OpenCV_INCLUDE_D
 target_link_libraries(generate_baseline_fixtures PRIVATE
     ${DEPTHWIZARD_GDAL_TARGET} draco ${OpenCV_LIBS} OpenMP::OpenMP_CXX CGAL::CGAL Drogon::Drogon)
 
+
+# Offline vegetation-mask report from a finished job's diagnostic rasters
+# (not a test; see test/VegetationMaskReport.cc for usage).
+add_executable(vegetation_mask_report
+    VegetationMaskReport.cc
+    ../Vegetation/VegetationTreeCandidateGenerator.cc
+    ../Vegetation/VegetationTreeDiagnostics.cc
+    ../Vegetation/VegetationTreePrototypes.cc
+    ../Vegetation/VegetationTreeInstancer.cc
+    ../Vegetation/VegetationCanopyBuilder.cc
+    ../MeshMapping/TerrainSurfaceSampler.cc
+    ../MeshMapping/LocalFrameTransformers.cc
+    ../Vegetation/VegetationConfig.cc
+    ../Vegetation/VegetationExtractor.cc
+    ../Vegetation/VegetationHeightSampler.cc
+    ../Vegetation/VegetationClassifier.cc
+    ../Vegetation/VegetationDiagnostics.cc)
+target_include_directories(vegetation_mask_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/.. ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(vegetation_mask_report PRIVATE Drogon::Drogon ${DEPTHWIZARD_GDAL_TARGET} ${OpenCV_LIBS})

@@ -17,7 +17,8 @@ enum class MaterialRole
      BUILDING_ROOF, 
      BUILDING_WALL, 
      BUILDING_EDGE,
-     ANALYSIS_OVERLAY 
+     ANALYSIS_OVERLAY,
+     VEGETATION_CANOPY   // Appended overlay node (vegetation stage 3)
 };// Typed materials
 
 enum class TextureSemantic
@@ -49,6 +50,7 @@ struct MaterialDescriptor
     bool doubleSided{false};
     bool unlit{false};
     std::string alphaMode{"OPAQUE"};
+    double alphaCutoff{0.5};   // MASK only; written for instanced vegetation materials
 };
 
 struct TextureAsset 

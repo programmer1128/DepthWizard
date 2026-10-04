@@ -65,6 +65,7 @@ file(GLOB SEMANTIC_CONTEXT_SRC CONFIGURE_DEPENDS "SemanticContext/*.cc" "Semanti
 file(GLOB SURFACE_FUSION_SRC CONFIGURE_DEPENDS "SurfaceFusion/*.cc" "SurfaceFusion/*.cpp")
 file(GLOB BUILDING_RECONSTRUCTION_SRC CONFIGURE_DEPENDS "BuildingReconstruction/*.cc" "BuildingReconstruction/*.cpp")
 file(GLOB DOWNLOAD_SERVICE_SRC CONFIGURE_DEPENDS "DownloadService/*.cc" "DownloadService/*.cpp")
+file(GLOB VEGETATION_SRC CONFIGURE_DEPENDS "Vegetation/*.cc" "Vegetation/*.cpp")
 
 # The old mesher depends on the removed pre-modular Draco/glTF API.
 list(FILTER MESH_SRC EXCLUDE REGEX "/MeshService\\.cc$")
@@ -82,7 +83,21 @@ endif()
 add_executable(${PROJECT_NAME} main.cc)
 # Default City3D worker (city3d_worker/README.md); DEPTHWIZARD_CITY3D_BINARY overrides it.
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-    DEPTHWIZARD_DEFAULT_CITY3D_BINARY="${CMAKE_CURRENT_SOURCE_DIR}/../../city3d_worker/build/bin/city3d_worker")
+    DEPTHWIZARD_DEFAULT_CITY3D_BINARY="${CMAKE_CURRENT_SOURCE_DIR}/../../city3d_worker/build/bin/city3d_worker"
+    DEPTHWIZARD_VEGETATION_ASSET_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets/vegetation/optimized")
+# Runtime vegetation assets (stage 5A): only the optimized GLBs and their
+# attribution/licences sit next to the executable; raw sources stay in the tree.
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/vegetation/optimized
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/vegetation/optimized/small_bush.glb
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/vegetation/optimized/forest_patch.glb
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/vegetation/optimized/forest_trees.glb
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/vegetation/optimized/
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/assets/vegetation/ATTRIBUTION.md
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/vegetation/
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/assets/vegetation/LICENSES
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets/vegetation/LICENSES)
 
 # Generate views (if using Drogon CSP templates)
 drogon_create_views(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/views
@@ -111,7 +126,8 @@ target_sources(${PROJECT_NAME}
                ${SEMANTIC_CONTEXT_SRC}
                ${SURFACE_FUSION_SRC}
                ${BUILDING_RECONSTRUCTION_SRC}
-               ${DOWNLOAD_SERVICE_SRC})
+               ${DOWNLOAD_SERVICE_SRC}
+               ${VEGETATION_SRC})
 
 # Add all specific folders to the include path so `#include "srtmExtractor.h"` works anywhere
 #add folder here too for target directories to be linked during compilation and enabled globally

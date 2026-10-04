@@ -1,6 +1,7 @@
 #include "GltfPackager.h"
 #include "../MeshMapping/PresentationMaterials.h"
 #include <algorithm>
+#include <array>
 #include <iostream>
 #include <cstring>
 #include <sstream>
@@ -15,8 +16,11 @@
 GlbBuildResult GltfPackager::buildSceneToMemory(
     const SceneMesh& scene,
     const std::vector<CompressedPrimitive>& compressedPrimitives,
-    size_t totalBuildingCount)
+    size_t totalBuildingCount,
+    const std::vector<AppendedMeshNode>& appendedNodes,
+    const InstancedPackage* instanced)
 {
+    const bool hasInstanced = instanced != nullptr && !instanced->empty();
     GlbBuildResult result;
     tinygltf::Model model;
 
@@ -88,6 +92,26 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
 
         size_t idxBytes = scene.edgePrimitive.indices.size() * sizeof(uint32_t);
         totalMemoryRequired += idxBytes + ((4 - (idxBytes % 4)) % 4);
+    }
+    
+    for (const auto& appended : appendedNodes) {
+        size_t bytes = appended.primitive.compressedBytes.size();
+        totalMemoryRequired += bytes + ((4 - (bytes % 4)) % 4);
+    }
+    const auto padded = [](size_t bytes) { return bytes + ((4 - (bytes % 4)) % 4); };
+    if (hasInstanced) {
+        for (const auto& geometry : instanced->geometries)
+            totalMemoryRequired += padded(geometry.positions.size() * sizeof(float)) +
+                                   padded(geometry.normals.size() * sizeof(float)) +
+                                   padded(geometry.indices.size() * sizeof(uint32_t)) +
+                                   padded(geometry.uvs.size() * sizeof(float));
+        for (const auto& texture : instanced->textures)
+            totalMemoryRequired += padded(texture.bytes.size());
+        for (const auto& node : instanced->nodes)
+            totalMemoryRequired += padded(node.translations.size() * sizeof(float)) +
+                                   padded(node.rotations.size() * sizeof(float)) +
+                                   padded(node.scales.size() * sizeof(float)) +
+                                   padded(node.colors.size() * sizeof(float));
     }
     
     mainBuffer.data.resize(totalMemoryRequired);
@@ -236,6 +260,57 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
         model.accessors.push_back(idxAcc);
         edgeIdxAccIdx = static_cast<int>(model.accessors.size() - 1);
     }
+
+    // 5c. Appended overlay nodes: their Draco payloads follow every existing byte.
+    std::vector<int> appendedBufferViews;
+    for (const auto& appended : appendedNodes) {
+        size_t dracoLen = appended.primitive.compressedBytes.size();
+        size_t pad = (4 - (dracoLen % 4)) % 4;
+        std::memcpy(mainBuffer.data.data() + currentOffset, appended.primitive.compressedBytes.data(), dracoLen);
+        if (pad > 0) std::memset(mainBuffer.data.data() + currentOffset + dracoLen, 0, pad);
+        tinygltf::BufferView view;
+        view.buffer = 0;
+        view.byteOffset = currentOffset;
+        view.byteLength = dracoLen;
+        model.bufferViews.push_back(view);
+        appendedBufferViews.push_back(static_cast<int>(model.bufferViews.size() - 1));
+        currentOffset += dracoLen + pad;
+    }
+
+    // 5d. Instanced vegetation: prototype geometry and per-node instance data,
+    //     after every existing byte.
+    const auto appendView = [&](const void* data, size_t bytes, int target) {
+        size_t pad = (4 - (bytes % 4)) % 4;
+        std::memcpy(mainBuffer.data.data() + currentOffset, data, bytes);
+        if (pad > 0) std::memset(mainBuffer.data.data() + currentOffset + bytes, 0, pad);
+        tinygltf::BufferView view;
+        view.buffer = 0;
+        view.byteOffset = currentOffset;
+        view.byteLength = bytes;
+        if (target != 0) view.target = target;
+        model.bufferViews.push_back(view);
+        currentOffset += bytes + pad;
+        return static_cast<int>(model.bufferViews.size() - 1);
+    };
+    std::vector<std::array<int, 4>> geometryViews;   // positions, normals, indices, uvs (-1: none)
+    std::vector<std::array<int, 4>> instanceViews;   // translations, rotations, scales, colours (-1: none)
+    std::vector<int> instancedImageViews;
+    if (hasInstanced) {
+        for (const auto& geometry : instanced->geometries)
+            geometryViews.push_back({
+                appendView(geometry.positions.data(), geometry.positions.size() * sizeof(float), TINYGLTF_TARGET_ARRAY_BUFFER),
+                appendView(geometry.normals.data(), geometry.normals.size() * sizeof(float), TINYGLTF_TARGET_ARRAY_BUFFER),
+                appendView(geometry.indices.data(), geometry.indices.size() * sizeof(uint32_t), TINYGLTF_TARGET_ELEMENT_ARRAY_BUFFER),
+                geometry.uvs.empty() ? -1 : appendView(geometry.uvs.data(), geometry.uvs.size() * sizeof(float), TINYGLTF_TARGET_ARRAY_BUFFER)});
+        for (const auto& node : instanced->nodes)
+            instanceViews.push_back(node.instancesFrom >= 0 ? std::array<int, 4>{-1, -1, -1, -1} : std::array<int, 4>{
+                appendView(node.translations.data(), node.translations.size() * sizeof(float), 0),
+                appendView(node.rotations.data(), node.rotations.size() * sizeof(float), 0),
+                appendView(node.scales.data(), node.scales.size() * sizeof(float), 0),
+                node.colors.empty() ? -1 : appendView(node.colors.data(), node.colors.size() * sizeof(float), 0)});
+        for (const auto& texture : instanced->textures)
+            instancedImageViews.push_back(appendView(texture.bytes.data(), texture.bytes.size(), 0));
+    }
     
     model.buffers.push_back(mainBuffer);
 
@@ -271,6 +346,80 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
 
         model.materials.push_back(mat);
         materialMap[desc.role] = static_cast<int>(model.materials.size() - 1);
+    }
+
+    // 6b. Appended overlay materials, after every base material.
+    const auto toValue = [](const AppendedMeshNode::Extra& extra) {
+        return std::visit([](const auto& value) { return tinygltf::Value(value); }, extra);
+    };
+    std::vector<int> appendedMaterials;
+    for (const auto& appended : appendedNodes) {
+        const MaterialDescriptor& desc = appended.material;
+        tinygltf::Material mat;
+        mat.name = desc.name;
+        if (desc.baseColorFactor.size() == 4) mat.pbrMetallicRoughness.baseColorFactor = desc.baseColorFactor;
+        mat.pbrMetallicRoughness.metallicFactor = desc.metallicFactor;
+        mat.pbrMetallicRoughness.roughnessFactor = desc.roughnessFactor;
+        mat.doubleSided = desc.doubleSided;
+        mat.alphaMode = desc.alphaMode;
+        tinygltf::Value::Object extrasObject;
+        if (desc.textureIndex >= 0) {
+            if (desc.textureIndex >= static_cast<int>(model.textures.size())) {
+                result.geometryWarnings.push_back("Material " + desc.name + " references a missing texture.");
+                return result;
+            }
+            mat.pbrMetallicRoughness.baseColorTexture.index = desc.textureIndex;
+            mat.pbrMetallicRoughness.baseColorTexture.texCoord = 0;
+            extrasObject["textureSemantic"] =
+                tinygltf::Value(std::string(depthwizard::presentation::textureSemanticName(desc.textureSemantic)));
+        }
+        for (const auto& [key, extra] : appended.extras) extrasObject[key] = toValue(extra);
+        mat.extras = tinygltf::Value(extrasObject);
+        model.materials.push_back(mat);
+        appendedMaterials.push_back(static_cast<int>(model.materials.size() - 1));
+    }
+
+    // 6c. Instanced vegetation materials, after every other material.
+    std::vector<int> instancedMaterials;
+    std::vector<int> instancedTextures;
+    if (hasInstanced) {
+        for (size_t t = 0; t < instanced->textures.size(); ++t) {
+            const TextureAsset& asset = instanced->textures[t];
+            tinygltf::Image image;
+            image.bufferView = instancedImageViews[t];
+            image.mimeType = asset.mimeType;
+            model.images.push_back(image);
+            tinygltf::Sampler sampler;
+            sampler.wrapS = asset.wrapS == TextureWrap::REPEAT ? TINYGLTF_TEXTURE_WRAP_REPEAT : TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE;
+            sampler.wrapT = asset.wrapT == TextureWrap::REPEAT ? TINYGLTF_TEXTURE_WRAP_REPEAT : TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE;
+            sampler.magFilter = TINYGLTF_TEXTURE_FILTER_LINEAR;
+            sampler.minFilter = TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR;
+            model.samplers.push_back(sampler);
+            tinygltf::Texture texture;
+            texture.source = static_cast<int>(model.images.size() - 1);
+            texture.sampler = static_cast<int>(model.samplers.size() - 1);
+            model.textures.push_back(texture);
+            instancedTextures.push_back(static_cast<int>(model.textures.size() - 1));
+        }
+        for (const auto& [desc, extras] : instanced->materials) {
+            tinygltf::Material mat;
+            mat.name = desc.name;
+            if (desc.baseColorFactor.size() == 4) mat.pbrMetallicRoughness.baseColorFactor = desc.baseColorFactor;
+            mat.pbrMetallicRoughness.metallicFactor = desc.metallicFactor;
+            mat.pbrMetallicRoughness.roughnessFactor = desc.roughnessFactor;
+            mat.doubleSided = desc.doubleSided;
+            mat.alphaMode = desc.alphaMode;
+            if (desc.alphaMode == "MASK") mat.alphaCutoff = desc.alphaCutoff;
+            if (desc.textureIndex >= 0 && static_cast<size_t>(desc.textureIndex) < instancedTextures.size()) {
+                mat.pbrMetallicRoughness.baseColorTexture.index = instancedTextures[static_cast<size_t>(desc.textureIndex)];
+                mat.pbrMetallicRoughness.baseColorTexture.texCoord = 0;
+            }
+            tinygltf::Value::Object extrasObject;
+            for (const auto& [key, extra] : extras) extrasObject[key] = toValue(extra);
+            mat.extras = tinygltf::Value(extrasObject);
+            model.materials.push_back(mat);
+            instancedMaterials.push_back(static_cast<int>(model.materials.size() - 1));
+        }
     }
 
     // 7. Assemble Mesh and Primitives
@@ -410,6 +559,162 @@ GlbBuildResult GltfPackager::buildSceneToMemory(
 
     tinygltf::Scene gltfScene;
     gltfScene.nodes.push_back(0);
+
+    // 8b. Appended overlay nodes: one mesh and one named node each, after the base node.
+    for (size_t index = 0; index < appendedNodes.size(); ++index) {
+        const AppendedMeshNode& appended = appendedNodes[index];
+        const CompressedPrimitive& prim = appended.primitive;
+        tinygltf::Primitive gltfPrim;
+        gltfPrim.mode = TINYGLTF_MODE_TRIANGLES;
+        gltfPrim.material = appendedMaterials[index];
+        tinygltf::Value::Object dracoAttrs;
+        const auto addAccessor = [&](const char* name, int attributeId, int type) {
+            if (attributeId < 0) return;
+            tinygltf::Accessor accessor;
+            accessor.bufferView = -1; // Draco
+            accessor.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+            accessor.type = type;
+            accessor.count = prim.vertexCount;
+            if (type == TINYGLTF_TYPE_VEC3 && std::string(name) == "POSITION" && prim.localBounds.isInitialized) {
+                accessor.minValues = { prim.localBounds.minX, prim.localBounds.minY, prim.localBounds.minZ };
+                accessor.maxValues = { prim.localBounds.maxX, prim.localBounds.maxY, prim.localBounds.maxZ };
+            }
+            model.accessors.push_back(accessor);
+            gltfPrim.attributes[name] = static_cast<int>(model.accessors.size() - 1);
+            dracoAttrs[name] = tinygltf::Value(attributeId);
+        };
+        addAccessor("POSITION", prim.posAttrId, TINYGLTF_TYPE_VEC3);
+        addAccessor("NORMAL", prim.normalAttrId, TINYGLTF_TYPE_VEC3);
+        addAccessor("TEXCOORD_0", prim.uvAttrId, TINYGLTF_TYPE_VEC2);
+        addAccessor("COLOR_0", prim.colorAttrId, TINYGLTF_TYPE_VEC4);
+        addAccessor("_FEATURE_ID_0", prim.featureIdAttrId, TINYGLTF_TYPE_SCALAR);
+        tinygltf::Value::Object dracoExt;
+        dracoExt["bufferView"] = tinygltf::Value(appendedBufferViews[index]);
+        dracoExt["attributes"] = tinygltf::Value(dracoAttrs);
+        gltfPrim.extensions["KHR_draco_mesh_compression"] = tinygltf::Value(dracoExt);
+        tinygltf::Accessor indexAcc;
+        indexAcc.bufferView = -1;
+        indexAcc.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
+        indexAcc.type = TINYGLTF_TYPE_SCALAR;
+        indexAcc.count = prim.indexCount;
+        model.accessors.push_back(indexAcc);
+        gltfPrim.indices = static_cast<int>(model.accessors.size() - 1);
+
+        tinygltf::Mesh appendedMesh;
+        appendedMesh.name = appended.name;
+        appendedMesh.primitives.push_back(gltfPrim);
+        model.meshes.push_back(appendedMesh);
+
+        tinygltf::Node appendedNode;
+        appendedNode.name = appended.name;
+        appendedNode.mesh = static_cast<int>(model.meshes.size() - 1);
+        tinygltf::Value::Object nodeExtras;
+        for (const auto& [key, extra] : appended.extras) nodeExtras[key] = toValue(extra);
+        appendedNode.extras = tinygltf::Value(nodeExtras);
+        model.nodes.push_back(appendedNode);
+        gltfScene.nodes.push_back(static_cast<int>(model.nodes.size() - 1));
+    }
+    // 8c. Instanced vegetation: shared geometry accessors, meshes, then one
+    //     EXT_mesh_gpu_instancing node per batch.
+    if (hasInstanced) {
+        std::vector<std::array<int, 4>> geometryAccessors;   // position, normal, index, uv (-1: none)
+        for (size_t g = 0; g < instanced->geometries.size(); ++g) {
+            const InstancedGeometry& geometry = instanced->geometries[g];
+            const size_t vertices = geometry.positions.size() / 3;
+            tinygltf::Accessor position;
+            position.bufferView = geometryViews[g][0];
+            position.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+            position.type = TINYGLTF_TYPE_VEC3;
+            position.count = vertices;
+            position.minValues = {1e300, 1e300, 1e300};
+            position.maxValues = {-1e300, -1e300, -1e300};
+            for (size_t v = 0; v < vertices; ++v)
+                for (int c = 0; c < 3; ++c) {
+                    position.minValues[c] = std::min(position.minValues[c], static_cast<double>(geometry.positions[v * 3 + c]));
+                    position.maxValues[c] = std::max(position.maxValues[c], static_cast<double>(geometry.positions[v * 3 + c]));
+                }
+            model.accessors.push_back(position);
+            const int positionIndex = static_cast<int>(model.accessors.size() - 1);
+            tinygltf::Accessor normal;
+            normal.bufferView = geometryViews[g][1];
+            normal.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+            normal.type = TINYGLTF_TYPE_VEC3;
+            normal.count = vertices;
+            model.accessors.push_back(normal);
+            const int normalIndex = static_cast<int>(model.accessors.size() - 1);
+            tinygltf::Accessor index;
+            index.bufferView = geometryViews[g][2];
+            index.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
+            index.type = TINYGLTF_TYPE_SCALAR;
+            index.count = geometry.indices.size();
+            model.accessors.push_back(index);
+            const int indexIndex = static_cast<int>(model.accessors.size() - 1);
+            int uvIndex = -1;
+            if (geometryViews[g][3] >= 0) {
+                tinygltf::Accessor uv;
+                uv.bufferView = geometryViews[g][3];
+                uv.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+                uv.type = TINYGLTF_TYPE_VEC2;
+                uv.count = vertices;
+                model.accessors.push_back(uv);
+                uvIndex = static_cast<int>(model.accessors.size() - 1);
+            }
+            geometryAccessors.push_back({positionIndex, normalIndex, indexIndex, uvIndex});
+        }
+        const int firstMesh = static_cast<int>(model.meshes.size());
+        for (const InstancedMeshDef& def : instanced->meshes) {
+            tinygltf::Mesh instancedMesh;
+            instancedMesh.name = def.name;
+            for (const auto& [geometry, material] : def.primitives) {
+                tinygltf::Primitive primitive;
+                primitive.mode = TINYGLTF_MODE_TRIANGLES;
+                primitive.material = instancedMaterials[static_cast<size_t>(material)];
+                primitive.attributes["POSITION"] = geometryAccessors[static_cast<size_t>(geometry)][0];
+                primitive.attributes["NORMAL"] = geometryAccessors[static_cast<size_t>(geometry)][1];
+                primitive.indices = geometryAccessors[static_cast<size_t>(geometry)][2];
+                if (geometryAccessors[static_cast<size_t>(geometry)][3] >= 0)
+                    primitive.attributes["TEXCOORD_0"] = geometryAccessors[static_cast<size_t>(geometry)][3];
+                instancedMesh.primitives.push_back(primitive);
+            }
+            model.meshes.push_back(instancedMesh);
+        }
+        std::vector<tinygltf::Value::Object> nodeAttributes;
+        for (size_t n = 0; n < instanced->nodes.size(); ++n) {
+            const InstancedNodeDef& def = instanced->nodes[n];
+            tinygltf::Value::Object attributes;
+            if (def.instancesFrom >= 0 && static_cast<size_t>(def.instancesFrom) < n) {
+                attributes = nodeAttributes[static_cast<size_t>(def.instancesFrom)];
+            } else {
+                const size_t count = def.translations.size() / 3;
+                const auto addInstanceAccessor = [&](int view, int type) {
+                    tinygltf::Accessor accessor;
+                    accessor.bufferView = view;
+                    accessor.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+                    accessor.type = type;
+                    accessor.count = count;
+                    model.accessors.push_back(accessor);
+                    return static_cast<int>(model.accessors.size() - 1);
+                };
+                attributes["TRANSLATION"] = tinygltf::Value(addInstanceAccessor(instanceViews[n][0], TINYGLTF_TYPE_VEC3));
+                attributes["ROTATION"] = tinygltf::Value(addInstanceAccessor(instanceViews[n][1], TINYGLTF_TYPE_VEC4));
+                attributes["SCALE"] = tinygltf::Value(addInstanceAccessor(instanceViews[n][2], TINYGLTF_TYPE_VEC3));
+                if (instanceViews[n][3] >= 0)
+                    attributes["_COLOR_0"] = tinygltf::Value(addInstanceAccessor(instanceViews[n][3], TINYGLTF_TYPE_VEC3));
+            }
+            nodeAttributes.push_back(attributes);
+            tinygltf::Node node;
+            node.name = def.name;
+            node.mesh = firstMesh + def.mesh;
+            node.extensions["EXT_mesh_gpu_instancing"] =
+                tinygltf::Value(tinygltf::Value::Object{{"attributes", tinygltf::Value(attributes)}});
+            tinygltf::Value::Object nodeExtras;
+            for (const auto& [key, extra] : def.extras) nodeExtras[key] = toValue(extra);
+            node.extras = tinygltf::Value(nodeExtras);
+            model.nodes.push_back(node);
+            gltfScene.nodes.push_back(static_cast<int>(model.nodes.size() - 1));
+        }
+        model.extensionsUsed.push_back("EXT_mesh_gpu_instancing");
+    }
     model.scenes.push_back(gltfScene);
     model.defaultScene = 0;
 

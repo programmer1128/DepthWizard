@@ -1,114 +1,112 @@
 #include "CalibrationController.h"
-
 #include "PipelineService.h"
 #include "../DataHandlers/MiniIOClient.h"
 #include "../FileGenerators/BackgroundTiffExportService.h"
-
 #include <string>
 #include <utility>
 
 static const char* exportStateName(JobStatus state)
 {
-    switch (state)
-    {
+     switch (state)
+     {
          case JobStatus::QUEUED: return "queued";
          case JobStatus::PROCESSING: return "processing";
          case JobStatus::READY: return "ready";
          case JobStatus::FAILED: return "failed";
-    }
-    return "unknown";
+     }
+     return "unknown";
 }
 
 drogon::Task<drogon::HttpResponsePtr> CalibrationController::processTerrain(
-    drogon::HttpRequestPtr request)
+     drogon::HttpRequestPtr request)
 {
-    drogon::MultiPartParser upload;
-    if (upload.parse(request) != 0)
-    {
-        Json::Value error;
-        error["message"] = "Failed to parse multipart request.";
-        auto response = drogon::HttpResponse::newHttpJsonResponse(error);
-        response->setStatusCode(drogon::k400BadRequest);
-        co_return response;
-    }
+     drogon::MultiPartParser upload;
+     if (upload.parse(request) != 0)
+     {
+         Json::Value error;
+         error["message"] = "Failed to parse multipart request.";
+         auto response = drogon::HttpResponse::newHttpJsonResponse(error);
+         response->setStatusCode(drogon::k400BadRequest);
+         co_return response;
+     }
 
-    const auto files = upload.getFilesMap();
-    auto image = files.find("image");
-    if (image == files.end())
-    {
-        Json::Value error;
-        error["message"] = "Missing image file.";
-        auto response = drogon::HttpResponse::newHttpJsonResponse(error);
-        response->setStatusCode(drogon::k400BadRequest);
-        co_return response;
-    }
+     const auto files = upload.getFilesMap();
+     auto image = files.find("image");
+     if (image == files.end())
+     {
+         Json::Value error;
+         error["message"] = "Missing image file.";
+         auto response = drogon::HttpResponse::newHttpJsonResponse(error);
+         response->setStatusCode(drogon::k400BadRequest);
+         co_return response;
+     }
 
-    try
-    {
-        // The pipeline completes GLB generation and queues GeoTIFF exports.
-        // Return its small rendering response without waiting for TIFF uploads.
-        Json::Value result = co_await PipelineService().executeCalibration(
-            image->second);
-        co_return drogon::HttpResponse::newHttpJsonResponse(result);
-    }
-    catch (const std::exception& error)
-    {
-        Json::Value body;
-        body["message"] = error.what();
-        auto response = drogon::HttpResponse::newHttpJsonResponse(body);
-        response->setStatusCode(drogon::k500InternalServerError);
-        co_return response;
-    }
+     try
+     {
+         // The pipeline completes GLB generation and queues GeoTIFF exports.
+         // Return its small rendering response without waiting for TIFF uploads.
+         Json::Value result = co_await PipelineService().executeCalibration(
+             image->second);
+         co_return drogon::HttpResponse::newHttpJsonResponse(result);
+     }
+     catch (const std::exception& error)
+     {
+         Json::Value body;
+         body["message"] = error.what();
+         auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+         response->setStatusCode(drogon::k500InternalServerError);
+         co_return response;
+     }
 }
 
 drogon::Task<drogon::HttpResponsePtr>
 CalibrationController::processNormalImageForTerrain(
-    drogon::HttpRequestPtr request)
+     drogon::HttpRequestPtr request)
 {
-    drogon::MultiPartParser upload;
-    if (upload.parse(request) != 0)
-    {
-        Json::Value error;
-        error["message"] = "Failed to parse multipart request.";
-        auto response = drogon::HttpResponse::newHttpJsonResponse(error);
-        response->setStatusCode(drogon::k400BadRequest);
-        co_return response;
-    }
+     drogon::MultiPartParser upload;
+     if (upload.parse(request) != 0)
+     {
+         Json::Value error;
+         error["message"] = "Failed to parse multipart request.";
+         auto response = drogon::HttpResponse::newHttpJsonResponse(error);
+         response->setStatusCode(drogon::k400BadRequest);
+         co_return response;
+     }
 
-    const auto files = upload.getFilesMap();
-    auto image = files.find("image");
-    if (image == files.end())
-    {
-        Json::Value error;
-        error["message"] = "Missing image file.";
-        auto response = drogon::HttpResponse::newHttpJsonResponse(error);
-        response->setStatusCode(drogon::k400BadRequest);
-        co_return response;
-    }
+     const auto files = upload.getFilesMap();
+     auto image = files.find("image");
+     if (image == files.end())
+     {
+         Json::Value error;
+         error["message"] = "Missing image file.";
+         auto response = drogon::HttpResponse::newHttpJsonResponse(error);
+         response->setStatusCode(drogon::k400BadRequest);
+         co_return response;
+     }
 
-    try
-    {
-        std::string savedFile = co_await PipelineService()
-            .executeCalibrationNormalImage(image->second);
+     try
+     {
+         std::string savedFile = co_await PipelineService()
+             .executeCalibrationNormalImage(image->second);
 
-        Json::Value result;
-        result["saved_file"] = std::move(savedFile);
-        co_return drogon::HttpResponse::newHttpJsonResponse(result);
-    }
-    catch (const std::exception& error)
-    {
-        Json::Value body;
-        body["message"] = error.what();
-        auto response = drogon::HttpResponse::newHttpJsonResponse(body);
-        response->setStatusCode(drogon::k500InternalServerError);
-        co_return response;
-    }
+         Json::Value result;
+         result["saved_file"] = std::move(savedFile);
+         co_return drogon::HttpResponse::newHttpJsonResponse(result);
+     }
+     catch (const std::exception& error)
+     {
+         Json::Value body;
+         body["message"] = error.what();
+         auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+         response->setStatusCode(drogon::k500InternalServerError);
+         co_return response;
+     }
 }
 
 drogon::Task<drogon::HttpResponsePtr> CalibrationController::getExportStatus(
-    drogon::HttpRequestPtr request, std::string uuid)
+     drogon::HttpRequestPtr request, std::string uuid)
 {
-    (void)request;
+     (void)request;
 
     // The initial upload response contains the UUID. Poll this endpoint
     // before requesting the DSM through a height-query API.

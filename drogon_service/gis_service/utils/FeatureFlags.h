@@ -13,8 +13,9 @@
 // flag defaults to the current behaviour. A flag whose phase has not landed
 // is reported as unimplemented and ignored.
 //
-// Not to be confused with DEPTHWIZARD_PRESENTATION (flat_urban | metric),
-// which selects the scene's vertical frame, not its visual style.
+// Not to be confused with DEPTHWIZARD_PRESENTATION (auto | flat_urban | metric,
+// see MeshMapping/ScenePresentationPolicy.h), which selects the scene's
+// vertical frame, not its visual style.
 using PresentationStyle = depthwizard::PresentationStyle;
 
 // shadow: City3D runs and is measured, but the returned GLB is native.

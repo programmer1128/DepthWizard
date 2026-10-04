@@ -13,7 +13,18 @@
 #include "../ImageTilingService/TilingService.h"
 #include "../MeshMapping/SceneMeshService.h"
 #include "../MeshMapping/LocalFrameTransformer.h"
+#include "../MeshMapping/ScenePresentationPolicy.h"
 #include "../MeshMapping/ScenePresentationSelector.h"
+#include "../MeshMapping/TerrainSurfaceComposer.h"
+#include "../Vegetation/VegetationCanopyBuilder.h"
+#include "../Vegetation/VegetationClassifier.h"
+#include "../Vegetation/VegetationDiagnostics.h"
+#include "../Vegetation/VegetationExtractor.h"
+#include "../Vegetation/VegetationHeightSampler.h"
+#include "../Vegetation/VegetationTreeCandidateGenerator.h"
+#include "../Vegetation/VegetationTreeDiagnostics.h"
+#include "../Vegetation/VegetationTreeInstancer.h"
+#include "../Vegetation/DenseForestProxyGenerator.h"
 #include "../ReferenceTerrainService/MetricReferenceOrchestrator.h"
 #include "../SemanticContext/GroundSurfaceService.h"
 #include "../SemanticContext/SemanticPostProcessor.h"
@@ -36,6 +47,7 @@
 #include <json/json.h>
 #include <optional>
 #include <opencv2/imgcodecs.hpp>
+#include <chrono>
 
 #include "../FileGenerators/TiffExporter.h"
 
@@ -545,44 +557,224 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
          meshConfig.neutralFacades = featureFlags.neutralFacades;
          const ScenePresentationDecision sceneDecision = ScenePresentationSelector::select(
              semantics, surface, buildings);
-         auto presentation = sceneDecision.presentation;
-
-         // Presentation Mode: Ensure that for urban scenes, ScenePresentation::FLAT_URBAN can be enforced
-         // so buildings sit on a clean ground reference plane with true 1:1 metric relative height (h_AGL).
-         const char* presentationEnv = std::getenv("DEPTHWIZARD_PRESENTATION");
-         if (presentationEnv)
-         {
-             const std::string envVal(presentationEnv);
-             if (envVal == "flat_urban" || envVal == "FLAT_URBAN" || envVal == "1")
-             {
-                 presentation = ScenePresentation::FLAT_URBAN;
-             }
-             else if (envVal == "metric" || envVal == "METRIC" || envVal == "0")
-             {
-                 presentation = ScenePresentation::METRIC;
-             }
-         }
-         else if (presentation == ScenePresentation::METRIC &&
-                  !buildings.buildings.empty() &&
-                  sceneDecision.vegetationFraction < 0.55 &&
-                  sceneDecision.groundReliefMetres <= 80.0)
-         {
-             // Enforce FLAT_URBAN for urban scenes to eliminate terrain pedestal/distortion
-             presentation = ScenePresentation::FLAT_URBAN;
-         }
+         // DEPTHWIZARD_PRESENTATION: auto (default) lets the selector decide;
+         // flat_urban and metric are explicit operator overrides. Render-only.
+         const ScenePresentationPolicySetting presentationPolicy = scenePresentationPolicyFromEnvironment();
+         if (presentationPolicy.warning)
+             LOG_WARN << "PipelineService: " << jobId << ": " << *presentationPolicy.warning;
+         const ScenePresentation presentation =
+             resolveScenePresentation(presentationPolicy.policy, sceneDecision);
          meshConfig.presentation = presentation;
 
          LOG_INFO << "PipelineService: automatic scene policy for " << jobId
+                  << "; requested_presentation=" << toString(presentationPolicy.policy)
+                  << "; selected_presentation=" << toString(sceneDecision.presentation)
+                  << "; resolved_presentation=" << toString(presentation)
                   << "; " << sceneDecision.reason
                   << "; strong_building_fraction=" << sceneDecision.strongBuildingFraction
                   << "; vegetation_fraction=" << sceneDecision.vegetationFraction
                   << "; supported_ground_relief_m=" << sceneDecision.groundReliefMetres
+                  << "; accepted_buildings=" << buildings.buildings.size()
                   << "; building_source=" << (usingSat2Lod2 ? "sat2lod2" : "native");
+         // Vegetation overlay (DEPTHWIZARD_VEGETATION, default 0): a canopy
+         // node appended after the unchanged scene. With the flag off nothing
+         // below runs and the GLB is produced exactly as before. Every input
+         // is read-only; the state lives here so the canopy input outlives
+         // the GLB build.
+         const VegetationConfig vegetationConfig = VegetationConfig::fromEnvironment();
+         for (const std::string& warning : vegetationConfig.warnings)
+             LOG_WARN << "PipelineService: " << jobId << ": " << warning;
+         std::optional<VegetationMask> vegetationMask;
+         std::optional<VegetationHeights> vegetationHeights;
+         std::optional<VegetationClassification> vegetationClasses;
+         std::optional<VegetationTreeCandidates> vegetationTrees;
+         VegetationCanopyMesh vegetationCanopy;
+         VegetationTreeInstances vegetationTreeInstances;
+         DenseForestProxies vegetationForest;
+         VegetationCover vegetationCover;
+         bool forestRequested = false;
+         bool coverRequested = false;
+         VegetationCanopyInput canopyInput;
+         const VegetationCanopyInput* vegetationForGlb = nullptr;
+         double vegetationMs = 0.0;
+         if (vegetationConfig.enabled())
+         {
+             const auto vegetationStarted = std::chrono::steady_clock::now();
+             vegetationMask = VegetationExtractor::extract(
+                 semantics, surface, TerrainSurfaceComposer::buildExactFootprintMask(buildings, metadata),
+                 metadata, vegetationConfig);
+             vegetationHeights = VegetationHeightSampler::sample(*vegetationMask, surface, vegetationConfig);
+             vegetationClasses = VegetationClassifier::classify(*vegetationMask, vegetationConfig);
+             vegetationMs = std::chrono::duration<double, std::milli>(
+                 std::chrono::steady_clock::now() - vegetationStarted).count();
+             LOG_INFO << "PipelineService: " << jobId << " " << vegetationConfig.summary();
+             for (const std::string& line : VegetationDiagnostics::summaryLines(
+                      *vegetationMask, *vegetationHeights, vegetationMs))
+                 LOG_INFO << "PipelineService: " << jobId << " " << line;
+             const bool usable = vegetationMask->inputsAvailable && vegetationMask->stats.cleanedPixels() > 0;
+             // auto: only with dense vegetation to show; 1: whenever usable.
+             const bool canopyRequested = vegetationConfig.canopy && usable &&
+                 (vegetationConfig.mode == VegetationMode::ON || vegetationClasses->stats.densePixels > 0);
+             // Stage 4: individual-tree candidates (diagnostics only; nothing
+             // is rendered yet, so the GLB is unchanged).
+             if (vegetationConfig.trees && usable)
+             {
+                 VegetationTreeInput treeInput;
+                 treeInput.mask = &*vegetationMask;
+                 treeInput.classification = &*vegetationClasses;
+                 treeInput.heights = &*vegetationHeights;
+                 treeInput.semantics = &semantics;
+                 treeInput.surface = &surface;
+                 treeInput.metadata = &metadata;
+                 treeInput.frame = scene.localFrame;
+                 treeInput.terrainConfig = meshConfig.terrain;
+                 if (presentation == ScenePresentation::FLAT_URBAN)
+                     treeInput.terrainConfig.elevationSource = TerrainElevationSource::FLAT_PRESENTATION;
+                 treeInput.presentation = presentation;
+                 treeInput.buildingDisplayHeightScale = config.heightScaleMultiplier;
+                 treeInput.config = vegetationConfig;
+                 treeInput.recoveryNdsm = &correction.correctedMetricNdsm;
+                 vegetationTrees = VegetationTreeCandidateGenerator::generate(treeInput);
+                 for (const std::string& line : VegetationTreeDiagnostics::summaryLines(*vegetationTrees))
+                     LOG_INFO << "PipelineService: " << jobId << " " << line;
+             }
+             // Stage 5: render the candidates as instanced proxies.
+             const bool treesRequested = vegetationTrees && vegetationTrees->enabled &&
+                                         !vegetationTrees->candidates.empty();
+             // Stage 5A: forest patches may appear without tree candidates
+             // (coarse metric forest), so they need the vegetation input too.
+             forestRequested = vegetationConfig.trees && usable && vegetationConfig.forestProxies &&
+                               vegetationConfig.assetMode == VegetationAssetMode::EXTERNAL &&
+                               presentation == ScenePresentation::METRIC && vegetationClasses->stats.densePixels > 0;
+             // Shrub cover (external assets, individual-tree resolution).
+             coverRequested = vegetationConfig.trees && vegetationMask->inputsAvailable &&
+                              vegetationConfig.assetMode == VegetationAssetMode::EXTERNAL &&
+                              vegetationClasses->stats.individualTreesResolvable;
+             if (canopyRequested || treesRequested || forestRequested || coverRequested)
+             {
+                 canopyInput.mask = &*vegetationMask;
+                 canopyInput.classification = &*vegetationClasses;
+                 canopyInput.heights = &*vegetationHeights;
+                 canopyInput.config = vegetationConfig;
+                 canopyInput.config.canopy = canopyRequested;
+                 canopyInput.buildingDisplayHeightScale = config.heightScaleMultiplier;
+                 canopyInput.output = &vegetationCanopy;
+                 canopyInput.treeCandidates = treesRequested ? &*vegetationTrees : nullptr;
+                 canopyInput.treeOutput = &vegetationTreeInstances;
+                 canopyInput.forestOutput = &vegetationForest;
+                 canopyInput.semantics = &semantics;
+                 canopyInput.coverOutput = &vegetationCover;
+                 vegetationForGlb = &canopyInput;
+             }
+             LOG_INFO << "PipelineService: " << jobId << " [Vegetation] usable=" << usable
+                      << ", display_height_scale=" << VegetationHeightSampler::displayHeightScale(
+                             presentation, config.heightScaleMultiplier)
+                      << ", canopy_requested=" << canopyRequested
+                      << ", tree_candidates=" << (vegetationTrees ? vegetationTrees->candidates.size() : 0)
+                      << ", trees_requested=" << treesRequested << ", asset_mode=" << toString(vegetationConfig.assetMode)
+                      << ", forest_requested=" << forestRequested << ", cover_requested=" << coverRequested;
+         }
+
+         const auto glbStarted = std::chrono::steady_clock::now();
          GlbBuildResult glb = SceneMeshService::generateGlb(
-            scene, surface, buildings, metadata, meshConfig);
+            scene, surface, buildings, metadata, meshConfig, vegetationForGlb);
+         const double glbMs = std::chrono::duration<double, std::milli>(
+             std::chrono::steady_clock::now() - glbStarted).count();
+
+         if (vegetationConfig.enabled() && vegetationClasses)
+         {
+             for (const std::string& line : VegetationDiagnostics::canopyLines(*vegetationClasses, vegetationCanopy))
+                 LOG_INFO << "PipelineService: " << jobId << " " << line;
+             if (!vegetationTreeInstances.empty())
+                 for (const std::string& line : VegetationTreeDiagnostics::instanceLines(vegetationTreeInstances))
+                     LOG_INFO << "PipelineService: " << jobId << " " << line;
+             if (forestRequested)
+                 for (const std::string& line : VegetationTreeDiagnostics::forestLines(vegetationForest))
+                     LOG_INFO << "PipelineService: " << jobId << " " << line;
+             if (coverRequested)
+                 LOG_INFO << "PipelineService: " << jobId << " " << VegetationTreeDiagnostics::coverLine(vegetationCover);
+             if (vegetationConfig.diagnostics)
+             {
+                 const char* root = std::getenv("DEPTHWIZARD_DIAGNOSTICS_DIR");
+                 const std::filesystem::path folder =
+                     std::filesystem::path(root && *root ? root : "reconstruction_diagnostics") / jobId / "vegetation";
+                 const cv::Mat optical = cv::imdecode(scene.rgbTextureBytes, cv::IMREAD_COLOR);
+                 bool written = VegetationDiagnostics::write(folder, vegetationConfig, semantics, *vegetationMask,
+                                                             *vegetationHeights, optical, vegetationMs) &&
+                                VegetationDiagnostics::writeCanopy(folder, *vegetationClasses, *vegetationMask,
+                                                                   vegetationCanopy, optical);
+                 if (vegetationTrees)
+                     written = VegetationTreeDiagnostics::write(folder, *vegetationTrees, vegetationMask->scale,
+                                                                surface.ndsm, vegetationHeights->ceilingMetres,
+                                                                optical) && written;
+                 if (!vegetationTreeInstances.empty())
+                     written = VegetationTreeDiagnostics::writeInstances(folder, vegetationTreeInstances) && written;
+                 if (forestRequested)
+                     written = VegetationTreeDiagnostics::writeForest(folder, vegetationForest) && written;
+                 if (coverRequested)
+                     written = VegetationTreeDiagnostics::writeCover(folder, vegetationCover, optical) && written;
+                 // Same-run comparison: the GLB without vegetation, built from
+                 // identical inputs (local diagnostics only).
+                 const auto baseStarted = std::chrono::steady_clock::now();
+                 const GlbBuildResult withoutVegetation =
+                     SceneMeshService::generateGlb(scene, surface, buildings, metadata, meshConfig);
+                 const double baseMs = std::chrono::duration<double, std::milli>(
+                     std::chrono::steady_clock::now() - baseStarted).count();
+                 const auto writeGlb = [&](const char* name, const std::vector<uint8_t>& bytes)
+                 {
+                     std::ofstream file(folder / name, std::ios::binary);
+                     file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+                     return static_cast<bool>(file);
+                 };
+                 written = writeGlb("without_vegetation.glb", withoutVegetation.compressedGlbByteBuffer) &&
+                           writeGlb("with_vegetation.glb", glb.compressedGlbByteBuffer) && written;
+                 LOG_INFO << "PipelineService: " << jobId << " [Vegetation] glb_build_ms with=" << glbMs
+                          << " without=" << baseMs << " bytes_with=" << glb.compressedGlbByteBuffer.size()
+                          << " bytes_without=" << withoutVegetation.compressedGlbByteBuffer.size();
+                 // Stage 5 rollback paths from the same inputs: canopy only
+                 // (the stage-3 output) and trees only.
+                 if (vegetationForGlb && canopyInput.config.canopy && (canopyInput.treeCandidates || forestRequested || coverRequested))
+                 {
+                     VegetationCanopyInput canopyOnly = canopyInput;
+                     VegetationCanopyMesh canopyScratch;
+                     canopyOnly.output = &canopyScratch;
+                     canopyOnly.treeCandidates = nullptr;
+                     canopyOnly.treeOutput = nullptr;
+                     canopyOnly.forestOutput = nullptr;
+                     canopyOnly.coverOutput = nullptr;
+                     canopyOnly.config.trees = false;   // No bushes, procedural trees or forest patches
+                     VegetationCanopyInput treesOnly = canopyInput;
+                     treesOnly.config.canopy = false;
+                     treesOnly.output = nullptr;
+                     treesOnly.treeOutput = nullptr;
+                     if (canopyInput.config.assetMode == VegetationAssetMode::EXTERNAL)
+                     {
+                         VegetationCanopyInput procedural = canopyInput;
+                         VegetationCanopyMesh proceduralCanopy;
+                         procedural.config.assetMode = VegetationAssetMode::PROCEDURAL;
+                         procedural.output = &proceduralCanopy;
+                         procedural.treeOutput = nullptr;
+                         procedural.forestOutput = nullptr;
+                         procedural.coverOutput = nullptr;
+                         written = writeGlb("procedural_with_vegetation.glb", SceneMeshService::generateGlb(
+                                       scene, surface, buildings, metadata, meshConfig, &procedural).compressedGlbByteBuffer) &&
+                                   written;
+                     }
+                     treesOnly.forestOutput = nullptr;
+                     treesOnly.coverOutput = nullptr;
+                     written = writeGlb("canopy_only.glb", SceneMeshService::generateGlb(
+                                   scene, surface, buildings, metadata, meshConfig, &canopyOnly).compressedGlbByteBuffer) &&
+                               writeGlb("trees_only.glb", SceneMeshService::generateGlb(
+                                   scene, surface, buildings, metadata, meshConfig, &treesOnly).compressedGlbByteBuffer) &&
+                               written;
+                 }
+                 if (!written)
+                     LOG_WARN << "PipelineService: " << jobId << ": cannot write vegetation diagnostics to " << folder;
+             }
+         }
 
          LOG_INFO << "PipelineService: mesh summary for " << jobId
-                  << "; presentation=" << (presentation == ScenePresentation::FLAT_URBAN ? "flat_urban" : "metric")
+                  << "; presentation=" << toString(presentation)
                   << "; emitted_buildings=" << glb.buildingCount
                   << "; terrain_triangles=" << glb.terrainTriangleCount
                   << "; roof_triangles=" << glb.roofTriangleCount
@@ -646,7 +838,8 @@ drogon::Task<Json::Value> PipelineService::executeCalibration(
                  std::move(correction.correctedMetricNdsm);
              diagnostics->stages = std::move(stages);
              diagnostics->buildings = std::move(buildings);
-             diagnostics->presentationMode = presentation == ScenePresentation::FLAT_URBAN ? "flat_urban" : "metric";
+             diagnostics->presentationMode = toString(presentation);
+             diagnostics->presentationPolicy = toString(presentationPolicy.policy);
              diagnostics->presentationReason = sceneDecision.reason;
              diagnostics->strongBuildingFraction = sceneDecision.strongBuildingFraction;
              diagnostics->vegetationFraction = sceneDecision.vegetationFraction;

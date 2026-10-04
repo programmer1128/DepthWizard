@@ -48,13 +48,11 @@ ScenePresentationDecision ScenePresentationSelector::select(
             }
         }
 
-    if (valid < surface.dtm.data.size() / 2 || valid == 0)
+    if (valid > 0)
     {
-        decision.reason = "Insufficient valid scene coverage; retaining geographic terrain.";
-        return decision;
+        decision.strongBuildingFraction = static_cast<double>(strongBuildings) / valid;
+        decision.vegetationFraction = static_cast<double>(vegetation) / valid;
     }
-    decision.strongBuildingFraction = static_cast<double>(strongBuildings) / valid;
-    decision.vegetationFraction = static_cast<double>(vegetation) / valid;
     int groundQuadrants = 0;
     for (int q = 0; q < 4; ++q)
     {
@@ -74,9 +72,15 @@ ScenePresentationDecision ScenePresentationSelector::select(
         decision.groundReliefMetres = groundElevations[highIndex] - low;
     }
 
+    // Invariant: a scene without accepted buildings is never flattened. The
+    // flat frame exists only to seat buildings on a clean ground plane.
+    if (buildings.buildings.empty())
+        decision.reason = "No accepted buildings; retaining metric terrain and skirts.";
+    else if (valid < surface.dtm.data.size() / 2 || valid == 0)
+        decision.reason = "Insufficient valid scene coverage; retaining geographic terrain.";
     // Broadly distributed buildings are required, not merely a building in a
     // mountain/forest scene. Supported large ground relief vetoes flattening.
-    if (decision.vegetationFraction >= .55)
+    else if (decision.vegetationFraction >= .55)
         decision.reason = "Vegetation-dominant scene; retaining terrain and skirts.";
     // This is a coarse surface-derived prior, not surveyed bare ground.
     // Do not let city-block contamination (as in the D.C. example) veto an

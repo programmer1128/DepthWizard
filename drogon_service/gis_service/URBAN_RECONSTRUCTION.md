@@ -22,9 +22,16 @@ downloaded GLBs are not updated. The old `view` query parameter is no longer
 used. The initial response remains only `uuid` and `glb_url`; the frontend just
 loads the GLB. The backend logs its decision and records it in `summary.json`.
 
-`ScenePresentationSelector` requires broadly distributed, high-confidence
-building evidence and at least three reconstructed objects to select urban
-presentation. Vegetation-dominant scenes, major supported ground relief,
+`DEPTHWIZARD_PRESENTATION=auto` (the default) makes `ScenePresentationSelector`
+the only automatic authority; nothing in `PipelineService` overrides it.
+`flat_urban` and `metric` force one presentation for every scene and are meant
+for diagnostics; any other value logs a warning and uses `auto`.
+
+`ScenePresentationSelector` never flattens a scene without accepted buildings
+("No accepted buildings; retaining metric terrain and skirts."). It requires
+broadly distributed, high-confidence building evidence and at least three
+reconstructed objects to select urban presentation, so one or two SAT2LoD2
+objects in a mountain scene keep the terrain. Vegetation-dominant scenes, major supported ground relief,
 localized/sparse buildings and insufficient observations retain terrain.
 This is a conservative presentation heuristic, not a guarantee of scene type.
 Its thresholds are centralized in that service and should be validated on

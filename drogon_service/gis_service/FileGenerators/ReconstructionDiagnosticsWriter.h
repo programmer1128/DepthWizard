@@ -15,6 +15,7 @@ struct ReconstructionDiagnosticPayload
     BuildingReconstructionDiagnostics stages;
     BuildingCollection buildings;
     std::string presentationMode;
+    std::string presentationPolicy{"auto"}; // DEPTHWIZARD_PRESENTATION as applied
     std::string presentationReason;
     double strongBuildingFraction{0};
     double vegetationFraction{0};

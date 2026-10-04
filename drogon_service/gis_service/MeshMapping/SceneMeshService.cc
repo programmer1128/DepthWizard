@@ -8,6 +8,17 @@
 #include "PresentationMaterials.h"
 #include "SceneAssembler.h"
 #include "../FileGenerators/GltfPackager.h"
+#include "../Vegetation/VegetationCanopyBuilder.h"
+#include "../Vegetation/VegetationTreeCandidateGenerator.h"
+#include "../Vegetation/VegetationTreeInstancer.h"
+#include "../Vegetation/VegetationTreePackaging.h"
+#include "../Vegetation/DenseForestProxyGenerator.h"
+#include "../Vegetation/ExternalVegetationAssetLoader.h"
+#include "../Vegetation/VegetationExternalPackaging.h"
+#include "../Vegetation/VegetationCoverGenerator.h"
+#include "../Vegetation/ForestTreeScatter.h"
+#include "../Vegetation/VegetationHeightSampler.h"
+#include "GeoTransformMapping.h"
 
 using depthwizard::PresentationStyle;
 
@@ -16,7 +27,8 @@ GlbBuildResult SceneMeshService::generateGlb(
      const GeoreferencedSurfaceBundle& surface,
      const BuildingCollection& buildings,
      const SpatialMetadata& metadata,
-     const MeshBuildConfig& config)
+     const MeshBuildConfig& config,
+     const VegetationCanopyInput* vegetation)
 {
      GlbBuildResult result;
      auto terrainConfig = config.terrain;
@@ -205,11 +217,216 @@ GlbBuildResult SceneMeshService::generateGlb(
          return result;
      }
 
+     // Stage 5A: external assets (small bush, forest patch) when requested and
+     // valid; otherwise the procedural stage-5 prototypes, unchanged.
+     const VegetationAssetPrototypeProvider* assets = nullptr;
+     if (vegetation != nullptr && vegetation->config.trees &&
+         vegetation->config.assetMode == VegetationAssetMode::EXTERNAL)
+     {
+         assets = &VegetationAssetPrototypeProvider::instance();
+         if (assets->bush() == nullptr)
+         {
+             result.geometryWarnings.push_back("External vegetation assets unavailable (" + assets->error() +
+                                               "); using the procedural tree prototypes.");
+             assets = nullptr;
+         }
+         else if (!assets->error().empty())
+             result.geometryWarnings.push_back("Forest-patch asset unavailable (" + assets->error() +
+                                               "); no forest patches.");
+     }
+     // External assets at individual-tree resolution: real shrubs fill the
+     // vegetation the image shows, and the smooth canopy mound (which would
+     // bury them and read as terrain contours) is not drawn.
+     const bool coverActive = assets != nullptr && vegetation->semantics != nullptr && vegetation->mask != nullptr &&
+         std::max(depthwizard::geo::columnSpacing(metadata), depthwizard::geo::rowSpacing(metadata)) <=
+             vegetation->config.individualTreeMaxGsdMetres;
+
+     // Vegetation canopy overlay: built after the scientific geometry, from
+     // read-only inputs, and appended as its own node. Nothing above changes.
+     std::vector<AppendedMeshNode> appendedNodes;
+     if (vegetation != nullptr && vegetation->config.canopy && !coverActive)
+     {
+         VegetationCanopyMesh canopy = VegetationCanopyBuilder::build(
+             *vegetation, surface, metadata, frame, terrainConfig, config.presentation);
+         // Reuse the original optical image when the style already embeds it.
+         int opticalTexture = -1;
+         for (std::size_t index = 0; index < sceneMesh.textures.size(); ++index)
+             if (sceneMesh.textures[index].semantic == TextureSemantic::OPTICAL_ORIGINAL)
+             {
+                 opticalTexture = static_cast<int>(index);
+                 break;
+             }
+         if (!canopy.empty() && opticalTexture < 0 && hasOpticalImage && sceneMesh.texture == std::nullopt)
+         {
+             TextureAsset optical;
+             optical.bytes = scene.rgbTextureBytes;
+             optical.mimeType = scene.textureMimeType;
+             optical.semantic = TextureSemantic::OPTICAL_ORIGINAL;
+             sceneMesh.textures.push_back(std::move(optical));
+             opticalTexture = static_cast<int>(sceneMesh.textures.size() - 1);
+         }
+         if (!canopy.empty() && opticalTexture < 0)
+         {
+             canopy.stats.skippedReason = "no optical image for the canopy texture";
+             result.geometryWarnings.push_back("Vegetation canopy skipped: no optical image to texture it.");
+         }
+         else if (!canopy.empty())
+         {
+             CompressedPrimitive compressedCanopy = DracoCompressor::compress(canopy.primitive, config.draco);
+             if (!compressedCanopy.success)
+             {
+                 canopy.stats.skippedReason = "compression failed";
+                 result.geometryWarnings.push_back("Failed to compress the vegetation canopy: " +
+                                                   compressedCanopy.errorMessage);
+             }
+             else
+             {
+                 const VegetationCanopyStats& s = canopy.stats;
+                 const VegetationHeights& heights = *vegetation->heights;
+                 const VegetationClassificationStats& c = vegetation->classification->stats;
+                 AppendedMeshNode node;
+                 node.name = "VEGETATION_CANOPY";
+                 node.primitive = std::move(compressedCanopy);
+                 node.material = depthwizard::presentation::textured(
+                     depthwizard::presentation::material("Vegetation_Canopy_Optical", MaterialRole::VEGETATION_CANOPY,
+                                                         {1.0, 1.0, 1.0, 1.0}, 0.0, 0.9, true),
+                     opticalTexture, TextureSemantic::OPTICAL_ORIGINAL);
+                 node.extras = {
+                     {"geometrySemantic", std::string("VEGETATION_CANOPY")},
+                     {"positionSource", std::string("SEMANTIC_VEGETATION")},
+                     {"heightSource", std::string("NDSM")},
+                     {"baseSource", std::string(s.presentationMode == "flat_urban" ? "FLAT_GROUND" : "TERRAIN_SURFACE")},
+                     {"visualizationProxy", true},
+                     {"scientificSurface", false},
+                     {"speciesInferred", false},
+                     {"externalGeographicDataUsed", false},
+                     {"presentationMode", s.presentationMode},
+                     {"displayHeightScale", static_cast<double>(s.displayHeightScale)},
+                     {"metricHeightP05", static_cast<double>(heights.p05)},
+                     {"metricHeightP50", static_cast<double>(heights.p50)},
+                     {"metricHeightP95", static_cast<double>(heights.p95)},
+                     {"metricHeightMax", static_cast<double>(s.metricHeightMax)},
+                     {"displayHeightMin", static_cast<double>(s.displayHeightMin)},
+                     {"displayHeightMax", static_cast<double>(s.displayHeightMax)},
+                     {"gridStridePixels", static_cast<double>(s.stride)},
+                     {"denseConfirmedPixels", static_cast<double>(c.denseConfirmed)},
+                     {"denseRecoveredUnknownPixels", static_cast<double>(c.denseRecovered)},
+                     {"denseGapClosedPixels", static_cast<double>(c.denseGap)},
+                     {"deterministicSeed", static_cast<double>(vegetation->config.seed)},
+                 };
+                 appendedNodes.push_back(std::move(node));
+             }
+         }
+         if (vegetation->output != nullptr) *vegetation->output = std::move(canopy);
+     }
+
+     // Tree visualization proxies (stage 5): EXT_mesh_gpu_instancing nodes
+     // appended after everything else, from the stage-4 candidates.
+     InstancedPackage treePackage;
+     const bool haveCandidates = vegetation != nullptr && vegetation->treeCandidates != nullptr &&
+                                 vegetation->treeCandidates->enabled && !vegetation->treeCandidates->candidates.empty();
+     const double extent = std::max(metadata.width * depthwizard::geo::columnSpacing(metadata),
+                                    metadata.height * depthwizard::geo::rowSpacing(metadata));
+     if (assets != nullptr)
+     {
+         // Fine resolution: dense canopy becomes individually grounded library
+         // trees; coarse imagery keeps the forest-patch proxies.
+         ForestTrees forestTrees;
+         const bool fine = std::max(depthwizard::geo::columnSpacing(metadata), depthwizard::geo::rowSpacing(metadata)) <=
+                           vegetation->config.individualTreeMaxGsdMetres;
+         if (fine && vegetation->config.forestProxies && assets->forestTrees() != nullptr && vegetation->mask != nullptr &&
+             vegetation->classification != nullptr && vegetation->heights != nullptr)
+         {
+             ForestTreeScatterInput scatter;
+             scatter.mask = vegetation->mask;
+             scatter.classification = vegetation->classification;
+             scatter.heights = vegetation->heights;
+             scatter.surface = &surface;
+             scatter.metadata = &metadata;
+             scatter.frame = frame;
+             scatter.terrainConfig = terrainConfig;
+             scatter.presentation = config.presentation;
+             scatter.config = vegetation->config;
+             for (const ExternalVegetationAsset& tree : assets->forestTrees()->prototypes)
+                 scatter.prototypeRadii.push_back(tree.horizontalRadius);
+             scatter.chunkSizeMetres = VegetationTreeInstancer::chunkSize(vegetation->config, extent);
+             forestTrees = ForestTreeScatter::generate(scatter);
+         }
+         DenseForestProxies forest;
+         if (!fine && vegetation->config.forestProxies && assets->forest() != nullptr && vegetation->mask != nullptr &&
+             vegetation->classification != nullptr && vegetation->heights != nullptr)
+         {
+             DenseForestProxyInput forestInput;
+             forestInput.mask = vegetation->mask;
+             forestInput.classification = vegetation->classification;
+             forestInput.heights = vegetation->heights;
+             forestInput.surface = &surface;
+             forestInput.metadata = &metadata;
+             forestInput.frame = frame;
+             forestInput.terrainConfig = terrainConfig;
+             forestInput.presentation = config.presentation;
+             forestInput.config = vegetation->config;
+             forestInput.prototypeRadius = assets->forest()->horizontalRadius;
+             forestInput.chunkSizeMetres = VegetationTreeInstancer::chunkSize(vegetation->config, extent);
+             forest = DenseForestProxyGenerator::generate(forestInput);
+         }
+         else
+             forest.disabledReason = !vegetation->config.forestProxies ? "DEPTHWIZARD_VEGETATION_FOREST_PROXIES=0"
+                 : fine ? (forestTrees.enabled ? "fine resolution: dense canopy drawn as " +
+                                                     std::to_string(forestTrees.trees.size()) + " library trees"
+                                               : forestTrees.disabledReason.empty() ? std::string("forest tree library unavailable")
+                                                                                    : forestTrees.disabledReason)
+                        : "forest asset or vegetation inputs unavailable";
+         VegetationTreeInstances trees;
+         if (haveCandidates)
+             trees = VegetationTreeInstancer::build(*vegetation->treeCandidates, frame, vegetation->config, extent);
+         const bool garden = config.presentation == ScenePresentation::FLAT_URBAN;
+         VegetationExternalPackaging::selectAssets(trees, !forest.empty() || !forestTrees.empty(), garden && coverActive);
+         VegetationCover cover;
+         if (coverActive)
+         {
+             VegetationCoverInput coverInput;
+             coverInput.mask = vegetation->mask;
+             coverInput.semantics = vegetation->semantics;
+             coverInput.surface = &surface;
+             coverInput.metadata = &metadata;
+             coverInput.opticalBytes = &scene.rgbTextureBytes;
+             coverInput.frame = frame;
+             coverInput.terrainConfig = terrainConfig;
+             coverInput.presentation = config.presentation;
+             coverInput.displayHeightScale = VegetationHeightSampler::displayHeightScale(
+                 config.presentation, vegetation->buildingDisplayHeightScale);
+             coverInput.config = vegetation->config;
+             coverInput.chunkSizeMetres = VegetationTreeInstancer::chunkSize(vegetation->config, extent);
+             if (!forestTrees.empty()) coverInput.forestDense = vegetation->classification;
+             for (const TreeInstance& i : trees.instances)
+                 if (i.rendered) coverInput.occupied.push_back({i.translation[0], i.translation[2], i.scale[0]});
+             cover = VegetationCoverGenerator::generate(coverInput);
+         }
+         const float prominence = cover.enabled && cover.mode == VegetationCoverMode::NATURAL
+                                      ? VegetationCoverGenerator::kNaturalProminence : 1.0f;
+         treePackage = VegetationExternalPackaging::package(trees, forest, *assets->bush(), assets->forest(),
+                                                            vegetation->config.seed, &cover, prominence, &forestTrees,
+                                                            assets->forestTrees());
+         if (vegetation->coverOutput != nullptr) *vegetation->coverOutput = std::move(cover);
+         if (vegetation->treeOutput != nullptr) *vegetation->treeOutput = std::move(trees);
+         if (vegetation->forestOutput != nullptr) *vegetation->forestOutput = std::move(forest);
+     }
+     else if (vegetation != nullptr && vegetation->config.trees && haveCandidates)
+     {
+         VegetationTreeInstances trees = VegetationTreeInstancer::build(
+             *vegetation->treeCandidates, frame, vegetation->config, extent);
+         treePackage = VegetationTreePackaging::package(
+             trees, ProceduralTreePrototypeProvider::instance(), vegetation->config.seed);
+         if (vegetation->treeOutput != nullptr) *vegetation->treeOutput = std::move(trees);
+     }
+
      //Binary Packaging
      size_t buildingCount = bldgMesh.emittedBuildingIds.size();
     
      GlbBuildResult packagedResult = GltfPackager::buildSceneToMemory(
-         sceneMesh, compressedPrimitives, buildingCount);
+         sceneMesh, compressedPrimitives, buildingCount, appendedNodes,
+         treePackage.empty() ? nullptr : &treePackage);
  
      // Merge metadata and pass back to PipelineService
      packagedResult.vertexCount = result.vertexCount;
