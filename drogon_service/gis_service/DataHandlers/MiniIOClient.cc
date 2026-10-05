@@ -3,8 +3,12 @@
 #include <aws/s3/S3Client.h>
 #include <aws/s3/model/GetObjectRequest.h>
 #include <aws/s3/model/PutObjectRequest.h>
+#include <aws/s3/model/HeadBucketRequest.h>
+#include <aws/s3/model/CreateBucketRequest.h>
 #include <aws/core/auth/AWSCredentialsProvider.h>
+#include <cstdlib>
 #include <iostream>
+#include <string>
 #include <iterator>
 #include <memory>
 #include <stdlib.h> // Required for setenv
@@ -22,12 +26,18 @@ void MinioClient::initAPI()
 
     // 2. Initialize the S3 Client ONCE for the entire application lifecycle
     Aws::Client::ClientConfiguration clientConfig;
-    clientConfig.endpointOverride = "127.0.0.1:9000";
+    // Object store location and credentials: DEPTHWIZARD_MINIO_* (deploy/secrets.env)
+    // override the built-in development defaults.
+    const auto setting = [](const char* name, const char* fallback) {
+        const char* value = std::getenv(name);
+        return std::string(value && *value ? value : fallback);
+    };
+    clientConfig.endpointOverride = setting("DEPTHWIZARD_MINIO_ENDPOINT", "127.0.0.1:9000");
     clientConfig.scheme = Aws::Http::Scheme::HTTP;
     clientConfig.region = "us-east-1"; 
 
-    Aws::Auth::AWSCredentials credentials("9490b5330aebc7f8088a", 
-         "6z+Xd9fn5ndPHHlNW9jbtK8xF6y9MxfRDW9PQ6ewsrI=");
+    Aws::Auth::AWSCredentials credentials(setting("DEPTHWIZARD_MINIO_ACCESS_KEY", "9490b5330aebc7f8088a"),
+         setting("DEPTHWIZARD_MINIO_SECRET_KEY", "6z+Xd9fn5ndPHHlNW9jbtK8xF6y9MxfRDW9PQ6ewsrI="));
     
     // Allocate the client to the global shared pointer
     s_s3Client = Aws::MakeShared<Aws::S3::S3Client>(
@@ -38,7 +48,20 @@ void MinioClient::initAPI()
         false
     );
 
-    std::cout << "[MinioClient] AWS SDK & Connection Pool Initialized." << std::endl;
+    // A fresh server has no bucket yet: create it once.
+    Aws::S3::Model::HeadBucketRequest head;
+    head.SetBucket("terrain-assets");
+    if (!s_s3Client->HeadBucket(head).IsSuccess())
+    {
+        Aws::S3::Model::CreateBucketRequest create;
+        create.SetBucket("terrain-assets");
+        const auto created = s_s3Client->CreateBucket(create);
+        std::cout << "[MinioClient] bucket terrain-assets "
+                  << (created.IsSuccess() ? "created" : "unavailable: " + created.GetError().GetMessage()) << std::endl;
+    }
+
+    std::cout << "[MinioClient] AWS SDK & Connection Pool Initialized ("
+              << clientConfig.endpointOverride << ")." << std::endl;
 }
 
 void MinioClient::shutdownAPI() 

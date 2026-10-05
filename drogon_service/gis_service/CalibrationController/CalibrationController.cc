@@ -132,30 +132,24 @@ drogon::Task<drogon::HttpResponsePtr> CalibrationController::getExportStatus(
 
      if (status->dsm == JobStatus::READY)
      {
-         result["dsm_url"] = MinioClient::generatePresignedUrl(
-            "terrain-assets", "heights_" + uuid + ".tif");
+         result["dsm_url"] = "/api/v1/download/heights_" + uuid + ".tif";
      }
      if (status->dtm == JobStatus::READY)
      {
-         result["dtm_url"] = MinioClient::generatePresignedUrl(
-            "terrain-assets", "dtm_" + uuid + ".tif");
+         result["dtm_url"] = "/api/v1/download/dtm_" + uuid + ".tif";
      }
      if (status->ndsm == JobStatus::READY)
      {
-         result["ndsm_url"] = MinioClient::generatePresignedUrl(
-            "terrain-assets", "ndsm_" + uuid + ".tif");
+         result["ndsm_url"] = "/api/v1/download/ndsm_" + uuid + ".tif";
      }
      if (status->confidence == JobStatus::READY)
      {
-         result["confidence_url"] = MinioClient::generatePresignedUrl(
-            "terrain-assets", "confidence_" + uuid + ".tif");
+         result["confidence_url"] = "/api/v1/download/confidence_" + uuid + ".tif";
      }
      if (status->buildings == JobStatus::READY)
      {
-         result["buildings_url"] = MinioClient::generatePresignedUrl(
-            "terrain-assets", "buildings_" + uuid + ".tif");
-         result["buildings_index_url"] = MinioClient::generatePresignedUrl(
-            "terrain-assets", "buildings_" + uuid + ".json");
+         result["buildings_url"] = "/api/v1/download/buildings_" + uuid + ".tif";
+         result["buildings_index_url"] = "/api/v1/download/buildings_" + uuid + ".json";
      }
 
      Json::Value errors(Json::arrayValue);

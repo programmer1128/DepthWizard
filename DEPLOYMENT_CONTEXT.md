@@ -81,7 +81,7 @@ imgproc, imgcodecs, photo), CGAL. Tests use GTest. C++20/23, GCC.
 cd drogon_service/gis_service
 cmake -S . -B build-integration -DCMAKE_BUILD_TYPE=Release
 cmake --build build-integration -j"$(nproc)"
-ctest --test-dir build-integration -j"$(nproc)"   # 202 tests, all must pass
+ctest --test-dir build-integration -j"$(nproc)"   # 359 tests, all must pass
 cd build-integration && ./gis_service                # run FROM here
 ```
 
@@ -109,8 +109,47 @@ Environment variables (all optional):
 | `DEPTHWIZARD_SAT2LOD2_TIMEOUT_S` | 900 | total SAT2LoD2 budget, including following Modal redirects |
 | `DEPTHWIZARD_DIAGNOSTICS` | on | `0` disables per-job debug rasters |
 | `DEPTHWIZARD_DIAGNOSTICS_DIR` | `./reconstruction_diagnostics` | diagnostic output; **never cleaned up**, so set it or disable it on a server |
-| `DEPTHWIZARD_PRESENTATION` | automatic | force `flat_urban` or `metric` |
+| `DEPTHWIZARD_PRESENTATION` | `auto` | `auto`: `ScenePresentationSelector` decides (dense urban scenes render flat, natural/high-relief/no-building scenes keep metric DTM terrain with a skirt). `flat_urban` / `metric` are operator overrides for every scene. Case-insensitive; any other value logs a warning and uses `auto`. Render-only: rasters are identical under every value |
+| `DEPTHWIZARD_VEGETATION` | `0` | Image-derived vegetation overlay: `0` bypasses it entirely (production default; the GLB is byte-identical to before), `1` runs it, `auto` runs it only when dense vegetation exists. **Stage 3: an orthophoto-textured `VEGETATION_CANOPY` node appended after the unchanged scene. Stage 4: individual-tree candidates. Stage 5 (current): the candidates render as low-poly instanced tree proxies (`EXT_mesh_gpu_instancing`, chunked `VEGETATION_TREES_<LOD>_<VARIANT>_CHUNK_<NNN>` nodes appended after the canopy); the base scene and the canopy are byte-identical with trees on or off** |
+| `DEPTHWIZARD_VEGETATION_CANOPY` / `_TREES` | `1` / `1` | Canopy node / instanced trees. `CANOPY=1 TREES=0` is the stage-3 output byte for byte; `CANOPY=0 TREES=1` gives trees only |
+| `DEPTHWIZARD_VEGETATION_TREE_CHUNK_SIZE_M` | `0` (auto) | Tree chunk edge on a stable projected-coordinate grid. Auto: a quarter of the scene extent, clamped to 100-250 m (NYC and Washington 163 m, sparse_desert 118 m) |
+| `DEPTHWIZARD_VEGETATION_ASSET_MODE` | `procedural` | `procedural` = the stage-5 low-poly prototypes, byte for byte. `external` (stage 5A) = the bundled CC-BY assets in `gis_service/assets/vegetation/optimized` (copied next to the executable by the build; see `ATTRIBUTION.md`): every stage-4 candidate is a textured `small_bush.glb` instance with its unchanged stage-5 transform, and dense metric non-arid forest gets `forest_patch.glb` proxies (`VEGETATION_FOREST_PROXY`). At individual-tree resolution (≤ `DEPTHWIZARD_VEGETATION_INDIVIDUAL_TREE_MAX_GSD_M`) external mode adds a shrub-cover layer (`VEGETATION_COVER_PROXY`, `Vegetation/VegetationCoverGenerator`) and does not draw the smooth canopy mound: flat_urban parks become gardens (semantic VEGETATION pixels, shrubs 0.6-1.5 m, lawn gaps, no tree-sized candidate bushes); natural scenes fill the vegetation the image shows (stage-2 mask plus an optical shrub detector for scrub the semantic model leaves UNKNOWN or the 1.5 m height gate drops), drawing every find as a pair of bushes at 1.3x the measured size (display only; `visualProminenceScale` in the node extras). Missing or invalid assets: one warning, procedural fallback |
+| `DEPTHWIZARD_VEGETATION_FOREST_PROXIES` | `1` | External mode only: `0` places no forest patches. Patches never appear in flat_urban or arid scenes (dense median nDSM height < 4 m) |
+| `DEPTHWIZARD_VEGETATION_TREE_LOD` | `1` | Writes NEAR, MEDIUM and FAR batches (the levels of one batch share their instance data); `0` writes NEAR only |
+| `DEPTHWIZARD_VEGETATION_MIN_HEIGHT_M` / `_MAX_HEIGHT_M` | `1.5` / `45` | Metric nDSM range accepted as vegetation object height |
+| `DEPTHWIZARD_VEGETATION_MAX_INSTANCES` / `_SEED` | `3000` / `1337` | Tree instance cap / cosmetic randomness seed |
+| `DEPTHWIZARD_VEGETATION_RECOVER_UNKNOWN` / `_UNKNOWN_PROBABILITY` | `1` / `0.50` | Conservative recovery of UNKNOWN pixels (the model has no tree class). UNKNOWN pixels never exceed about 0.575 vegetation probability (class rule: 0.50 minimum, 0.15 margin), so 0.50 is the strictest useful threshold; the building, road, water, height, spike and spatial-support gates always apply |
+| `DEPTHWIZARD_VEGETATION_DENSE_MIN_AREA_M2` | `300` | Smallest dense core that becomes canopy (NYC: the park is 18,036 m2; the largest isolated crowns are about 100 m2) |
+| `DEPTHWIZARD_VEGETATION_DENSE_LOCAL_COVERAGE` | `0.60` | Vegetation share of a 5 m window for a dense core (NYC park mean 0.91, isolated crowns at most 0.55) |
+| `DEPTHWIZARD_VEGETATION_INDIVIDUAL_TREE_MAX_GSD_M` | `1.0` | Coarser imagery (e.g. Test8 at 10 m) is canopy only; no individual trees are invented |
+| `DEPTHWIZARD_VEGETATION_CANOPY_MAX_TRIANGLES` | `200000` | Canopy budget: the grid stride is raised deterministically (and, on decimated metric terrain, aligned to the terrain grid) until it fits |
+| `DEPTHWIZARD_VEGETATION_CANOPY_SMOOTH_RADIUS_M` | `2.0` | Mask-normalised height smoothing radius (never crosses buildings, roads, water or NoData) |
+| `DEPTHWIZARD_VEGETATION_CANOPY_EDGE_SLOPE` | `1.0` | Maximum rise of the displayed canopy per metre from any mask edge (1.0 = 45 degrees): no walls or drapes |
+| `DEPTHWIZARD_VEGETATION_TREE_MIN_CROWN_RADIUS_M` / `_TREE_MAX_CROWN_RADIUS_M` | `1.0` / `7.0` | Crown radius limits for tree candidates (NYC isolated crowns measure 1.3 to 4.6 m; canopy crowns reach the 7 m cap because the nDSM shows no crown relief below about 15 m) |
+| `DEPTHWIZARD_VEGETATION_TREE_RECOVER_LOW_CONFIDENCE` | `0` | Experimental: crown-like UNKNOWN regions below the stage-2 threshold. Kept off: the ablation (`baselines/vegetation_stage4/ablation`) shows real street trees but also cars, parking lots and roof edges |
+| `DEPTHWIZARD_VEGETATION_TREE_RECOVERY_MIN_PROBABILITY` / `_TREE_RECOVERY_MIN_CONFIDENCE` | `0.30` / `0.60` | Gates of that experimental path (building, road and water gates always apply) |
+| `DEPTHWIZARD_VEGETATION_DIAGNOSTICS` | `0` | `1` writes to `<diagnostics dir>/<uuid>/vegetation/`: mask, class and canopy-wireframe images, `vegetation_summary.json`, `vegetation_canopy.json`, `vegetation_tree_candidates.json` with tree overlays (optical, nDSM), crown segmentation, rejected peaks and histograms, `vegetation_tree_instances.json` (per-instance variant, reason, rotation, metric and display height, transform and chunk), and `without_vegetation.glb` / `with_vegetation.glb` (plus `canopy_only.glb` / `trees_only.glb` when both layers render) built from identical inputs |
 | `OPENTOPOGRAPHY_API_KEY` | a key hard-coded in `HeightService/ReferenceDemService.cc` | COP30 downloads for `/api/height/compare` |
+
+Production environment example (the validated presentation path):
+
+```sh
+cd build-integration
+DEPTHWIZARD_PRESENTATION=auto \
+DEPTHWIZARD_PRESENTATION_STYLE=orthophoto \
+DEPTHWIZARD_SAT2LOD2=1 \
+DEPTHWIZARD_CITY3D=0 \
+DEPTHWIZARD_SAM2=0 \
+DEPTHWIZARD_KIBS=0 \
+DEPTHWIZARD_HYBRID_FUSION=0 \
+./gis_service
+```
+
+Do not set `DEPTHWIZARD_PRESENTATION=flat_urban` in production: it flattens
+natural and mountain scenes into textured plates. The log line
+`automatic scene policy ... requested_presentation=... resolved_presentation=...`
+shows what was requested, what the selector chose and what was rendered, and
+`summary.json` records `presentation_policy` and `presentation_mode`.
 
 ## MinIO
 
@@ -188,6 +227,28 @@ south of the terrain's north-west corner. The answer is either
 plus roof and base elevations) or `kind: "terrain"` (`elevation_meters`,
 absolute DSM).
 
+Vegetation overlays (the `VEGETATION_CANOPY` node and the
+`VEGETATION_TREE_INSTANCES` batches) are visualization proxies. `src/viewer/vegetation.js` holds the one predicate,
+`isVegetationVisualizationNode`, which reads the node extras
+(`visualizationProxy`, `geometrySemantic`) and falls back to the
+`VEGETATION_` name prefix. Height, inspector, measurement, flood and route
+raycasts, the heatmap, the elevation comparison and the model-recentering
+bounds all ignore vegetation; ordinary rendering still shows it. Scientific
+raycasts prune vegetation subtrees before testing, so instanced trees cost
+nothing there.
+
+Instanced trees load as `THREE.InstancedMesh` (three.js `GLTFMeshGpuInstancing`).
+`src/viewer/vegetationTreeRenderer.js` prepares them after load (instance
+bounding spheres for per-chunk frustum culling, optional NEAR-only shadows,
+diagnostic colours) and `src/viewer/vegetationLodController.js` keeps exactly
+one level (NEAR, MEDIUM, FAR, or hidden for dense-canopy crowns) visible per
+batch, chosen from the projected height of the batch's typical tree with
+hysteresis; `main.js` calls it before every render. URL toggles:
+`?treeShadows=1`, `?treeDiagnostic=1` (blue isolated, orange canopy crown),
+`?treeLod=0`. Forest-patch batches (`VEGETATION_FOREST_PROXY`, NEAR + MEDIUM)
+hide at far distance; external assets keep their authored sRGB textures and
+alpha-MASK materials. Tests: `npm test` (Node's built-in runner, no extra dependencies).
+
 ## API summary
 
 - `POST /api/v1/processor`: multipart field `image` (GeoTIFF) → `{uuid, glb_url}`.
@@ -258,3 +319,16 @@ any other browser.
 
 More detail on reconstruction, diagnostics and the height API:
 `drogon_service/gis_service/URBAN_RECONSTRUCTION.md`.
+
+
+## Production deployment (VPS)
+
+See `drogon_service/gis_service/deploy/README.md`: two checkouts (backend
+branch `new_flow_microservice_aritra`, frontend branch `front_final_aritra`),
+backend as the `depthwizard-backend` systemd service on 127.0.0.1:8081, MinIO
+on 127.0.0.1:9000, NGINX serving the frontend build and proxying `/api/`.
+`gis_service` loads `deploy/depthwizard.env` (validated flags, in git) and
+`deploy/secrets.env` (credentials, not in git) itself, so `./gis_service`
+needs no exports. GLB and raster URLs are same-origin `/api/v1/download/...`
+paths. The bounding-box flow is `POST /api/v1/global-map/geotiff`
+(Sentinel-2 L2A from Earth Search / AWS open data, no credentials).

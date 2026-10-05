@@ -259,14 +259,10 @@ static std::string uploadGlb(const std::string& jobId,
          throw std::runtime_error("PipelineService: GLB upload failed");
      }
 
-     std::string url = MinioClient::generatePresignedUrl(
-        "terrain-assets", objectKey);
-     if (url.empty())
-     {
-         throw std::runtime_error("PipelineService: GLB URL generation failed");
-     }
-
-     return url;
+     // Same-origin download path (DownloadService streams it from MinIO), so
+     // browsers never need to reach the object store: it stays on 127.0.0.1
+     // behind NGINX. The frontend resolves it against its API base.
+     return "/api/v1/download/" + objectKey;
 }
 
 drogon::Task<Json::Value> PipelineService::executeCalibration(

@@ -562,3 +562,8 @@ FodyWeavers.xsd
 *.tlog
 
 # End of https://www.toptal.com/developers/gitignore/api/intellij+all,visualstudio,visualstudiocode,cmake,c,c++
+
+# Server credentials (deploy/secrets.env.example is the template).
+deploy/secrets.env
+# Release builds made by deploy/scripts/build_backend.sh.
+build-release/

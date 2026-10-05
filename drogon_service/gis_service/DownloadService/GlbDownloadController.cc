@@ -10,9 +10,15 @@
 
 namespace
 {
+bool endsWith(const std::string& text, const std::string& suffix)
+{
+    return text.size() > suffix.size() && text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// Job products only: the GLB and the queued raster exports.
 bool isValidGlbFilename(const std::string& filename)
 {
-    if (filename.size() <= 4 || filename.compare(filename.size() - 4, 4, ".glb") != 0)
+    if (!endsWith(filename, ".glb") && !endsWith(filename, ".tif") && !endsWith(filename, ".json"))
     {
         return false;
     }
@@ -46,7 +52,9 @@ drogon::Task<drogon::HttpResponsePtr> GlbDownloadController::downloadGlb(
 
     auto response = drogon::HttpResponse::newHttpResponse();
     response->setStatusCode(drogon::k200OK);
-    response->setContentTypeString("model/gltf-binary");
+    response->setContentTypeString(endsWith(filename, ".tif")    ? "image/tiff"
+                                   : endsWith(filename, ".json") ? "application/json"
+                                                                 : "model/gltf-binary");
     response->addHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
     response->setBody(std::string(contents.begin(), contents.end()));
     co_return response;

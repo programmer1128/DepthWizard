@@ -5,3 +5,7 @@ drogon_service/gis_service/codebase_context.txt
 baselines/
 tools/baseline/node/node_modules/
 tools/baseline/**/__pycache__/
+
+# City3D worker: generated pinned upstream tree and build output
+third_party/City3D/
+city3d_worker/build/
