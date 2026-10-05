@@ -3,6 +3,7 @@
 // REAL-TIME TERRAIN INSPECTOR
 // ============================================================
 
+import { intersectScientific } from '../viewer/vegetation.js';
 import * as THREE from 'three';
 
 import {
@@ -28,7 +29,7 @@ function inspectTerrain(event) {
     updatePointer(event);
     raycaster.setFromCamera(pointer, camera);
 
-    const intersections = raycaster.intersectObject(state.terrainModel, true);
+    const intersections = intersectScientific(raycaster, state.terrainModel);
     if (!intersections.length) return;
 
     const point = intersections[0].point.clone();

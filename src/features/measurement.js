@@ -3,6 +3,7 @@
 // DE-EXAGGERATED TRUE METRIC MEASUREMENT
 // ============================================================
 
+import { intersectScientific } from '../viewer/vegetation.js';
 import * as THREE from 'three';
 
 import {
@@ -43,7 +44,7 @@ function getTerrainPoint(event) {
     updatePointer(event);
     raycaster.setFromCamera(pointer, camera);
 
-    const intersections = raycaster.intersectObject(state.terrainModel, true);
+    const intersections = intersectScientific(raycaster, state.terrainModel);
     if (!intersections.length) return null;
 
     return intersections[0].point.clone();

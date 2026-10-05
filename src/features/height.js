@@ -3,6 +3,7 @@
 // TERRAIN CLICK + HEIGHT INSPECTION
 // ============================================================
 
+import { intersectScientific } from '../viewer/vegetation.js';
 import * as THREE from 'three';
 
 import {
@@ -286,8 +287,7 @@ async function handleTerrainClick(event) {
 
     // Only solid surfaces: the white building outlines are line primitives
     // and would otherwise intercept clicks near every edge.
-    const hit = raycaster
-        .intersectObject(state.terrainModel, true)
+    const hit = intersectScientific(raycaster, state.terrainModel)
         .find((intersection) => intersection.object?.isMesh);
 
     if (!hit) {

@@ -6,6 +6,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { isVegetationVisualizationNode, scientificBounds } from './vegetation.js';
+import { setupVegetationTrees, vegetationTreeOptionsFromUrl } from './vegetationTreeRenderer.js';
 
 import {
     scene,
@@ -256,6 +258,9 @@ function removeCurrentTerrain() {
         state.terrainModel
     );
 
+    state.vegetationTrees?.dispose();
+    state.vegetationTrees = null;
+
     disposeObject(
         state.terrainModel
     );
@@ -343,9 +348,11 @@ export function loadTerrainGLB(url) {
                 // Calculate original model bounds
                 // --------------------------------------------
 
+                // Scientific reference bounds: vegetation proxies (canopy,
+                // trees, shrubs) must not move the model centre or the
+                // raster mapping used by the height APIs.
                 const box =
-                    new THREE.Box3()
-                        .setFromObject(model);
+                    scientificBounds(model);
 
                 const center =
                     box.getCenter(
@@ -386,6 +393,13 @@ export function loadTerrainGLB(url) {
                 model.userData.baseScaleY = model.scale.y || 1;
                 model.scale.y = model.userData.baseScaleY * (state.verticalExaggeration || 1);
                 model.updateMatrixWorld(true);
+
+                // Instanced vegetation proxies: bounds for culling, one LOD
+                // level per batch before the first render (null without them).
+                state.vegetationTrees = setupVegetationTrees(
+                    model,
+                    vegetationTreeOptionsFromUrl(window.location.search)
+                );
 
                 // Prepare the stable comparison shader before first render.
                 //patchTerrainModel(model);
@@ -675,6 +689,11 @@ export function updateTerrainHeatmap() {
     state.terrainModel.traverse((child) => {
 
         if (!child.isMesh || !child.geometry) {
+            return;
+        }
+
+        // Vegetation keeps its own material: the heatmap is scientific.
+        if (isVegetationVisualizationNode(child)) {
             return;
         }
 

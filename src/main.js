@@ -967,6 +967,9 @@ function animate(timestamp) {
     previousCameraPosition.copy(camera.position);
     updateTacticalHUD();
 
+    // One vegetation LOD level per batch for this camera, before drawing.
+    state.vegetationTrees?.update(camera, renderer);
+
     // --------------------------------------------------------
     // Render
     // --------------------------------------------------------
@@ -984,3 +987,10 @@ function animate(timestamp) {
 // ============================================================
 
 initializeApplication();
+// Baseline capture mode for fixed-camera screenshots (backend tools/baseline).
+// Loaded only when requested, so normal sessions are unaffected.
+const baselineParams = new URLSearchParams(window.location.search);
+if (baselineParams.has('baselineGlb')) {
+    import('./testing/baselineHook.js')
+        .then((hook) => hook.runBaselineCapture(baselineParams));
+}

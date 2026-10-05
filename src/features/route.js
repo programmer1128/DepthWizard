@@ -3,6 +3,7 @@
 // ROUTE DRAWING + SURFACE FOLLOWING + FLYTHROUGH
 // ============================================================
 
+import { intersectScientific } from '../viewer/vegetation.js';
 import * as THREE from 'three';
 
 import {
@@ -78,9 +79,9 @@ function getTerrainIntersection(event) {
     );
 
     const intersections =
-        raycaster.intersectObject(
-            state.terrainModel,
-            true
+        intersectScientific(
+            raycaster,
+            state.terrainModel
         );
 
     if (!intersections.length) {
@@ -561,9 +562,9 @@ export async function updateRouteLine() {
 
 
             const intersections =
-                raycaster.intersectObject(
-                    state.terrainModel,
-                    true
+                intersectScientific(
+                    raycaster,
+                    state.terrainModel
                 );
 
 

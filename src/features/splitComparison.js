@@ -5,6 +5,7 @@
 // string mutation after the material has been compiled.
 // ============================================================
 
+import { isVegetationVisualizationNode, scientificBounds } from '../viewer/vegetation.js';
 import * as THREE from 'three';
 
 import { camera, renderer } from '../viewer/scene.js';
@@ -145,7 +146,8 @@ export function patchTerrainModel(model) {
     if (!model) return;
 
     model.traverse((child) => {
-        if (!child.isMesh) return;
+        // Vegetation proxies are not elevation surfaces: never recoloured.
+        if (!child.isMesh || isVegetationVisualizationNode(child)) return;
 
         const materials = Array.isArray(child.material)
             ? child.material
@@ -160,7 +162,7 @@ export function patchTerrainModel(model) {
 export function updateComparisonBounds(model = state.terrainModel) {
     if (!model) return;
 
-    const box = new THREE.Box3().setFromObject(model);
+    const box = scientificBounds(model);
     const minY = Number.isFinite(box.min.y) ? box.min.y : 0;
     const maxY = Number.isFinite(box.max.y) ? box.max.y : minY + 1;
 
@@ -170,7 +172,8 @@ export function updateComparisonBounds(model = state.terrainModel) {
     };
 
     model.traverse((child) => {
-        if (!child.isMesh) return;
+        // Vegetation proxies are not elevation surfaces: never recoloured.
+        if (!child.isMesh || isVegetationVisualizationNode(child)) return;
 
         const materials = Array.isArray(child.material)
             ? child.material
@@ -262,7 +265,7 @@ function updateSplitUI() {
 
     if (state.terrainModel) {
         state.terrainModel.traverse((child) => {
-            if (!child.isMesh) return;
+            if (!child.isMesh || isVegetationVisualizationNode(child)) return;
             const materials = Array.isArray(child.material)
                 ? child.material
                 : [child.material];

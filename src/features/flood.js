@@ -3,6 +3,7 @@
 // HYDROLOGICALLY SEEDED FLOOD SIMULATOR
 // ============================================================
 
+import { intersectScientific, scientificBounds } from '../viewer/vegetation.js';
 import * as THREE from 'three';
 
 import { scene, camera, renderer } from '../viewer/scene.js';
@@ -53,7 +54,7 @@ function getTerrainIntersection(event) {
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
     raycaster.setFromCamera(pointer, camera);
-    const hits = raycaster.intersectObject(state.terrainModel, true);
+    const hits = intersectScientific(raycaster, state.terrainModel);
 
     return hits.length ? hits[0].point.clone() : null;
 }
@@ -64,7 +65,7 @@ async function sampleTerrainGrid(resolution = 28) {
     const token = samplingToken;
     state.terrainModel.updateMatrixWorld(true);
 
-    const box = new THREE.Box3().setFromObject(state.terrainModel);
+    const box = scientificBounds(state.terrainModel);
     const minX = box.min.x;
     const maxX = box.max.x;
     const minZ = box.min.z;
@@ -100,7 +101,7 @@ async function sampleTerrainGrid(resolution = 28) {
             origin.set(x, maxY, z);
             raycaster.set(origin, down);
 
-            const hits = raycaster.intersectObject(state.terrainModel, true);
+            const hits = intersectScientific(raycaster, state.terrainModel);
             if (hits.length) {
                 heights[index] = hits[0].point.y;
             }

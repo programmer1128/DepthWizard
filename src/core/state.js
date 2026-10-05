@@ -10,6 +10,7 @@ export const state = {
     // ----------------------------------------------------------
 
     terrainModel: null,
+    vegetationTrees: null,   // Instanced vegetation proxies (vegetationTreeRenderer.js)
     terrainBounds: null,
     currentLoadedUrl: null,
 

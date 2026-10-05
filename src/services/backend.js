@@ -3,12 +3,19 @@
 // BACKEND API SERVICE
 // ============================================================
 
-// IMPORTANT:
-// Must match the drogon listener (main.cc: 0.0.0.0:8081). Override per
-// deployment with VITE_API_BASE, e.g. VITE_API_BASE=http://host:8081 npm run dev
+// Same origin by default: the browser calls /api/... on the host that served
+// the page. In production NGINX proxies /api to the backend; in development
+// the Vite dev server does (vite.config.js, DEPTHWIZARD_BACKEND_URL). Set
+// VITE_API_BASE only when the backend lives on another origin, e.g.
+// VITE_API_BASE=http://host:8081 npm run build (the backend must then allow
+// that origin: DEPTHWIZARD_CORS_ORIGINS).
 
 export const API_BASE =
-    (import.meta.env?.VITE_API_BASE || 'http://localhost:8081').replace(/\/+$/, '');
+    (import.meta.env?.VITE_API_BASE ?? '').replace(/\/+$/, '');
+
+// Human-readable backend location for error messages.
+const BACKEND_LABEL = API_BASE ||
+    (typeof window !== 'undefined' ? window.location.origin : 'this server');
 
 export const GEOTIFF_PROCESSOR_ENDPOINT = `${API_BASE}/api/v1/processor`;
 export const NORMAL_IMAGE_PROCESSOR_ENDPOINT = `${API_BASE}/api/v1/processor/normal-image`;
@@ -91,7 +98,7 @@ export async function processImage(file, imageType = 'auto') {
         const seconds = Math.round((Date.now() - started) / 1000);
         throw new Error(
             seconds < 5
-                ? `Unable to connect to backend at ${API_BASE}. Please ensure the server is running.`
+                ? `Unable to connect to backend at ${BACKEND_LABEL}. Please ensure the server is running.`
                 : `The connection to the backend was lost after ${seconds} s of processing. ` +
                   'Check the backend log; its idle_connection_timeout must exceed the processing time.'
         );
@@ -259,8 +266,8 @@ export async function generateGlobalMapGeoTIFF({
 
         throw new Error(
             `Unable to connect to the global-map backend at ` +
-            `${GLOBAL_MAP_GEOTIFF_ENDPOINT}. ` +
-            `Make sure the backend is running on port 8081.`
+            `${BACKEND_LABEL}${GLOBAL_MAP_GEOTIFF_ENDPOINT.slice(API_BASE.length)}. ` +
+            `Make sure the backend is running.`
         );
     } finally {
         clearTimeout(timeout);
