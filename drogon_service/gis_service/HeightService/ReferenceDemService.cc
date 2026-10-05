@@ -1,5 +1,6 @@
 #include "ReferenceDemService.h"
 #include <drogon/HttpClient.h>
+#include <trantor/utils/Logger.h>
 
 #include <cstdlib>
 #include <sstream>
@@ -23,10 +24,22 @@ drogon::HttpClientPtr bhuvanClient()
      return client;
 }
 
+// The key comes only from the server's settings (deploy/secrets.env or the
+// environment); none is compiled in.
 std::string openTopographyKey()
 {
      const char* key = std::getenv("OPENTOPOGRAPHY_API_KEY");
-     return key && *key ? key : "9edec22bf8fbc738f1e6e5189a8c188f";
+     return key && *key ? key : "";
+}
+
+// OpenTopography echoes the API key back in its error text: never pass its
+// body to clients. Keep a short, key-free excerpt for the server log.
+std::string redacted(std::string text, const std::string& secret)
+{
+     if (!secret.empty())
+          for (std::size_t at = text.find(secret); at != std::string::npos; at = text.find(secret, at))
+               text.replace(at, secret.size(), "<redacted>");
+     return text.substr(0, 300);
 }
 
 std::string coordinate(double value)
@@ -59,6 +72,11 @@ drogon::Task<ReferenceDem> ReferenceDemService::fetchReference(
 
      if (tag == "opentopography")
      {
+         const std::string key = openTopographyKey();
+         if (key.empty())
+             throw ReferenceDemUnavailable(
+                 "The OpenTopography reference is not configured on this server "
+                 "(OPENTOPOGRAPHY_API_KEY in deploy/secrets.env).");
          auto request = drogon::HttpRequest::newHttpRequest();
          request->setMethod(drogon::Get);
          request->setPath("/API/globaldem?demtype=" + std::string(kOpenTopographyDataset) +
@@ -66,15 +84,22 @@ drogon::Task<ReferenceDem> ReferenceDemService::fetchReference(
                           "&north=" + coordinate(bounds.maxLat) +
                           "&west=" + coordinate(bounds.minLon) +
                           "&east=" + coordinate(bounds.maxLon) +
-                          "&outputFormat=GTiff&API_Key=" + openTopographyKey());
+                          "&outputFormat=GTiff&API_Key=" + key);
          const auto response = co_await openTopographyClient()->sendRequestCoro(
              request, kRequestTimeoutSeconds);
          if (!response || response->statusCode() != drogon::k200OK)
+         {
+             if (response)
+                 LOG_WARN << "ReferenceDemService: OpenTopography HTTP "
+                          << static_cast<int>(response->statusCode()) << ": "
+                          << redacted(std::string(response->body()), key);
+             const int status = response ? static_cast<int>(response->statusCode()) : 0;
              throw ReferenceDemUnavailable(
-                 "OpenTopography request failed" +
-                 (response ? " (HTTP " + std::to_string(static_cast<int>(response->statusCode())) +
-                                 "): " + std::string(response->body().substr(0, 300))
-                           : std::string(": no response")));
+                 !response ? std::string("OpenTopography request failed: no response")
+                 : status == 401 || status == 403
+                     ? "OpenTopography rejected the server's API key (HTTP " + std::to_string(status) + ")."
+                     : "OpenTopography request failed (HTTP " + std::to_string(status) + ").");
+         }
          co_return ReferenceDem{bodyBytes(response), kOpenTopographyDataset};
      }
 
