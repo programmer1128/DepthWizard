@@ -1,0 +1,150 @@
+{
+ "forest_patch": {
+  "alpha_mask_coverage_by_cutoff": {
+   "Green_Elka": {
+    "0.3": 0.6606,
+    "0.45": 0.6201,
+    "0.6": 0.5705
+   },
+   "Green_sosna.001": {
+    "0.3": 0.4785,
+    "0.45": 0.4493,
+    "0.6": 0.4134
+   }
+  },
+  "dropped_materials": [
+   "Floor",
+   "Kust_1",
+   "Kust_2",
+   "Paporotnik"
+  ],
+  "images": 2,
+  "kept_materials": [
+   "Green_Elka",
+   "Green_sosna.001",
+   "Wood_tree.001",
+   "Wood_tree.002"
+  ],
+  "normalised_bounds": [
+   [
+    -2.98057,
+    0.0,
+    -2.954361
+   ],
+   [
+    2.98057,
+    1.0,
+    2.954361
+   ]
+  ],
+  "normalised_radius": 3.9695,
+  "optimized_bytes": 1804028,
+  "optimized_triangles": 32826,
+  "sha256": "ba0b38774f1085e25e42730343f84bd7d1dd6d738a6825ce676d0c576a4fd881",
+  "source_materials": [
+   "Floor",
+   "Green_Elka",
+   "Green_sosna.001",
+   "Kust_1",
+   "Kust_2",
+   "Paporotnik",
+   "Wood_tree.001",
+   "Wood_tree.002"
+  ],
+  "source_triangles_all": 36702,
+  "source_up_axis": "Z (mesh data); Y after the Sketchfab root transform",
+  "triangles_per_material": {
+   "Green_Elka": 20664,
+   "Green_sosna.001": 6912,
+   "Wood_tree.001": 4305,
+   "Wood_tree.002": 945
+  }
+ },
+ "forest_trees": {
+  "optimized_bytes": 1458244,
+  "sha256": "ad7cecfdad32e2682b7c2f5f5a94857487fbf28b1f4cc642a9adab021e775b3e",
+  "source_triangles_all": 151954,
+  "tall_sprites": 235,
+  "trees": [
+   {
+    "alpha_mask_coverage_045": 0.2181,
+    "has_trunk": true,
+    "normalised_radius": 0.2362,
+    "source_height": 1.3999,
+    "tree": 0,
+    "triangles": 236
+   },
+   {
+    "alpha_mask_coverage_045": 0.1946,
+    "has_trunk": true,
+    "normalised_radius": 0.1091,
+    "source_height": 2.6082,
+    "tree": 1,
+    "triangles": 348
+   },
+   {
+    "alpha_mask_coverage_045": 0.3006,
+    "has_trunk": false,
+    "normalised_radius": 0.379,
+    "source_height": 1.1862,
+    "tree": 2,
+    "triangles": 248
+   },
+   {
+    "alpha_mask_coverage_045": 0.3574,
+    "has_trunk": false,
+    "normalised_radius": 0.3472,
+    "source_height": 1.2182,
+    "tree": 3,
+    "triangles": 176
+   },
+   {
+    "alpha_mask_coverage_045": 0.1561,
+    "has_trunk": false,
+    "normalised_radius": 0.7492,
+    "source_height": 0.8153,
+    "tree": 4,
+    "triangles": 144
+   }
+  ],
+  "trunks": 85
+ },
+ "small_bush": {
+  "alpha_mask_coverage_by_cutoff": {
+   "0.3": 0.4182,
+   "0.45": 0.4043,
+   "0.6": 0.3909
+  },
+  "normalised_bounds": [
+   [
+    -0.998805,
+    0.0,
+    -0.899741
+   ],
+   [
+    0.998805,
+    1.0,
+    0.899741
+   ]
+  ],
+  "optimized_bytes": 202740,
+  "optimized_triangles": 320,
+  "sha256": "24eb6959334ce35f69737e31658ceaccb74f60d7f6d93b15ffae2862fcbc9846",
+  "source_bounds": [
+   [
+    -0.2955,
+    -0.0089,
+    -0.2531
+   ],
+   [
+    0.2823,
+    0.4642,
+    0.2673
+   ]
+  ],
+  "source_radius_over_height": 0.6114,
+  "source_triangles": 320,
+  "source_vertices": 289,
+  "texture": "512x512 RGBA PNG"
+ }
+}

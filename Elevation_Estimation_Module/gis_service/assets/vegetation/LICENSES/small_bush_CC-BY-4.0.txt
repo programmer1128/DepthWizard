@@ -1,0 +1,15 @@
+Model Information:
+* title:	Small bush
+* source:	https://sketchfab.com/3d-models/small-bush-f6ed4c70fc024ac88e8e6a19991695af
+* author:	yanix (https://sketchfab.com/yanix)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+(Recorded from the asset's own glTF metadata: asset.extras.title / author /
+license / source in small_bush.glb. Full licence text:
+https://creativecommons.org/licenses/by/4.0/legalcode)
+
+Credit:
+This work is based on "Small bush" (https://sketchfab.com/3d-models/small-bush-f6ed4c70fc024ac88e8e6a19991695af) by yanix (https://sketchfab.com/yanix) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
