@@ -1,2 +1,0 @@
-Starting MetricOutputStitcherTest.AllZeroValidMaskContributesNothing
-[LATENCY] operation=MetricOutputStitcher::stitch all-zero mask elapsed_us=17957.809

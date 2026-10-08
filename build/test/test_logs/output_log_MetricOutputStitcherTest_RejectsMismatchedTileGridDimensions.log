@@ -1,2 +1,0 @@
-Starting MetricOutputStitcherTest.RejectsMismatchedTileGridDimensions
-[LATENCY] operation=MetricOutputStitcher::stitch malformed tile [THREW] elapsed_us=82.337

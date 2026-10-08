@@ -1,2 +1,0 @@
-Starting SrtmExtractorTest.InvalidInputPathReturnsNullDatasets
-[LATENCY] operation=SrtmExtractor::fetchTile invalid local path elapsed_us=407.159

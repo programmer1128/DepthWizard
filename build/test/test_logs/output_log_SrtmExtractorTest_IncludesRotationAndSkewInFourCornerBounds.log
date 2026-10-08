@@ -1,2 +1,0 @@
-Starting SrtmExtractorTest.IncludesRotationAndSkewInFourCornerBounds
-[LATENCY] operation=SrtmExtractor::extractGpsBounds rotated 4x4 elapsed_us=77.675

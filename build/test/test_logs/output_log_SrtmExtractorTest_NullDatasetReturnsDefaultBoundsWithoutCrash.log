@@ -1,2 +1,0 @@
-Starting SrtmExtractorTest.NullDatasetReturnsDefaultBoundsWithoutCrash
-[LATENCY] operation=SrtmExtractor::extractGpsBounds null dataset elapsed_us=4.180

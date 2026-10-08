@@ -1,3 +1,0 @@
-add_test([=[SatFootprintGuideTest.ConvertsObjWorldCoordinatesToPixelFootprint]=]  /home/aritra/Desktop/DepthWizard/build/test/sat_footprint_guide_test [==[--gtest_filter=SatFootprintGuideTest.ConvertsObjWorldCoordinatesToPixelFootprint]==] --gtest_also_run_disabled_tests)
-set_tests_properties([=[SatFootprintGuideTest.ConvertsObjWorldCoordinatesToPixelFootprint]=]  PROPERTIES DEF_SOURCE_LINE /home/aritra/Desktop/DepthWizard/drogon_service/gis_service/test/SatFootprintGuide_test.cc:8 WORKING_DIRECTORY /home/aritra/Desktop/DepthWizard/build/test SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==])
-set(  sat_footprint_guide_test_TESTS SatFootprintGuideTest.ConvertsObjWorldCoordinatesToPixelFootprint)
