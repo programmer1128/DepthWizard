@@ -9,3 +9,4 @@ tools/baseline/**/__pycache__/
 # City3D worker: generated pinned upstream tree and build output
 third_party/City3D/
 city3d_worker/build/
+./node_modules

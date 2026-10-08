@@ -1,0 +1,39 @@
+import { Vector3, Matrix4, Ray } from 'three';
+
+export enum Frames {}
+export const ENU_FRAME: Frames;
+export const CAMERA_FRAME: Frames;
+export const OBJECT_FRAME: Frames;
+
+export class Ellipsoid {
+
+	radius: Vector3;
+	name: string;
+
+	constructor( x: number, y: number, z: number );
+	getCartographicToPosition( lat: number, lon: number, height: number, target: Vector3 ): Vector3;
+	getPositionToCartographic( pos: Vector3, target: object ): { lat: number, lon: number, height: number };
+	getCartographicToNormal( lat: number, lon: number, target: Vector3 ): Vector3;
+	getPositionToNormal( pos: Vector3, target: Vector3 ): Vector3;
+	getPositionToSurfacePoint( pos: Vector3, target: Vector3 ): Vector3;
+	getPositionElevation( pos: Vector3 ): number;
+
+	getEastNorthUpFrame( lat: number, lon: number, height: number, target: Matrix4 ): Matrix4;
+	getOrientedEastNorthUpFrame( lat: number, lon: number, height: number, az: number, el: number, roll: number, target: Matrix4 ): Matrix4;
+	getEastNorthUpAxes( lat: number, lon: number, vecEast: Vector3, vecNorth: Vector3, vecUp: Vector3, pos?: Vector3 ): void;
+
+	getObjectFrame( lat: number, lon: number, height: number, az: number, el: number, roll: number, target: Matrix4, frame?: Frames ): Matrix4;
+	getCartographicFromObjectFrame( matrix: Matrix4, target: object, frame?: Frames )
+		: { lat: number, lon: number, height: number, azimuth: number, elevation: number, roll: number };
+
+	closestPointToRayEstimate( ray: Ray, target: Vector3 ): Vector3;
+
+	intersectRay( ray: Ray, target: Vector3 ): Vector3 | null;
+
+	calculateHorizonDistance( latitude: number, elevation: number ): number;
+	calculateEffectiveRadius( latitude: number ): number;
+
+	copy( source: Ellipsoid ): Ellipsoid;
+	clone(): Ellipsoid;
+
+}

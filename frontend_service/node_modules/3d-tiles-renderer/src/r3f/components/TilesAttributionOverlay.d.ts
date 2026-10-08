@@ -1,0 +1,16 @@
+import type { CanvasDOMOverlayProps } from './CanvasDOMOverlay.jsx';
+import type { ReactNode, ForwardRefExoticComponent, RefAttributes, CSSProperties } from 'react';
+
+type Attribution = {
+    type: 'string' | 'html' | 'image';
+    value: any;
+};
+
+interface TilesAttributionOverlayProps extends CanvasDOMOverlayProps {
+    style?: CSSProperties;
+    generateAttributions?: ( ( attributions: Attribution[], classId: string ) => ReactNode ) | null;
+}
+
+export declare const TilesAttributionOverlay: ForwardRefExoticComponent<
+    TilesAttributionOverlayProps & RefAttributes<TilesAttributionOverlayProps>
+>;

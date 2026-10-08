@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DEPTHWIZARD 3D WORKSTATION — ISRO Single-View Height Estimation</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <!-- GeoTIFF.js parser for rendering .tif/.tiff satellite optical raster data -->
+  <script src="https://cdn.jsdelivr.net/npm/geotiff"></script>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+
+<body>
+<div id="app">
+
+  <header id="topbar">
+    <div class="brand-section">
+      <div class="brand-badge">◈</div>
+      <div class="brand-info">
+        <h1>
+          DEPTHWIZARD 3D WORKSTATION
+        </h1>
+        <div class="brand-sub">
+          Single-View Height Estimation & Geospatial 3D Terrain
+        </div>
+      </div>
+    </div>
+
+    <div class="top-center-telemetry">
+      <div class="telemetry-item">
+        <span>Mode:</span>
+        <strong id="topModeText">ORBIT VIEW</strong>
+      </div>
+      <div class="telemetry-divider"></div>
+      <div class="telemetry-item">
+        <span>Grid:</span>
+        <strong id="topGridText">ACTIVE</strong>
+      </div>
+      <div class="telemetry-divider"></div>
+      <div class="telemetry-item">
+        <span>Data:</span>
+        <strong id="dataModeText">RELATIVE / rDSM</strong>
+      </div>
+    </div>
+
+    <div class="top-actions">
+      <span id="topScientificBadge" class="scientific-badge unknown">AWAITING DATA</span>
+      <button class="top-action-btn" id="judgeModeBtn" type="button" title="Start a 60-second 360° terrain view">360° View</button>
+      <button class="icon-btn" id="fullscreenBtn" title="Toggle Fullscreen">⛶</button>
+    </div>
+  </header>
+
+  <main id="workspace">
+
+    <aside id="sidebar">
+
+      <nav id="toolRail" class="tool-rail" aria-label="Primary workspace tools">
+        <button class="rail-tool is-active" type="button" data-rail-target="workflow-data" title="Project overview" aria-label="Project overview">
+          <span class="rail-tool-icon" aria-hidden="true">⌂</span>
+          <span class="rail-tool-label">Project</span>
+        </button>
+        <button class="rail-tool" type="button" data-rail-target="workflow-input" title="Insert imagery" aria-label="Insert imagery">
+          <span class="rail-tool-icon" aria-hidden="true">⇧</span>
+          <span class="rail-tool-label">Insert</span>
+        </button>
+        <button class="rail-tool" type="button" data-rail-target="workflow-explore" title="Explore terrain" aria-label="Explore terrain">
+          <span class="rail-tool-icon" aria-hidden="true">◈</span>
+          <span class="rail-tool-label">Explore</span>
+        </button>
+        <button class="rail-tool" type="button" data-rail-target="workflow-analyze" title="Analyze terrain" aria-label="Analyze terrain">
+          <span class="rail-tool-icon" aria-hidden="true">⌁</span>
+          <span class="rail-tool-label">Analyze</span>
+        </button>
+        <button class="rail-tool" type="button" data-rail-target="workflow-validate" title="Validate terrain" aria-label="Validate terrain">
+          <span class="rail-tool-icon" aria-hidden="true">✓</span>
+          <span class="rail-tool-label">Validate</span>
+        </button>
+        <button class="rail-tool" type="button" data-rail-target="workflow-output" title="Output and export" aria-label="Output and export">
+          <span class="rail-tool-icon" aria-hidden="true">⇩</span>
+          <span class="rail-tool-label">Output</span>
+        </button>
+
+        <div class="rail-spacer"></div>
+        <button class="rail-tool rail-help" type="button" data-rail-action="help" title="Keyboard and mouse controls" aria-label="Keyboard and mouse controls">
+          <span class="rail-tool-icon" aria-hidden="true">?</span>
+          <span class="rail-tool-label">Help</span>
+        </button>
+      </nav>
+
+      <div id="sidebarPanel" class="sidebar-panel">
+      <section class="sidebar-section" id="workflow-data">
+        <div class="section-header">
+          <span class="section-title">Data · Mission Overview</span>
+        </div>
+        <div class="panel-card project-card">
+          <div class="project-title">
+            <span>ISRO Space Applications Centre</span>
+          </div>
+          <div class="project-desc">Single-view optical imagery → inspectable 3D terrain and analysis.</div>
+          <div class="project-meta">
+            <span class="meta-tag">Remote Sensing</span>
+            <span class="meta-tag">GLB / Draco</span>
+            <span class="meta-tag">3D Analysis</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="sidebar-section" id="workflow-readiness">
+        <div class="section-header">
+          <span class="section-title">Data Readiness</span>
+          <span class="section-badge">MODE GATE</span>
+        </div>
+        <div class="scientific-mode-card">
+          <div class="scientific-mode-top">
+            <span class="scientific-badge dimensionless" id="scientificBadge">DIMENSIONLESS rDSM</span>
+            <span class="scientific-pulse"></span>
+          </div>
+          <div class="scientific-mode-title">Data integrity</div>
+          <div class="scientific-mode-copy" id="scientificBadgeDetail">Metric tools stay locked until the data supports absolute elevation.</div>
+        </div>
+      </section>
+
+      <section class="sidebar-section" id="workflow-input">
+        <div class="section-header">
+          <span class="section-title">Load Imagery</span>
+          <span class="section-badge">SOURCE</span>
+        </div>
+
+        <div class="image-type-toggle" id="imageTypeToggle">
+          <button type="button" class="type-tab-btn active" id="typeGeoTiffBtn" data-type="geotiff" title="Upload GeoTIFF (.tif) via /api/v1/processor">
+            GeoTIFF (.tif)
+          </button>
+          <button type="button" class="type-tab-btn" id="typeNormalBtn" data-type="normal" title="Upload Normal Image (.jpg, .png) via /api/v1/processor/normal-image">
+            Normal Image (.jpg, .png)
+          </button>
+        </div>
+
+        <div class="file-dropzone" id="fileDropzone">
+          <input type="file" id="imageInput" accept=".tif,.tiff" />
+          <div class="dropzone-icon" id="dropzoneIcon">🛰️</div>
+          <div class="dropzone-text" id="dropzoneTitle">Select or drop GeoTIFF image</div>
+          <div class="dropzone-sub" id="dropzoneSubtitle">GeoTIFF (.tif, .tiff) • Uses /api/v1/processor</div>
+        </div>
+
+        <div class="file-info-box" id="selectedFileInfoBox">
+          <div class="file-details">
+            <div class="file-name" id="selectedFileName">No file chosen</div>
+            <div class="file-size" id="selectedFileSize">Ready for upload</div>
+          </div>
+          <div class="file-preview-actions">
+            <img id="thumbnailPreview" class="file-thumbnail-preview" alt="Source Preview" />
+            <button id="viewSourceBtn" class="mini-btn source-view-btn" type="button" disabled>View source</button>
+          </div>
+        </div>
+
+        <button class="btn-secondary global-map-panel-btn" id="globalMapTrigger" type="button">
+          <span>◎</span>
+          <span>Select from Global Map</span>
+        </button>
+
+        <button class="btn-primary" id="uploadBtn">
+          <span>⚡</span>
+          <span>Generate 3D Terrain</span>
+        </button>
+
+        <div class="sample-terrain-control">
+          <label for="demoSampleSelect">Sample landscape</label>
+          <select id="demoSampleSelect" class="sample-terrain-select">
+            <option value="urban">Urban Area</option>
+            <option value="sparse">Sparse / Rural Area</option>
+            <option value="hilly">Hilly Terrain</option>
+            <option value="forested">Forested Landscape</option>
+          </select>
+          <button class="btn-secondary" id="demoBtn" type="button" title="Load the selected sample terrain">
+            <span>📦</span>
+            <span>Load Selected Sample</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="sidebar-section" id="workflow-explore">
+        <div class="section-header">
+          <span class="section-title">Explore · Visual Layers</span>
+          <span class="section-badge">VIEW</span>
+        </div>
+
+        <div class="panel-card comparison-tool-card">
+          <div class="tool-intro">
+            <div class="tool-intro-icon">⇆</div>
+            <div>
+              <strong>Swipe one 3D surface</strong>
+              <p>Optical RGB ↔ elevation relief.</p>
+            </div>
+          </div>
+
+          <button id="splitCompareBtn" class="btn-primary split-compare-action" type="button">
+            Split Comparison
+          </button>
+
+          <div class="split-control-row">
+            <div>
+              <div class="slider-label"><span>Elevation blend</span><strong id="splitOpacityValue">100%</strong></div>
+              <input id="splitOpacitySlider" type="range" min="0" max="100" value="100" step="1" />
+            </div>
+            <button id="splitResetBtn" class="mini-btn" type="button">Reset</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="sidebar-section" id="workflow-validate">
+
+        <div class="section-header">
+            <span class="section-title">
+                Validate · Reference Comparison
+            </span>
+
+            <span class="section-badge">
+                INSPECT
+            </span>
+        </div>
+
+        <div class="panel-card">
+
+            <p class="section-description">
+                Validate metric terrain against an external reference dataset and inspect the response quality at a selected coordinate.
+            </p>
+
+            <button id="compareBtn" class="primary-action-btn" type="button">
+              Open Validation
+            </button>
+            <div id="metricLockNote" class="metric-lock-note is-locked">
+              Metric measurement and benchmark comparison are locked until a metric GeoTIFF is supplied.
+            </div>
+
+        </div>
+
+    </section>
+
+      <!-- CAMERA & NAVIGATION -->
+      <section class="sidebar-section" id="workflow-analyze">
+        <div class="section-header">
+          <span class="section-title">Analyze · Camera & Navigation</span>
+          <span class="section-badge" id="autoRotateBadge">AUTO OFF</span>
+        </div>
+
+        <div class="control-grid-2">
+          <button class="tool-btn active" id="orbitBtn" title="Standard orbit and pan controls">
+            ◉ Orbit View
+          </button>
+          <button class="tool-btn" id="flyBtn" title="First-person fly navigation (WASD)">
+            ◇ Free Fly [F]
+          </button>
+        </div>
+
+        <div class="control-grid-3" style="margin-top: 6px;">
+          <button class="tool-btn" id="resetBtn" title="Reset view">↻ Reset</button>
+          <button class="tool-btn active" id="gridBtn" title="Toggle grid">▦ Grid</button>
+          <button class="tool-btn" id="autoRotateBtn" title="Toggle auto rotation" aria-pressed="false">⟳ Auto OFF</button>
+        </div>
+      </section>
+
+      <!-- VISUAL CONTROLS: RESTORED -->
+      <section class="sidebar-section" id="workflow-visual-controls">
+        <div class="section-header">
+          <span class="section-title">Explore · Visual Controls</span>
+          <span class="section-badge">LIGHTING</span>
+        </div>
+
+        <div class="panel-card visual-control-card">
+
+          <div class="visual-control-header">
+            <label for="presentationStyleSelect">Presentation style</label>
+          </div>
+          <select id="presentationStyleSelect" class="viewer-select" title="Choose the terrain presentation style">
+            <option value="scientific">Scientific</option>
+            <option value="terra">Terra massing</option>
+            <option value="orthophoto" selected>Orthophoto</option>
+          </select>
+
+          <div class="visual-control-header compact-top">
+            <label for="renderQualitySelect">Shadows &amp; AO quality</label>
+          </div>
+          <select id="renderQualitySelect" class="viewer-select" title="AO remains off until GPU cost is measured">
+            <option value="performance">Performance · shadows off</option>
+            <option value="balanced" selected>Balanced · soft shadows</option>
+            <option value="high">High · soft shadows</option>
+          </select>
+          <div class="control-caption">AO is intentionally disabled pending a measured GPU budget.</div>
+
+          <div class="visual-control-header compact-top">
+            <span>Time of Day (Sun)</span>
+            <button
+              id="lightingBtn"
+              class="mini-btn active"
+              title="Toggle scene lighting"
+            >ON</button>
+          </div>
+
+          <div class="slider-label">
+            <span>Time</span>
+            <span id="lightValue">12:00</span>
+          </div>
+
+          <input
+            id="lightSlider"
+            type="range"
+            min="6"
+            max="18"
+            step="0.25"
+            value="12"
+            title="Adjust sun position (6:00 AM to 6:00 PM)"
+          />
+
+          <div class="visual-control-header" style="margin-top: 14px;">
+            <span>Terrain Measurement</span>
+            <button
+              id="measureBtn"
+              class="mini-btn"
+              title="Measure distance between two terrain points"
+            >OFF</button>
+          </div>
+
+          <div class="visual-control-header" style="margin-top: 14px;">
+            <span>Elevation Heatmap</span>
+            <button class="tool-btn" id="heatmapBtn" style="width: 100%; margin: 15px 0 10px; padding: 10px; font-size: 12px;">
+             Elevation Heatmap
+            </button>
+          </div>
+
+          <div class="visual-control-header compact-top">
+            <span>Vertical Exaggeration · visual only</span>
+            <strong id="verticalExaggerationValue">1.00×</strong>
+          </div>
+          <input id="verticalExaggerationSlider" type="range" min="1" max="2.5" step="0.05" value="1" title="Visual vertical exaggeration" />
+          <div class="control-caption">
+            Measurement results divide the displayed Y-scale back out.
+          </div>
+
+        </div>
+      </section>
+
+      <!-- INTERACTIVE ROUTE PLANNING -->
+      <section class="sidebar-section" id="workflow-flight">
+        <div class="section-header">
+          <span class="section-title">Analyze · Flight Path</span>
+          <span class="section-badge" id="routeWaypointsBadge">0 Pts</span>
+        </div>
+
+        <div class="control-grid-3">
+          <button
+            class="tool-btn btn-route-draw"
+            id="drawRouteBtn"
+            title="Click terrain to place waypoints"
+          >
+            ✎ Draw Route
+          </button>
+
+          <button
+            class="tool-btn"
+            id="undoRouteBtn"
+            title="Remove the last waypoint"
+          >
+            ↶ Undo
+          </button>
+
+          <button
+            class="tool-btn"
+            id="clearRouteBtn"
+            title="Remove all waypoints and route line"
+          >
+            ✕ Clear
+          </button>
+        </div>
+
+        <button class="btn-primary btn-route-fly" id="flyRouteBtn" style="margin-top: 6px;" disabled>
+          <span>✈</span>
+          <span id="flyRouteBtnText">Fly Route</span>
+        </button>
+
+        <div class="route-stats-card">
+          <div class="route-stat-row">
+            <span class="route-stat-label">Waypoints:</span>
+            <span class="route-stat-value" id="routePointsCount">0</span>
+          </div>
+          <div class="route-stat-row">
+            <span class="route-stat-label">Total Distance:</span>
+            <span class="route-stat-value" id="routeDistance">0.0 m</span>
+          </div>
+          <div class="route-stat-row">
+            <span class="route-stat-label">Trajectory:</span>
+            <span class="route-stat-value" id="routeStatus">Inactive</span>
+          </div>
+
+          <!-- NEW: Elevation Profile Chart -->
+          <div id="elevationChartContainer" style="display: none; margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 12px;">
+             <div style="font-size: 9px; color: var(--text-secondary); font-weight: 700; margin-bottom: 6px; letter-spacing: 0.5px;">ELEVATION PROFILE</div>
+             <canvas id="elevationChart" width="240" height="50" style="width: 100%; height: 50px; background: rgba(0,0,0,0.25); border-radius: 4px; border: 1px solid rgba(255,255,255,0.05);"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <section class="sidebar-section" id="workflow-hydrology">
+        <div class="section-header">
+          <span class="section-title">Advanced · Hydrology</span>
+          <span class="section-badge">ADVANCED</span>
+        </div>
+
+        <div class="panel-card flood-card">
+          <div class="tool-intro">
+            <div class="tool-intro-icon flood-icon">≈</div>
+            <div>
+              <strong>Connected flood fill</strong>
+              <p>Seed a point, then raise connected low terrain.</p>
+            </div>
+          </div>
+
+          <div class="control-grid-2">
+            <button id="floodSeedBtn" class="tool-btn" type="button">Set Seed Point</button>
+            <button id="floodResetBtn" class="tool-btn" type="button">Clear Flood</button>
+          </div>
+
+          <div class="slider-label"><span>Water level</span><strong id="floodLevelValue">—</strong></div>
+          <input id="floodLevelSlider" type="range" min="0" max="100" value="55" step="1" />
+          <div id="floodStatus" class="flood-status">Select a seed point, then raise the water level.</div>
+        </div>
+      </section>
+
+      <section class="sidebar-section" id="workflow-output">
+        <div class="section-header">
+          <span class="section-title">Output · 360° View</span>
+          <span class="section-badge">PRESENT</span>
+        </div>
+        <div class="panel-card tour-card">
+          <div class="tour-line">
+            <div>
+              <strong>60-second terrain flythrough</strong>
+              <p>Automatic 360° presentation view • restores your camera after.</p>
+            </div>
+          </div>
+          <button id="guidedTourBtn" class="btn-secondary" type="button">Start 360° View</button>
+          <div id="tourStatus" class="tour-status">Ready • orbit camera preserved</div>
+        </div>
+      </section>
+
+      <section class="sidebar-section" id="workflow-exports">
+        <div class="section-header">
+          <span class="section-title">Output · Exports & Evidence</span>
+          <span class="section-badge">EXPORT</span>
+        </div>
+        <div class="panel-card export-card">
+          <div class="tool-intro">
+            <div class="tool-intro-icon">⇩</div>
+            <div>
+              <strong>Capture a clean judging-ready record</strong>
+              <p>Capture the viewport, analysis state, or terrain.</p>
+            </div>
+          </div>
+          <div class="control-grid-3 export-grid">
+            <button id="exportPngBtn" class="tool-btn" type="button">View PNG</button>
+            <button id="exportSnapshotBtn" class="tool-btn" type="button">Analysis JSON</button>
+            <button id="exportTerrainBtn" class="tool-btn" type="button">Terrain GLB</button>
+          </div>
+          <div id="exportStatus" class="export-status">No export generated yet.</div>
+        </div>
+      </section>
+
+      <section class="sidebar-section" style="margin-top: auto;">
+        <div class="section-header">
+          <span class="section-title">System Status</span>
+        </div>
+
+        <div class="panel-card status-card">
+          <div class="status-indicator-row">
+            <span class="status-dot ready" id="statusDot"></span>
+            <span class="status-text-main" id="systemStatus">Viewer Ready</span>
+          </div>
+          <div class="status-sub" id="fileStatus">
+            Grid initialized. Awaiting satellite imagery.
+          </div>
+        </div>
+      </section>
+      </div>
+
+    </aside>
+
+    <section id="viewer">
+      <div id="processingOverlay" class="processing-overlay hidden">
+
+    <div class="processing-card">
+
+        <div class="processing-spinner">
+            <div class="spinner-ring"></div>
+            <div class="spinner-core"></div>
+        </div>
+
+        <div class="processing-content">
+            <div class="processing-eyebrow">
+                DEPTHWIZARD
+            </div>
+
+            <div
+                id="processingTitle"
+                class="processing-title"
+            >
+                Processing terrain
+            </div>
+
+            <div
+                id="processingMessage"
+                class="processing-message"
+            >
+                Generating 3D elevation model…
+            </div>
+
+            <div class="processing-progress">
+                <div
+                    id="processingProgressBar"
+                    class="processing-progress-bar"
+                ></div>
+            </div>
+
+            <div
+                id="processingPercent"
+                class="processing-percent"
+            >
+                WORKING
+            </div>
+        </div>
+
+    </div>
+
+</div>
+
+      <button class="layout-toggle sidebar-toggle" id="sidebarToggleBtn" type="button" title="Collapse sidebar" aria-label="Collapse sidebar" aria-expanded="true">
+        <span class="layout-toggle-icon">‹</span>
+      </button>
+
+      <div id="canvas-container"></div>
+
+      <div id="splitComparisonOverlay" class="split-comparison-overlay hidden" aria-hidden="true">
+        <div class="split-label split-label-left">OPTICAL RGB</div>
+        <div class="split-label split-label-right">ELEVATION + RELIEF</div>
+        <div class="split-divider" id="splitComparisonDivider" role="slider" aria-label="Optical to elevation comparison divider" tabindex="0">
+          <span class="split-divider-handle">↔</span>
+          <span class="split-divider-value" id="splitDividerValue">50 / 50</span>
+        </div>
+        <div class="split-legend"><span>LOW</span><i></i><span>HIGH</span></div>
+        <div class="split-comparison-note">Drag the handle • optical stays left, elevation stays right</div>
+      </div>
+
+      <div id="tacticalHud" class="tactical-hud">
+        <div class="tactical-hud-title">FLIGHT TELEMETRY</div>
+        <div class="tactical-grid">
+          <div><span>ALT</span><strong id="hudAltitude">—</strong></div>
+          <div><span>HDG</span><strong id="hudHeading">—</strong></div>
+          <div><span>SPD</span><strong id="hudSpeed">—</strong></div>
+          <div><span>ELV</span><strong id="hudElevation">—</strong></div>
+        </div>
+        <div class="tactical-mode">DATA <strong id="hudDataMode">RELATIVE</strong></div>
+      </div>
+
+      <div id="inspectorPanel" class="inspector-panel">
+        <div class="inspector-panel-head">
+          <span>POINT INSPECTOR</span>
+          <span id="inspectorMode" class="mini-data-badge">RELATIVE</span>
+        </div>
+        <div id="inspectorValue" class="inspector-big">—</div>
+        <div id="inspectorCoords" class="inspector-coords">Double-click terrain to inspect</div>
+        <div id="inspector-content" class="inspector-content">
+          <div class="empty-inspector">No point selected</div>
+        </div>
+        <div id="inspectorNote" class="inspector-note">Probe values follow the current scientific data mode.</div>
+      </div>
+
+      <div id="measurement-readout" class="measurement-readout"></div>
+
+      <div id="emptyStateOverlay">
+        <div class="empty-state-card">
+          <div class="empty-state-radar">
+            <div class="empty-state-icon">📡</div>
+          </div>
+          <h2 class="empty-state-title">Load imagery to generate 3D terrain</h2>
+          <p class="empty-state-desc">
+            Single-view height estimation backend processes optical satellite textures into 3D elevation GLB meshes.
+          </p>
+          <div class="empty-state-actions">
+            <button class="empty-btn-global" id="emptyGlobalMapTrigger" type="button">
+              <span>◎</span>
+              <span>Select from Global Map</span>
+            </button>
+            <button class="empty-btn-upload" id="emptyUploadTrigger">Select Imagery</button>
+            <div class="empty-sample-control">
+              <select id="emptyDemoSampleSelect" aria-label="Sample landscape">
+                <option value="urban">Urban Area</option>
+                <option value="sparse">Sparse / Rural Area</option>
+                <option value="hilly">Hilly Terrain</option>
+                <option value="forested">Forested Landscape</option>
+              </select>
+              <button class="empty-btn-demo" id="emptyDemoTrigger" type="button">
+                Load Sample Terrain
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="comparisonPiP">
+        <div class="pip-header">
+          <div class="pip-title-group">
+            <span class="pip-badge">2D</span>
+            <span class="pip-title">Optical Texture</span>
+          </div>
+          <div class="pip-controls">
+            <button class="pip-btn" id="pipMinimizeBtn" title="Minimize PiP">_</button>
+            <button class="pip-btn" id="pipCloseBtn" title="Close PiP">×</button>
+          </div>
+        </div>
+
+        <div class="pip-body">
+          <img id="pipImage" src="" alt="Optical Source" style="display: none;" />
+          <div class="pip-placeholder" id="pipPlaceholder">
+            <span>📷</span>
+            <span>No 2D imagery loaded</span>
+          </div>
+        </div>
+
+        <div class="pip-footer">
+          <span id="pipFilename">Awaiting upload</span>
+          <span id="pipDimensions">—</span>
+        </div>
+      </div>
+      <button id="sourcePreviewLauncher" class="source-preview-launcher hidden" type="button"
+        title="Open the generated 2D source preview" aria-label="Open 2D source preview">
+        <span class="source-preview-icon">▧</span>
+        <span>2D source</span>
+      </button>
+
+      <!-- COMPASS: PROFESSIONAL GIS -->
+      <div id="compass-control" title="Reset orientation to North" aria-label="Compass">
+        <div class="compass-face">
+          <div class="compass-label compass-north">N</div>
+          <div class="compass-label compass-east">E</div>
+          <div class="compass-label compass-south">S</div>
+          <div class="compass-label compass-west">W</div>
+          <div class="compass-center-dot"></div>
+          <!-- NEW: Arrow is now wrapped in a rotating container -->
+          <div class="compass-arrow-container">
+            <div class="compass-arrow"></div>
+          </div>
+        </div>
+      </div>
+
+     <div id="routeBanner">
+  <span>✦</span>
+  <span>Route Draw Active: Click terrain to place waypoints (Esc to finish)</span>
+</div>
+
+<div id="bottom-hud">
+  <div class="bottom-hud-left">
+
+    <div class="bottom-status-row">
+      <div id="coordinates" class="coordinates-readout">
+        X: — Y: — Z: —
+      </div>
+
+      <div class="viewer-hud-status">
+        <span class="status-dot ready" id="hudStatusDot"></span>
+
+        <span
+          id="viewerStatus"
+          style="font-weight: 600; font-size: 11px;"
+        >
+          3D VIEWER READY
+        </span>
+
+        <span class="mode-badge" id="currentModeBadge">
+          ORBIT
+        </span>
+      </div>
+    </div>
+
+    <div class="hud-pill navigation-help">
+      Orbit Left Drag • Pan Right Drag • Zoom Scroll • F Free Fly
+    </div>
+
+  </div>
+
+  <div class="hud-pill workstation-label">
+    DEPTHWIZARD 3D WORKSTATION
+  </div>
+</div>
+
+      <div id="help-panel">
+        <div class="help-title">
+          <span>Viewport Controls</span>
+          <button class="pip-btn" id="closeHelpBtn">×</button>
+        </div>
+
+        <div class="help-row">
+          <span>Orbit Rotation</span>
+          <span class="key-badge">Left Mouse</span>
+        </div>
+        <div class="help-row">
+          <span>Pan View</span>
+          <span class="key-badge">Right Mouse</span>
+        </div>
+        <div class="help-row">
+          <span>Zoom In / Out</span>
+          <span class="key-badge">Scroll Wheel</span>
+        </div>
+        <div class="help-row">
+          <span>Free Fly Mode</span>
+          <span class="key-badge">F Key</span>
+        </div>
+        <div class="help-row">
+          <span>Fly Movement</span>
+          <span class="key-badge">W A S D</span>
+        </div>
+        <div class="help-row">
+          <span>Draw Route</span>
+          <span class="key-badge">Click Terrain</span>
+        </div>
+        <div class="help-row">
+          <span>Exit Draw / Fly</span>
+          <span class="key-badge">Esc</span>
+        </div>
+      </div>
+
+    </section>
+  </main>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

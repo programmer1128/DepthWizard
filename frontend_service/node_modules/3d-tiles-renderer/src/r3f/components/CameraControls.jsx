@@ -1,0 +1,140 @@
+/** @import { Camera, Object3D } from 'three' */
+import { forwardRef, useMemo, useEffect, useContext } from 'react';
+import { useThree, useFrame } from '@react-three/fiber';
+import { EnvironmentControls as EnvironmentControlsImpl, GlobeControls as GlobeControlsImpl } from '3d-tiles-renderer/three';
+import { useShallowOptions } from '../utilities/useOptions.js';
+import { EllipsoidContext } from './TilesRenderer.jsx';
+import { useApplyRefs } from '../utilities/useApplyRefs.js';
+
+// Add a base component implementation for both EnvironmentControls and GlobeControls
+const ControlsBaseComponent = forwardRef( function ControlsBaseComponent( props, ref ) {
+
+	const { controlsConstructor, domElement, scene, camera, ellipsoid, ellipsoidFrame, ...rest } = props;
+
+	const [ defaultCamera ] = useThree( state => [ state.camera ] );
+	const [ gl ] = useThree( state => [ state.gl ] );
+	const [ defaultScene ] = useThree( state => [ state.scene ] );
+	const [ invalidate ] = useThree( state => [ state.invalidate ] );
+	const [ get ] = useThree( state => [ state.get ] );
+	const [ set ] = useThree( state => [ state.set ] );
+
+	const ellipsoidContext = useContext( EllipsoidContext );
+	const appliedCamera = camera || defaultCamera || null;
+	const appliedScene = scene || defaultScene || null;
+	const appliedDomElement = domElement || gl.domElement || null;
+	const appliedEllipsoid = ellipsoid || ellipsoidContext?.ellipsoid || null;
+	const appliedEllipsoidFrame = ellipsoidFrame || ellipsoidContext?.frame || null;
+
+	// create a controls instance
+	const controls = useMemo( () => {
+
+		return new controlsConstructor();
+
+	}, [ controlsConstructor ] );
+
+	// assign / call the reference
+	useApplyRefs( controls, ref );
+
+	// fire invalidate callbacks
+	useEffect( () => {
+
+		const callback = () => invalidate();
+		controls.addEventListener( 'change', callback );
+		controls.addEventListener( 'start', callback );
+		controls.addEventListener( 'end', callback );
+		return () => {
+
+			controls.removeEventListener( 'change', callback );
+			controls.removeEventListener( 'start', callback );
+			controls.removeEventListener( 'end', callback );
+
+		};
+
+	}, [ controls, invalidate ] );
+
+	// assign the camera
+	useEffect( () => {
+
+		controls.setCamera( appliedCamera );
+
+	}, [ controls, appliedCamera ] );
+
+	// assign the scene
+	useEffect( () => {
+
+		controls.setScene( appliedScene );
+
+	}, [ controls, appliedScene ] );
+
+	// assign the tiles renderer
+	useEffect( () => {
+
+		if ( controls.isGlobeControls ) {
+
+			controls.setEllipsoid( appliedEllipsoid, appliedEllipsoidFrame );
+
+		}
+
+	}, [ controls, appliedEllipsoid, appliedEllipsoidFrame ] );
+
+	// attach to the dom element
+	useEffect( () => {
+
+		controls.attach( appliedDomElement );
+		return () => {
+
+			controls.detach();
+
+		};
+
+	}, [ controls, appliedDomElement ] );
+
+	// set the controls for global use
+	useEffect( () => {
+
+		const old = get().controls;
+		set( { controls } );
+		return () => set( { controls: old } );
+
+	}, [ controls, get, set ] );
+
+	// update the controls with a priority of - 1 so it happens before tiles renderer update
+	useFrame( () => {
+
+		controls.update();
+
+	}, - 1 );
+
+	useShallowOptions( controls, rest );
+
+} );
+
+/**
+ * Wraps the three.js EnvironmentControls class. Automatically attaches to the R3F camera, scene,
+ * and canvas. All EnvironmentControls properties can be set as props.
+ * @component
+ * @param {Object} props
+ * @param {Camera} [props.camera] - Override the default R3F camera.
+ * @param {Object3D} [props.scene] - Override the default R3F scene.
+ * @param {HTMLCanvasElement} [props.domElement] - Override the default canvas element.
+ */
+export const EnvironmentControls = forwardRef( function EnvironmentControls( props, ref ) {
+
+	return <ControlsBaseComponent { ...props } ref={ ref } controlsConstructor={ EnvironmentControlsImpl } />;
+
+} );
+
+/**
+ * Wraps the three.js GlobeControls class. Must be a child of TilesRenderer to receive ellipsoid
+ * context. All GlobeControls properties can be set as props.
+ * @component
+ * @param {Object} props
+ * @param {Camera} [props.camera] - Override the default R3F camera.
+ * @param {Object3D} [props.scene] - Override the default R3F scene.
+ * @param {HTMLCanvasElement} [props.domElement] - Override the default canvas element.
+ */
+export const GlobeControls = forwardRef( function GlobeControls( props, ref ) {
+
+	return <ControlsBaseComponent { ...props } ref={ ref } controlsConstructor={ GlobeControlsImpl } />;
+
+} );
