@@ -284,15 +284,6 @@ Content-Type: application/json
 
 ---
 
-## Team Members
-
-* **Aritra Banerjee**
-* **Satadru Ghosh**
-* **Mehul Roy**
-* **Avishikta Hajra**
-* **Ishita Mandal**
-* **Sayanti Ghosh**
-
 ---
 
 ## Acknowledgments & Data Sources
