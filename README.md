@@ -112,9 +112,6 @@ The following comparisons show the original 2D optical input beside the generate
   </tr>
 </table>
 
-> [!NOTE]
-> Add the acquisition source, ground sampling distance, crop size, and render settings for every published result. This makes the visual comparison reproducible and defensible.
-
 ---
 
 ## Benchmarking
@@ -163,11 +160,6 @@ The aggregate uses sample-size spatial weighting across all evaluated pixels.
 | Benchmark | Evaluation extent | RMSE ↓ | MAE ↓ | Pearson ↑ |
 | :--- | :--- | ---: | ---: | ---: |
 | **Global weighted benchmark** | 12 landscape typologies, more than 10⁷ evaluated pixels | **1.83 m** | **1.32 m** | **0.94** |
-
-> [!IMPORTANT]
-> “Accuracy” is reproduced exactly from the project technical documentation.
-> Before external publication, document its formula and threshold explicitly so
-> that readers can reproduce the percentage independently.
 
 ---
 
@@ -465,23 +457,36 @@ flowchart LR
 <table>
   <tr>
     <th>Member</th>
-    <th>Role</th>
     <th>Profile</th>
   </tr>
   <tr>
-    <td>REPLACE_MEMBER_1</td>
-    <td>REPLACE_ROLE</td>
-    <td><a href="REPLACE_PROFILE_URL">Profile</a></td>
+    <td>Aritra Banerjee</td>
+    <td><a href="https://github.com/programmer1128">Profile</a></td>
   </tr>
   <tr>
-    <td>REPLACE_MEMBER_2</td>
-    <td>REPLACE_ROLE</td>
-    <td><a href="REPLACE_PROFILE_URL">Profile</a></td>
+    <td>Mehul Roy</td>
+    <td><a href="https://github.com/cubexgani">Profile</a></td>
+  </tr>
+  <tr>
+    <td>Avishikta Hajra</td>
+    <td><a href="https://github.com/avishikta-hajra">Profile</a></td>
+  </tr>
+  <tr>
+    <td>Satadru Ghosh</td>
+    <td><a href="https://github.com/Satadru345">Profile</a></td>
+  </tr>
+  <tr>
+    <td>Ishita Mandal</td>
+    <td><a href="https://github.com/Ishitamandal1595">Profile</a></td>
+  </tr>
+  <tr>
+    <td>Sayanti Ghosh</td>
+    <td><a href="https://github.com/Sayanti6">Profile</a></td>
   </tr>
 </table>
 
 ---
 
 <p align="center">
-  Built for the Smart India Hackathon · <strong>DepthWizard</strong>
+  Built for the Smart India Hackathon 2026· <strong>DepthWizard</strong>
 </p>
