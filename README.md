@@ -29,7 +29,7 @@
 | :---: | :---: |
 | 🚀 **Live demo** | [Launch DepthWizard](https://depthwizard.aritra-projects.com/) |
 | 🎬 **Demo video** | [Watch the complete walkthrough](https://youtu.be/E1muugqlmSc) |
-| 📘 **Technical documentation** | [Read the technical report](https://drive.google.com/file/d/1fASZx6CBKb_z7G6r1q9pZRpXJZTnVuXI/view?usp=sharing) |
+| 📘 **Technical documentation** | [Read the technical report](https://drive.google.com/file/d/1fASZx6CBKb_z7G6r1q9pZRpXJZtNvUXi/view?usp=sharing) |
 | 💻 **Source code** | [View the GitHub repository](https://github.com/programmer1128/DepthWizard) |
 
 ---
