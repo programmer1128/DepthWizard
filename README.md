@@ -2,7 +2,7 @@
   <img src="docs/assets/branding/depthwizard-icon.png" alt="DepthWizard icon" width="150" />
 </p>
 
-<h1 align="center">DepthWizard</h1>
+<h1 align="center">DepthWizard<br><br></h1>
 
 <p align="center">
   <strong>Single-view satellite imagery to metric elevation and immersive 3D terrain</strong>
@@ -461,27 +461,27 @@ flowchart LR
   </tr>
   <tr>
     <td>Aritra Banerjee</td>
-    <td><a href="https://github.com/programmer1128">Profile</a></td>
+    <td><a href="https://github.com/programmer1128">programmer1128</a></td>
   </tr>
   <tr>
     <td>Mehul Roy</td>
-    <td><a href="https://github.com/cubexgani">Profile</a></td>
+    <td><a href="https://github.com/cubexgani">cubexgani</a></td>
   </tr>
   <tr>
     <td>Avishikta Hajra</td>
-    <td><a href="https://github.com/avishikta-hajra">Profile</a></td>
+    <td><a href="https://github.com/avishikta-hajra">avishikta-hajra</a></td>
   </tr>
   <tr>
     <td>Satadru Ghosh</td>
-    <td><a href="https://github.com/Satadru345">Profile</a></td>
+    <td><a href="https://github.com/Satadru345">Satadru345</a></td>
   </tr>
   <tr>
     <td>Ishita Mandal</td>
-    <td><a href="https://github.com/Ishitamandal1595">Profile</a></td>
+    <td><a href="https://github.com/Ishitamandal1595">Ishitamandal1595</a></td>
   </tr>
   <tr>
     <td>Sayanti Ghosh</td>
-    <td><a href="https://github.com/Sayanti6">Profile</a></td>
+    <td><a href="https://github.com/Sayanti6">Sayanti6</a></td>
   </tr>
 </table>
 
