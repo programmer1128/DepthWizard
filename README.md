@@ -488,5 +488,5 @@ flowchart LR
 ---
 
 <p align="center">
-  Built for the Smart India Hackathon 2026· <strong>DepthWizard</strong>
+  Built for the Smart India Hackathon 2026 · <strong>DepthWizard</strong>
 </p>
